@@ -1,9 +1,11 @@
 """Telegram Common — shared logic สำหรับทั้ง polling และ webhook mode
-   - send message (with split for long text)
+   - send message (with split for long text + markdown to HTML)
    - rate limiting
+   - typing indicator
    - message parsing
 """
 
+import re
 import time
 import threading
 import requests
@@ -16,6 +18,49 @@ log = get_logger(__name__)
 
 API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 MAX_MSG_LENGTH = 4096  # Telegram max message length
+
+
+# ------------------------------------------------------------------
+# Markdown → Telegram HTML converter
+# ------------------------------------------------------------------
+
+def markdown_to_telegram_html(text: str) -> str:
+    """แปลง markdown ทั่วไป → Telegram HTML (subset ที่ Telegram รองรับ)
+
+    รองรับ:
+        **bold** → <b>bold</b>
+        *italic* → <i>italic</i>
+        `code` → <code>code</code>
+        ```code block``` → <pre>code block</pre>
+        [text](url) → <a href="url">text</a>
+    """
+    # 1. Escape HTML entities ก่อน (ป้องกัน <script> injection)
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+
+    # 2. Code blocks (``` ... ```) — ทำก่อน inline code
+    text = re.sub(
+        r"```(?:\w+)?\n?(.*?)```",
+        r"<pre>\1</pre>",
+        text,
+        flags=re.DOTALL,
+    )
+
+    # 3. Inline code (`...`)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+
+    # 4. Bold (**...**)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+
+    # 5. Italic (*...*) — ระวังไม่ให้จับ ** ที่แปลงแล้ว
+    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", text)
+
+    # 6. Links [text](url)
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+
+    return text
+
 
 
 class RateLimiter:
@@ -44,11 +89,33 @@ _limiter = RateLimiter()
     retry=retry_if_exception_type((ConnectionError, TimeoutError, requests.exceptions.ConnectionError)),
     reraise=True,
 )
-def send_message(chat_id: str | int, text: str, parse_mode: str = None):
-    """ส่งข้อความไป Telegram — auto-split ถ้ายาวเกิน"""
+def send_message(chat_id: str | int, text: str, parse_mode: str = "auto"):
+    """
+    ส่งข้อความไป Telegram — auto-split ถ้ายาวเกิน
+
+    parse_mode:
+        "auto" (default) = แปลง markdown → HTML อัตโนมัติ, fallback plain text
+        "HTML" / "Markdown" = ใช้ตามที่กำหนด
+        None = ส่ง plain text
+    """
     if not text:
         return
 
+    # Auto mode: แปลง markdown → Telegram HTML
+    if parse_mode == "auto":
+        html_text = markdown_to_telegram_html(text)
+        # ลองส่ง HTML ก่อน
+        if _send_chunks(chat_id, html_text, "HTML"):
+            return
+        # Fallback: ส่ง plain text ถ้า HTML fail
+        log.warning("HTML send failed, falling back to plain text")
+        _send_chunks(chat_id, text, None)
+    else:
+        _send_chunks(chat_id, text, parse_mode)
+
+
+def _send_chunks(chat_id: str | int, text: str, parse_mode: str | None) -> bool:
+    """ส่งข้อความเป็น chunks — return True ถ้าสำเร็จทั้งหมด"""
     chunks = _split_message(text)
     for chunk in chunks:
         _limiter.wait()
@@ -60,9 +127,11 @@ def send_message(chat_id: str | int, text: str, parse_mode: str = None):
             resp = requests.post(f"{API_BASE}/sendMessage", json=payload, timeout=10)
             if not resp.ok:
                 log.warning(f"Telegram send failed: {resp.status_code} {resp.text}")
+                return False
         except Exception as e:
             log.error(f"Telegram send error: {e}")
-            raise
+            return False
+    return True
 
 
 def send_typing(chat_id: str | int):
