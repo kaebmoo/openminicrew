@@ -7,6 +7,7 @@ class BaseTool(ABC):
     name: str = ""
     description: str = ""
     commands: list[str] = []
+    direct_output: bool = True  # True = ส่งผลลัพธ์ตรงๆ ไม่ต้องผ่าน LLM สรุปซ้ำ
 
     @abstractmethod
     async def execute(self, user_id: str, args: str = "") -> str:

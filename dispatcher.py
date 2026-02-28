@@ -82,7 +82,16 @@ async def dispatch(user_id: str, user: dict, text: str) -> str:
                         raw_args = str(raw_args)
                     tool_result = await selected_tool.execute(user_id, raw_args)
 
-                    # ส่งผลลัพธ์ tool กลับให้ LLM สรุปเป็นภาษาธรรมชาติ
+                    # direct_output=True → ส่งผลลัพธ์ตรงๆ (ไม่ผ่าน LLM ซ้ำ)
+                    if selected_tool.direct_output:
+                        return (
+                            tool_result,
+                            tool_name,
+                            resp["model"],
+                            resp["token_used"],
+                        )
+
+                    # direct_output=False → ส่งผลลัพธ์ให้ LLM สรุปเป็นภาษาธรรมชาติ
                     summary_messages = context + [
                         {"role": "assistant", "content": f"[เรียก {tool_name}]"},
                         {"role": "user", "content": (
