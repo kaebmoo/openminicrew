@@ -56,10 +56,6 @@ def _handle_update(update: dict):
     if not message:
         return
 
-    text = message.get("text", "").strip()
-    if not text:
-        return
-
     chat_id = message["chat"]["id"]
 
     # Auth check
@@ -69,6 +65,18 @@ def _handle_update(update: dict):
         return
 
     user_id = user["user_id"]
+
+    # Handle location message
+    location = message.get("location")
+    if location:
+        from interfaces.telegram_common import save_user_location, send_message
+        save_user_location(user_id, location["latitude"], location["longitude"])
+        send_message(chat_id, "📍 ได้รับตำแหน่งแล้ว! ลองถามได้เลย เช่น \"ร้านกาแฟแถวนี้\" หรือ \"แถวนี้ ไป สยาม\"")
+        return
+
+    text = message.get("text", "").strip()
+    if not text:
+        return
 
     # Run async dispatcher in sync context
     from dispatcher import process_message

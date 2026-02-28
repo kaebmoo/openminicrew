@@ -52,6 +52,10 @@ TELEGRAM_BOT_TOKEN = _require("TELEGRAM_BOT_TOKEN")
 # === Gmail ===
 GMAIL_MAX_RESULTS = int(_optional("GMAIL_MAX_RESULTS", "30"))
 
+# === External APIs ===
+GOOGLE_MAPS_API_KEY = _optional("GOOGLE_MAPS_API_KEY", "")
+FOURSQUARE_API_KEY = _optional("FOURSQUARE_API_KEY", "")
+
 # === Memory ===
 MAX_CONTEXT_MESSAGES = int(_optional("MAX_CONTEXT_MESSAGES", "10"))
 CHAT_HISTORY_RETENTION_DAYS = int(_optional("CHAT_HISTORY_RETENTION_DAYS", "30"))

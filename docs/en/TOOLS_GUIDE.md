@@ -394,6 +394,240 @@ Or type: "How long from Siam to Silom? Is there traffic?"
 
 ---
 
+## Google Maps API Requirements & Alternatives
+
+### 📋 Required Google Maps APIs
+
+If you want to add Google Maps functionality, here are the APIs you need to enable:
+
+#### For Routes & Traffic (like the example above)
+
+- **Directions API** — Calculate routes between locations (supports driving, walking, biking, transit)
+- **Distance Matrix API** — Calculate distance/time between multiple points
+- **Geolocation API** — Get user's current location
+- **Maps JavaScript API** (if showing maps on web) — Includes Traffic Layer for real-time traffic
+
+#### For Places Search (cafes, restaurants, etc.)
+
+- **Places API (New)** or **Places API** — Search for places nearby
+  - Nearby Search — Find places around a location
+  - Text Search — Search with text queries
+  - Place Details — Get details (reviews, photos, phone, hours)
+- **Geocoding API** — Convert addresses to coordinates or vice versa
+- **Geolocation API** — Detect current location
+
+### 💳 Billing Requirements
+
+**Important:** Google Maps APIs require a **Billing Account** (credit card) to be enabled, even though they offer a generous free tier.
+
+| Aspect          | Details                                                   |
+|-----------------|-----------------------------------------------------------|
+| **Billing Account** | **Required** — Must add credit card to Google Cloud  |
+| **Free Tier**       | $200/month credit (enough for ~40,000 requests)      |
+| **Personal Use**    | Won't exceed free tier for personal bots             |
+| **Cost**            | No charges if you stay within free tier              |
+
+**Comparison with Current Tools:**
+
+- ✅ Gmail API — OAuth only, **no billing required**
+- ✅ Google News RSS — **No API key needed**, completely free
+- ❌ Google Maps APIs — **Billing account required** (but has free tier)
+
+### 🆓 Free Alternatives (No Billing Required)
+
+If you don't want to add a credit card, here are **completely free alternatives**:
+
+#### For Routes & Traffic
+
+| API                  | Free Tier             | Traffic Data                     | Notes                |
+|----------------------|-----------------------|----------------------------------|----------------------|
+| **OpenRouteService** | 2,500 requests/day    | Traffic patterns (not real-time) | No billing required  |
+| **Mapbox Directions** | 100,000 requests/month | Traffic patterns                 | No credit card needed |
+| **OSRM** (self-hosted) | Unlimited             | No traffic data                  | Requires hosting      |
+
+#### For Places Search
+
+| API                   | Free Tier            | Features                                | Notes                 |
+|-----------------------|----------------------|-----------------------------------------|-----------------------|
+| **Foursquare Places** | 100,000 requests/day | Rich POI data, wifi, power outlets      | **Best free option**  |
+| **Overpass API**      | Unlimited            | OpenStreetMap data                      | Raw data, needs processing |
+| **Mapbox Search**     | 100,000 requests/month | Good for addresses                    | Limited POI data      |
+
+### 🤔 Which Should You Choose?
+
+**Use Google Maps if:**
+
+- ✅ You have a credit card and are okay with billing setup
+- ✅ You want the most accurate data and best Thai language support
+- ✅ You need real-time traffic data
+
+**Use Free Alternatives if:**
+
+- ✅ You don't want to add a credit card
+- ✅ You're okay with slightly less accurate data
+- ✅ You don't need real-time traffic (traffic patterns are enough)
+
+**Recommended Free Combo:**
+
+- **Foursquare** for places search (has `wifi`, `power_outlets` attributes!)
+- **OpenRouteService** for routes/directions (good accuracy, traffic patterns)
+
+---
+
+## Example 2.1: Places Search Tool — Using Foursquare (Free)
+
+Search for nearby places without billing requirements using Foursquare Places API.
+
+### Step 1: Get Free API Key
+
+1. Go to [Foursquare Developers](https://foursquare.com/developers/signup)
+2. Create a free account
+3. Create a new project
+4. Copy your API Key
+
+### Step 2: Configure
+
+```bash
+# Add to .env
+FOURSQUARE_API_KEY=fsq3xxx
+```
+
+```python
+# Add to core/config.py
+FOURSQUARE_API_KEY = _optional("FOURSQUARE_API_KEY", "")
+```
+
+### Step 3: Create the Tool
+
+```python
+# tools/places.py
+"""Places Search Tool — Find nearby places using Foursquare API"""
+
+import requests
+from tools.base import BaseTool
+from core.config import FOURSQUARE_API_KEY
+from core.logger import get_logger
+
+log = get_logger(__name__)
+
+
+class PlacesTool(BaseTool):
+    name = "places"
+    description = (
+        "Search for nearby places like cafes, restaurants, shops. "
+        "Can filter by features like wifi, power outlets, etc."
+    )
+    commands = ["/places", "/nearby"]
+
+    async def execute(self, user_id: str, args: str = "") -> str:
+        if not FOURSQUARE_API_KEY:
+            return "FOURSQUARE_API_KEY not configured in .env"
+
+        if not args:
+            return (
+                "Please specify what you're looking for:\n"
+                "/places cafe with wifi near Siam\n"
+                "/places restaurants near me\n"
+                "/places coworking spaces with power outlets"
+            )
+
+        try:
+            # Use Foursquare Places API
+            headers = {
+                "Accept": "application/json",
+                "Authorization": FOURSQUARE_API_KEY,
+            }
+
+            params = {
+                "query": args,
+                "limit": 10,
+            }
+
+            # If user says "near me", you could add user's location here
+            # For now, default to a common location (e.g., Bangkok city center)
+            # In production, you'd get user's location via Geolocation API
+
+            resp = requests.get(
+                "https://api.foursquare.com/v3/places/search",
+                headers=headers,
+                params=params,
+                timeout=10,
+            )
+            data = resp.json()
+
+            results = data.get("results", [])
+            if not results:
+                return f"No places found for: {args}"
+
+            # Format results
+            output = f"📍 Found {len(results)} places:\n\n"
+
+            for i, place in enumerate(results[:5], 1):  # Show top 5
+                name = place.get("name", "Unknown")
+                location = place.get("location", {})
+                address = location.get("formatted_address", "Address not available")
+                distance = place.get("distance", 0)
+
+                # Categories
+                categories = place.get("categories", [])
+                category_names = [cat.get("name") for cat in categories[:2]]
+                category_str = ", ".join(category_names) if category_names else "N/A"
+
+                output += f"{i}. **{name}**\n"
+                output += f"   📂 {category_str}\n"
+                output += f"   📍 {address}\n"
+                output += f"   📏 {distance}m away\n\n"
+
+            if len(results) > 5:
+                output += f"... and {len(results) - 5} more\n"
+
+            return output
+
+        except Exception as e:
+            log.error(f"Places API error: {e}")
+            return f"Error: {e}"
+
+    def get_tool_spec(self) -> dict:
+        return {
+            "name": "places",
+            "description": (
+                "Search for nearby places, e.g. 'cafe with wifi near Siam', "
+                "'restaurants with outdoor seating', 'coworking spaces near me'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "args": {
+                        "type": "string",
+                        "description": (
+                            "Search query describing what to find, e.g. "
+                            "'cafe with power outlets near Siam', 'restaurants near Central World'"
+                        ),
+                    }
+                },
+                "required": ["args"],
+            },
+        }
+```
+
+**Usage:**
+```
+/places cafe with wifi near Siam
+/places restaurants with outdoor seating
+/places coworking spaces near me
+Or type: "Find cafes with power outlets near here"
+```
+
+**Features of Foursquare:**
+
+- ✅ 100,000 free requests/day
+- ✅ Rich place data (photos, ratings, hours, phone)
+- ✅ Attributes like `wifi`, `outdoor_seating`, `delivery`
+- ✅ No billing account required
+- ✅ Good international coverage
+
+---
+
 ## Example 3: LLM Tool — News Summary
 
 Fetch news from RSS feeds and let LLM summarize.

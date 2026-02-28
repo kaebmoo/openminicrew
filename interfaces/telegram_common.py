@@ -3,12 +3,15 @@
    - rate limiting
    - typing indicator
    - message parsing
+   - user location cache
 """
 
+import json
 import re
 import time
 import threading
 import requests
+from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from core.config import TELEGRAM_BOT_TOKEN
@@ -18,6 +21,48 @@ log = get_logger(__name__)
 
 API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 MAX_MSG_LENGTH = 4096  # Telegram max message length
+
+
+# ------------------------------------------------------------------
+# User Location Cache (in-memory, ephemeral)
+# ------------------------------------------------------------------
+
+_user_locations: dict[str, dict] = {}  # {user_id: {"lat": float, "lng": float, "updated_at": str}}
+
+
+def save_user_location(user_id: str, lat: float, lng: float):
+    """บันทึกตำแหน่งล่าสุดของ user"""
+    _user_locations[str(user_id)] = {
+        "lat": lat,
+        "lng": lng,
+        "updated_at": datetime.now().isoformat(),
+    }
+    log.info(f"Saved location for user {user_id}: {lat}, {lng}")
+
+
+def get_user_location(user_id: str) -> dict | None:
+    """ดึงตำแหน่งล่าสุดของ user — return None ถ้าไม่เคยแชร์"""
+    return _user_locations.get(str(user_id))
+
+
+def send_location_request(chat_id: str | int, text: str = "📍 กดปุ่มด้านล่างเพื่อส่งตำแหน่งปัจจุบัน"):
+    """ส่ง keyboard button ขอตำแหน่งจาก user"""
+    try:
+        requests.post(
+            f"{API_BASE}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "reply_markup": json.dumps({
+                    "keyboard": [[{"text": "📍 ส่งตำแหน่งปัจจุบัน", "request_location": True}]],
+                    "resize_keyboard": True,
+                    "one_time_keyboard": True,
+                }),
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        log.error(f"Failed to send location request: {e}")
 
 
 # ------------------------------------------------------------------
