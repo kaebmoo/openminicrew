@@ -85,7 +85,11 @@ async def dispatch(user_id: str, user: dict, text: str) -> str:
                     # ส่งผลลัพธ์ tool กลับให้ LLM สรุปเป็นภาษาธรรมชาติ
                     summary_messages = context + [
                         {"role": "assistant", "content": f"[เรียก {tool_name}]"},
-                        {"role": "user", "content": f"ผลลัพธ์จาก {tool_name}:\n{tool_result}\n\nช่วยสรุปให้ user เข้าใจง่าย"},
+                        {"role": "user", "content": (
+                            f"ผลลัพธ์จาก {tool_name}:\n{tool_result}\n\n"
+                            "ช่วยสรุปให้ user เข้าใจง่าย "
+                            "ถ้ามี URL หรือลิงก์ ให้เก็บไว้ครบทุกอัน อย่าตัดออก"
+                        )},
                     ]
 
                     summary = await llm_router.chat(
