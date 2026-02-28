@@ -59,20 +59,24 @@ class NewsSummaryTool(BaseTool):
             # 3. คัดมาเฉพาะ 10 ข่าวล่าสุด
             max_news = 10
             headlines = []  # สำหรับส่งให้ LLM (ไม่มี URL)
-            references = []  # สำหรับแปะท้าย
+            references = []  # สำหรับแปะท้าย (HTML clickable links)
 
             for i, item in enumerate(items[:max_news], 1):
                 title = item.findtext("title")
                 link = item.findtext("link")
 
-                # ทำความสะอาด title (ลบชื่อสำนักข่าวท้าย)
-                clean_title = title.rsplit(" - ", 1)[0] if title and " - " in title else title
-
-                # Resolve redirect URL → ได้ URL สั้นจริง
-                short_url = self._resolve_url(link)
+                # แยกชื่อสำนักข่าวออกจาก title
+                if title and " - " in title:
+                    parts = title.rsplit(" - ", 1)
+                    clean_title = parts[0]
+                    source = parts[1].strip()
+                else:
+                    clean_title = title or ""
+                    source = "อ่านข่าว"
 
                 headlines.append(f"[{i}] {clean_title}")
-                references.append(f"[{i}] {short_url}")
+                # สร้าง clickable link สั้นๆ แทน URL ยาว (ใช้ markdown format)
+                references.append(f"{i}. [{source}]({link})")
 
             headlines_text = "\n".join(headlines)
 
@@ -103,29 +107,11 @@ class NewsSummaryTool(BaseTool):
             system=system_prompt,
         )
 
-        # 5. ประกอบผลลัพธ์: สรุป + ลิงก์อ้างอิงท้ายข้อความ
+        # 5. ประกอบผลลัพธ์: สรุป + ลิงก์คลิกได้ (HTML)
         summary = chat_resp.get("content", "")
         refs_text = "\n".join(references)
 
         return f"📰 สรุปข่าว: {display_label}\n\n{summary}\n\n🔗 ลิงก์อ้างอิง:\n{refs_text}"
-
-    @staticmethod
-    def _resolve_url(google_news_url: str) -> str:
-        """Resolve Google News redirect → URL จริงที่สั้นกว่า"""
-        try:
-            resp = requests.head(
-                google_news_url,
-                allow_redirects=True,
-                timeout=5,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            final_url = resp.url
-            # ถ้า resolve ได้ URL สั้นกว่า ใช้อันนั้น
-            if len(final_url) < len(google_news_url):
-                return final_url
-            return google_news_url
-        except Exception:
-            return google_news_url
 
 # ลงทะเบียน Tool ไปเลย
 tool = NewsSummaryTool()
