@@ -145,24 +145,24 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
     Full pipeline: dispatch + save memory + send Telegram
     เรียกจากทั้ง polling และ webhook
     """
-    from interfaces.telegram_common import send_message, send_typing
+    from interfaces.telegram_common import send_message, TypingIndicator
 
-    send_typing(chat_id)
-    save_user_message(user_id, text)
+    with TypingIndicator(chat_id):
+        save_user_message(user_id, text)
 
-    result = await dispatch(user_id, user, text)
+        result = await dispatch(user_id, user, text)
 
-    if isinstance(result, tuple):
-        response_text, tool_used, llm_model, token_used = result
-    else:
-        response_text, tool_used, llm_model, token_used = result, None, None, 0
+        if isinstance(result, tuple):
+            response_text, tool_used, llm_model, token_used = result
+        else:
+            response_text, tool_used, llm_model, token_used = result, None, None, 0
 
-    # บันทึก memory
-    save_assistant_message(
-        user_id, response_text,
-        tool_used=tool_used, llm_model=llm_model,
-        token_used=token_used,
-    )
+        # บันทึก memory
+        save_assistant_message(
+            user_id, response_text,
+            tool_used=tool_used, llm_model=llm_model,
+            token_used=token_used,
+        )
 
-    # ส่งกลับ Telegram
+    # ส่งกลับ Telegram (หลัง typing หยุด)
     send_message(chat_id, response_text)

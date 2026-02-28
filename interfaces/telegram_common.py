@@ -66,7 +66,7 @@ def send_message(chat_id: str | int, text: str, parse_mode: str = None):
 
 
 def send_typing(chat_id: str | int):
-    """ส่งสถานะ typing"""
+    """ส่งสถานะ typing ครั้งเดียว"""
     try:
         requests.post(
             f"{API_BASE}/sendChatAction",
@@ -75,6 +75,36 @@ def send_typing(chat_id: str | int):
         )
     except Exception:
         pass  # ไม่สำคัญถ้า fail
+
+
+class TypingIndicator:
+    """Context manager: ส่ง typing status ทุก 4 วินาทีจนกว่างานจะเสร็จ
+
+    Usage:
+        with TypingIndicator(chat_id):
+            result = await long_running_task()
+    """
+
+    def __init__(self, chat_id: str | int, interval: float = 4.0):
+        self.chat_id = chat_id
+        self.interval = interval
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def _keep_typing(self):
+        while not self._stop_event.is_set():
+            send_typing(self.chat_id)
+            self._stop_event.wait(self.interval)
+
+    def __enter__(self):
+        self._thread = threading.Thread(target=self._keep_typing, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *args):
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=1)
 
 
 def _split_message(text: str) -> list[str]:
