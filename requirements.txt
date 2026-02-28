@@ -1,0 +1,22 @@
+# LLM Providers
+anthropic>=0.40.0
+google-genai>=1.0.0
+
+# Gmail API
+google-auth>=2.0
+google-auth-oauthlib>=1.0
+google-api-python-client>=2.0
+
+# Telegram
+requests>=2.31
+
+# Web framework (webhook mode)
+fastapi>=0.110.0
+uvicorn>=0.27.0
+
+# Scheduler
+apscheduler>=3.10.0
+
+# Utilities
+python-dotenv>=1.0
+tenacity>=8.2.0

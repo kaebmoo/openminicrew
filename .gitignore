@@ -1,0 +1,39 @@
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+venv/
+.venv/
+env/
+
+# === Secrets & Credentials ===
+.env
+credentials.json
+credentials/
+token.json
+
+# === Data & Logs ===
+data/
+logs/
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# === OS ===
+Thumbs.db
+.DS_Store
+
+# === Testing ===
+.pytest_cache/
+htmlcov/
+.coverage
