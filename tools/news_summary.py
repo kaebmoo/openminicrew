@@ -25,7 +25,7 @@ class NewsSummaryTool(BaseTool):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "topic": {
+                    "args": {
                         "type": "string",
                         "description": "หัวข้อข่าวที่สนใจ เช่น 'เทคโนโลยี', 'การเมือง', 'หุ้น', หรือปล่อยว่างเพื่อดูข่าวเด่นรวบยอด",
                     }
