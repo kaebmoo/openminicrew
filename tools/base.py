@@ -10,7 +10,7 @@ class BaseTool(ABC):
     direct_output: bool = True  # True = ส่งผลลัพธ์ตรงๆ ไม่ต้องผ่าน LLM สรุปซ้ำ
 
     @abstractmethod
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         """ทำงานหลัก — รับ user_id เสมอ, return ผลลัพธ์เป็น string"""
         ...
 

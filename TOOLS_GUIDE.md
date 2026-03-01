@@ -56,7 +56,7 @@ class MyTool(BaseTool):
     description = "คำอธิบาย"    # LLM ใช้ตัดสินใจเลือก tool
     commands = ["/mytool"]     # คำสั่งตรง (ไม่เสีย token)
 
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         # ทำงานหลัก
         return "ผลลัพธ์"
 ```
@@ -107,13 +107,15 @@ class MyTool(BaseTool):
     description = "คำอธิบายที่ LLM จะใช้ตัดสินใจว่าจะเรียก tool นี้เมื่อไหร่"
     commands = ["/mytool"]
 
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         """
         ฟังก์ชันหลัก — ถูกเรียกเมื่อ user ใช้ /command หรือ LLM เลือก tool นี้
 
         Parameters:
             user_id: Telegram chat ID ของ user (string)
             args: ข้อความที่ตามหลัง command เช่น "/mytool hello" → args = "hello"
+            **kwargs: parameter เพิ่มเติมที่ LLM ส่งมา (เช่น mode, category)
+                      ต้องมี **kwargs เสมอเพื่อรองรับ parameter ที่ไม่รู้จักล่วงหน้า
 
         Returns:
             string ที่จะส่งกลับให้ user (หรือส่งให้ LLM สรุปอีกที)
@@ -742,10 +744,16 @@ class NewsSummaryTool(BaseTool):
 ### 1. `execute()` รับ-ส่งอะไร
 
 ```
+Signature:
+  async def execute(self, user_id: str, args: str = "", **kwargs) -> str
+
 Input:
   user_id  → Telegram chat ID (string) เช่น "25340254"
   args     → ข้อความหลัง command เช่น "/email force 7d" → args = "force 7d"
              หรือถูก LLM ส่งมาเป็น string
+  **kwargs → parameter เพิ่มเติมที่ LLM ส่งมาตาม tool spec
+             เช่น mode="walking", category="tech"
+             ต้องมี **kwargs เสมอ — dispatcher ส่ง dict ทั้งก้อนผ่าน **tool_args
 
 Output:
   return string → ข้อความที่จะส่งกลับให้ user ผ่าน Telegram
@@ -820,12 +828,36 @@ def get_tool_spec(self) -> dict:
     }
 ```
 
+**เพิ่ม enum parameter** — ให้ LLM เลือกค่าที่ถูกต้องได้ตรงๆ แทนการ regex text:
+
+```python
+"properties": {
+    "args": {
+        "type": "string",
+        "description": "ต้นทางและปลายทาง คั่นด้วย 'ไป'",
+    },
+    "mode": {
+        "type": "string",
+        "enum": ["driving", "walking", "transit", "two_wheeler"],
+        "description": "โหมดการเดินทาง: driving=รถยนต์, walking=เดินเท้า, transit=รถโดยสาร, two_wheeler=มอเตอร์ไซค์",
+    },
+},
+```
+
+LLM จะส่ง `mode="walking"` ตรงๆ → `execute()` รับผ่าน `**kwargs` หรือเป็น named param ก็ได้:
+
+```python
+async def execute(self, user_id: str, args: str = "", mode: str = "driving", **kwargs) -> str:
+    # mode ถูก extract มาจาก kwargs อัตโนมัติ
+    ...
+```
+
 **ถ้า tool ไม่มี parameter** — ไม่ต้อง override `get_tool_spec()` เลย (BaseTool มี default)
 
 ### 5. Error Handling
 
 ```python
-async def execute(self, user_id: str, args: str = "") -> str:
+async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
     try:
         # ทำงานหลัก
         result = do_something()
@@ -856,9 +888,11 @@ async def execute(self, user_id: str, args: str = "") -> str:
 - [ ] ไฟล์อยู่ใน `tools/` directory
 - [ ] Class inherit จาก `BaseTool`
 - [ ] ตั้ง `name`, `description`, `commands` ครบ
+- [ ] `execute()` มี signature: `async def execute(self, user_id: str, args: str = "", **kwargs) -> str`
 - [ ] `execute()` return string เสมอ (ไม่ return None)
 - [ ] `execute()` ไม่ให้ exception หลุด — catch ทุกกรณี
 - [ ] `get_tool_spec()` มี description ชัดเจน (LLM ใช้ตัดสินใจ)
+- [ ] ถ้าใช้ enum parameter → ระบุ `"enum": [...]` ใน properties แทนการ regex text เอง
 - [ ] ถ้าใช้ API key → เพิ่มใน `.env`, `.env.example`, `core/config.py`
 - [ ] ถ้าใช้ library ใหม่ → เพิ่มใน `requirements.txt`
 - [ ] ทดสอบผ่าน `/command` ตรง

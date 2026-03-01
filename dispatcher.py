@@ -20,7 +20,9 @@ SYSTEM_PROMPT = (
     "ถ้า user ต้องการทำงานที่ตรงกับ tool ที่มี ให้เรียกใช้ tool นั้น "
     "ถ้าไม่ตรงกับ tool ไหน ให้ตอบคำถามทั่วไปตามความรู้ของคุณ "
     "สำหรับคำถามเกี่ยวกับการจัดการผู้ใช้ เช่น ดูรายชื่อ user, เพิ่ม/ลบ user "
-    "ให้แนะนำให้ใช้คำสั่งโดยตรง: /listusers, /adduser <chat_id> [ชื่อ], /removeuser <chat_id>"
+    "ให้แนะนำให้ใช้คำสั่งโดยตรง: /listusers, /adduser <chat_id> [ชื่อ], /removeuser <chat_id> "
+    "สำคัญ: เมื่อ user ขอข้อมูลจาก tool (อีเมล, แผนที่, ข่าว ฯลฯ) "
+    "ให้เรียก tool เสมอ — อย่าตอบจากประวัติการสนทนาเก่า เพราะข้อมูลอาจล้าสมัยหรือผิดพลาด"
 )
 
 
@@ -76,6 +78,25 @@ async def dispatch(user_id: str, user: dict, text: str) -> str:
             lines.append(f"{status} {u['display_name']} — `{u['telegram_chat_id']}` ({u['role']})")
         return "\n".join(lines), None, None, 0
 
+    # ---- /authgmail — authorize Gmail สำหรับ user นี้ ----
+    if command == "/authgmail":
+        from core.gmail_oauth import generate_auth_url
+        from core.config import WEBHOOK_HOST
+        if not WEBHOOK_HOST:
+            return (
+                "❌ ต้องตั้งค่า `WEBHOOK_HOST` ใน .env ก่อน\n"
+                "เช่น: `WEBHOOK_HOST=https://yourdomain.com`"
+            ), None, None, 0
+        url = generate_auth_url(user_id, user["telegram_chat_id"])
+        if not url:
+            return "❌ ยังไม่ได้ตั้งค่า `credentials.json` (Google OAuth client)", None, None, 0
+        return (
+            "🔐 *Authorize Gmail*\n\n"
+            f"คลิกลิงก์นี้เพื่อ authorize Gmail ของคุณ:\n{url}\n\n"
+            "⏱ ลิงก์หมดอายุใน 15 นาที\n\n"
+            "_หลัง authorize แล้ว bot จะแจ้งให้ทราบอัตโนมัติ_"
+        ), None, None, 0
+
     # ---- Direct command → tool (ไม่เสีย LLM token) ----
     tool = registry.get_by_command(command) if command else None
     if tool:
@@ -114,10 +135,7 @@ async def dispatch(user_id: str, user: dict, text: str) -> str:
             if selected_tool:
                 log.info(f"LLM selected tool: {tool_name}")
                 try:
-                    raw_args = tool_args.get("args", "")
-                    if not isinstance(raw_args, str):
-                        raw_args = str(raw_args)
-                    tool_result = await selected_tool.execute(user_id, raw_args)
+                    tool_result = await selected_tool.execute(user_id, **tool_args)
 
                     # direct_output=True → ส่งผลลัพธ์ตรงๆ (ไม่ผ่าน LLM ซ้ำ)
                     if selected_tool.direct_output:

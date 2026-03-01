@@ -72,6 +72,31 @@ async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
     return {"ok": True}
 
 
+@app.get("/gmail-callback")
+async def gmail_callback(code: str = None, state: str = None, error: str = None):
+    """รับ Google OAuth callback หลัง user authorize Gmail"""
+    from core.gmail_oauth import complete_oauth
+
+    if error:
+        log.warning(f"Gmail OAuth denied: {error}")
+        return {"error": f"Authorization denied: {error}"}
+
+    if not code or not state:
+        return {"error": "Missing code or state"}
+
+    result = complete_oauth(code, state)
+    if not result:
+        return {"error": "Invalid or expired link. Please use /authgmail again."}
+
+    user_id, chat_id = result
+    try:
+        send_message(int(chat_id), "✅ Gmail authorized เรียบร้อยแล้ว\\! ลองใช้ /email ได้เลย 📬")
+    except Exception as e:
+        log.error(f"Failed to notify user {user_id} after Gmail auth: {e}")
+
+    return {"ok": True, "message": "Gmail authorized! You can close this window."}
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""

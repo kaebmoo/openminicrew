@@ -33,7 +33,7 @@ class NewsSummaryTool(BaseTool):
             },
         }
 
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         topic = args.strip()
 
         # 1. เลือก URL ตามการค้นหา

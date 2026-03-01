@@ -56,7 +56,7 @@ class MyTool(BaseTool):
     description = "Description" # LLM uses this to decide when to call the tool
     commands = ["/mytool"]     # direct command (zero token cost)
 
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         # main logic
         return "Result"
 ```
@@ -107,13 +107,15 @@ class MyTool(BaseTool):
     description = "Description that LLM uses to decide when to call this tool"
     commands = ["/mytool"]
 
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         """
         Main function — called when user uses /command or LLM selects this tool.
 
         Parameters:
             user_id: Telegram chat ID of the user (string)
             args: text after the command, e.g. "/mytool hello" → args = "hello"
+            **kwargs: extra parameters from LLM (e.g. mode, category)
+                      always include **kwargs to absorb unknown parameters
 
         Returns:
             string to send back to user (or passed to LLM for summarization)
@@ -736,10 +738,16 @@ Or type: "What's the latest tech news?"
 ### 1. `execute()` Input/Output
 
 ```
+Signature:
+  async def execute(self, user_id: str, args: str = "", **kwargs) -> str
+
 Input:
   user_id  → Telegram chat ID (string), e.g. "25340254"
   args     → Text after command, e.g. "/email force 7d" → args = "force 7d"
              Or string sent by LLM via function calling
+  **kwargs → Extra parameters from LLM according to tool spec
+             e.g. mode="walking", category="tech"
+             Always include **kwargs — dispatcher passes the full dict via **tool_args
 
 Output:
   return string → Message sent back to user via Telegram
@@ -814,12 +822,36 @@ def get_tool_spec(self) -> dict:
     }
 ```
 
+**Adding an enum parameter** — lets LLM select a value directly instead of parsing text:
+
+```python
+"properties": {
+    "args": {
+        "type": "string",
+        "description": "Origin and destination separated by 'to'",
+    },
+    "mode": {
+        "type": "string",
+        "enum": ["driving", "walking", "transit", "two_wheeler"],
+        "description": "Travel mode: driving=car, walking=on foot, transit=public transport, two_wheeler=motorcycle",
+    },
+},
+```
+
+LLM sends `mode="walking"` directly → `execute()` receives it via `**kwargs` or as a named param:
+
+```python
+async def execute(self, user_id: str, args: str = "", mode: str = "driving", **kwargs) -> str:
+    # mode is extracted from kwargs automatically
+    ...
+```
+
 **If tool has no parameters** — don't override `get_tool_spec()` (BaseTool has a default).
 
 ### 5. Error Handling
 
 ```python
-async def execute(self, user_id: str, args: str = "") -> str:
+async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
     try:
         result = do_something()
         return result
@@ -849,9 +881,11 @@ async def execute(self, user_id: str, args: str = "") -> str:
 - [ ] File is in the `tools/` directory
 - [ ] Class inherits from `BaseTool`
 - [ ] `name`, `description`, `commands` are all set
+- [ ] `execute()` has signature: `async def execute(self, user_id: str, args: str = "", **kwargs) -> str`
 - [ ] `execute()` always returns a string (never returns None)
 - [ ] `execute()` catches all exceptions — no unhandled errors
 - [ ] `get_tool_spec()` has a clear description (LLM uses it to decide)
+- [ ] If using enum parameter → use `"enum": [...]` in properties instead of regex parsing text
 - [ ] If using an API key → added to `.env`, `.env.example`, `core/config.py`
 - [ ] If using a new library → added to `requirements.txt`
 - [ ] Tested via direct `/command`

@@ -90,7 +90,7 @@ class EmailSummaryTool(BaseTool):
         search_query = " ".join(search_tokens)
         return force, newer_than, time_label, search_query
 
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         force, newer_than, time_label, search_query = self._parse_args(args)
 
         # ใช้ LLM ตาม user preference (fallback เป็น default)
@@ -104,7 +104,10 @@ class EmailSummaryTool(BaseTool):
         # 1. ดึง Gmail credentials
         creds = get_gmail_credentials(user_id)
         if not creds:
-            return "ยังไม่ได้เชื่อมต่อ Gmail กรุณา authorize ก่อน"
+            from core.config import WEBHOOK_HOST
+            if WEBHOOK_HOST:
+                return "❌ ยังไม่ได้เชื่อมต่อ Gmail\nกรุณาพิมพ์ /authgmail เพื่อ authorize"
+            return "❌ ยังไม่ได้เชื่อมต่อ Gmail\nกรุณารัน: python main.py --auth-gmail"
 
         try:
             service = build("gmail", "v1", credentials=creds)

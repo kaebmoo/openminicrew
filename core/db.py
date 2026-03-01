@@ -81,6 +81,13 @@ CREATE TABLE IF NOT EXISTS user_locations (
     updated_at        TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
+
+CREATE TABLE IF NOT EXISTS oauth_states (
+    state      TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    chat_id    TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
 """
 
 
@@ -286,6 +293,28 @@ def save_location(user_id: str, lat: float, lng: float):
                 longitude=excluded.longitude,
                 updated_at=excluded.updated_at
         """, (str(user_id), lat, lng, now))
+
+
+def save_oauth_state(state: str, user_id: str, chat_id: str, expires_at: str):
+    """บันทึก OAuth state สำหรับ Gmail callback"""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO oauth_states (state, user_id, chat_id, expires_at) VALUES (?, ?, ?, ?)",
+            (state, user_id, chat_id, expires_at)
+        )
+
+
+def get_oauth_state(state: str) -> dict | None:
+    """ดึง + ลบ OAuth state (single-use) — return None ถ้าหมดอายุหรือไม่มี"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM oauth_states WHERE state = ? AND expires_at > datetime('now')",
+            (state,)
+        ).fetchone()
+        if row:
+            conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
+            return dict(row)
+        return None
 
 
 def get_location(user_id: str, ttl_minutes: int = 60) -> dict | None:

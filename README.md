@@ -3,7 +3,7 @@
 > 🇬🇧 [English version](docs/en/README.md)
 
 ผู้ช่วยส่วนตัว AI สั่งงานผ่าน Telegram รองรับ Claude + Gemini
-เพิ่ม tool ได้ง่าย ออกแบบรองรับ multi-user ในอนาคต
+เพิ่ม tool ได้ง่าย รองรับหลาย Telegram account ด้วย API keys ชุดเดียวกัน
 
 ## คุณสมบัติ
 
@@ -15,7 +15,7 @@
 - จำบริบทสนทนาได้ (chat memory)
 - ตั้ง cron job สรุปเมลทุกเช้าอัตโนมัติ
 - สรุปอีเมลอัจฉริยะ — จัดกลุ่ม จัดลำดับความสำคัญ ค้นหาเรื่องที่สนใจได้
-- Multi-tenant ready — ขยายให้หลายคนใช้ได้โดยไม่ต้อง refactor
+- Multi-user — เพิ่ม/ลบ user ผ่าน Telegram ได้ทันที
 - Production ready — retry, error handling, rate limit, health check
 
 ## ติดตั้ง
@@ -106,6 +106,10 @@ python main.py
 | คำสั่ง | คำอธิบาย |
 |---|---|
 | `/email` | สรุปอีเมลที่ยังไม่ได้อ่าน (วันนี้) |
+| `/traffic สยาม ไป สีลม` | เช็คเส้นทาง + สภาพจราจร |
+| `/places ร้านกาแฟแถวนี้` | ค้นหาสถานที่ใกล้เคียง |
+| `/news` | สรุปข่าวเทคโนโลยีล่าสุด |
+| `/news tech` | สรุปข่าวตามหมวด |
 | `/model` | แสดง LLM ที่ใช้ได้ |
 | `/model claude` | เปลี่ยนไปใช้ Claude |
 | `/model gemini` | เปลี่ยนไปใช้ Gemini |
@@ -133,6 +137,55 @@ python main.py
 - จัดกลุ่มตามประเภท — 💰 การเงิน, 💼 งาน, 📊 ลงทุน, 🛒 โปรโมชั่น ฯลฯ
 - 🎯 สรุปท้าย — สิ่งที่ควรให้ความสำคัญก่อน
 
+### Traffic — โหมดการเดินทาง
+
+| โหมด | ตัวอย่าง |
+|---|---|
+| 🚗 รถยนต์ (default) | `/traffic สยาม ไป สีลม` |
+| 🚶 เดินเท้า | "จากสยาม เดินเท้า ไป MBK" |
+| 🚌 ขนส่งสาธารณะ | "นั่งรถไฟฟ้าจากอโศกไปสยามใช้เวลาเท่าไหร่" |
+| 🏍 มอเตอร์ไซค์ | "มอเตอร์ไซค์จากบ้านไปออฟฟิศ" |
+
+พิมพ์อิสระ LLM จะเลือกโหมดให้อัตโนมัติตามบริบท
+
+## Multi-user Management
+
+ระบบรองรับหลาย Telegram account โดยใช้ API keys ชุดเดียวกัน owner เป็นคนอนุมัติ user ใหม่ผ่าน Telegram:
+
+| คำสั่ง | คำอธิบาย |
+|---|---|
+| `/adduser <chat_id> [ชื่อ]` | เพิ่ม user ใหม่ (owner only) |
+| `/removeuser <chat_id>` | ปิดการใช้งาน user (owner only) |
+| `/listusers` | ดูรายชื่อ users ทั้งหมด (owner only) |
+
+**ขั้นตอน:**
+1. user ใหม่ใช้ [@userinfobot](https://t.me/userinfobot) เพื่อดู chat_id ของตัวเอง
+2. บอก chat_id ให้ owner
+3. owner ส่ง `/adduser <chat_id> ชื่อ` → user สามารถใช้งาน bot ได้ทันที
+
+## Gmail Per-User
+
+แต่ละ user สามารถ authorize Gmail ของตัวเองได้ (ไม่ต้องใช้ Gmail ของ owner)
+
+**Webhook mode** (แนะนำสำหรับ production):
+```
+ส่ง /authgmail ใน Telegram → รับ link → เปิด browser → authorize
+```
+
+**Polling mode** (เครื่อง local):
+```bash
+# authorize Gmail สำหรับ user ที่ระบุ
+python main.py --auth-gmail <chat_id>
+
+# ดูรายชื่อ users ที่มี Gmail token แล้ว
+python main.py --list-gmail
+
+# ลบ Gmail token ของ user
+python main.py --revoke-gmail <chat_id>
+```
+
+> **หมายเหตุ:** ถ้า user ไม่มี Gmail token ของตัวเอง ระบบจะ fallback ไปใช้ Gmail ของ owner อัตโนมัติ
+
 ## เพิ่ม Tool ใหม่
 
 สร้างไฟล์ใน `tools/` — registry จะ auto-discover:
@@ -147,7 +200,7 @@ class MyTool(BaseTool):
     description = "อธิบายว่า tool นี้ทำอะไร"
     commands = ["/mytool"]
 
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         # ทำงานหลัก
         return "ผลลัพธ์"
 
@@ -179,20 +232,24 @@ openminicrew/
 │   │   └── registry.py   Auto-discover providers
 │   ├── db.py          SQLite + WAL mode
 │   ├── memory.py      Chat context
-│   ├── security.py    Token management + Gmail OAuth
-│   ├── user_manager.py  User auth
+│   ├── security.py    Token management + Gmail credentials
+│   ├── gmail_oauth.py Gmail OAuth flow (per-user, webhook mode)
+│   ├── user_manager.py  User auth + multi-user management
 │   └── logger.py      Logging
 ├── tools/             Tool system
 │   ├── base.py        BaseTool abstract class
 │   ├── registry.py    Auto-discover tools
-│   └── email_summary.py  Email summary (time range + search + force)
+│   ├── email_summary.py  Email summary (time range + search + force)
+│   ├── traffic.py     Traffic + route (Google Maps, multi-mode)
+│   ├── places.py      Nearby place search (Foursquare)
+│   └── news_summary.py   News summary (RSS + LLM)
 ├── interfaces/        Telegram interface
 │   ├── telegram_polling.py   Long polling
-│   ├── telegram_webhook.py   Webhook + FastAPI
+│   ├── telegram_webhook.py   Webhook + FastAPI + Gmail OAuth callback
 │   └── telegram_common.py    Shared logic
 ├── dispatcher.py      Command routing + LLM dispatch
 ├── scheduler.py       Cron jobs (APScheduler)
-├── main.py            Entry point (auto Gmail auth)
+├── main.py            Entry point (Gmail CLI management)
 ├── credentials.json   OAuth client secret (จาก Google Cloud)
 ├── credentials/       Gmail tokens per user (auto-generated)
 └── data/              SQLite database
@@ -215,12 +272,6 @@ python main.py
 curl https://your-domain.com/health
 ```
 
-## ขยายเป็น Multi-user (อนาคต)
-
-Architecture รองรับอยู่แล้ว สิ่งที่ต้องเพิ่ม:
-1. `/start` command สำหรับ user ใหม่
-2. `/approve` command สำหรับ owner
-3. OAuth callback endpoint สำหรับ Gmail per-user
-4. Admin commands (`/users`, `/usage`, `/disable`)
-
-สิ่งที่ไม่ต้องแก้: tools, dispatcher, LLM router, memory, DB schema, scheduler
+**Webhook mode เพิ่มเติม:**
+- Gmail OAuth callback: `GET /gmail-callback` — รองรับ per-user Gmail authorization ผ่าน `/authgmail`
+- Health check: `GET /health` — แสดงสถานะ bot, DB, LLM, scheduler

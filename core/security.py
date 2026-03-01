@@ -22,12 +22,17 @@ def get_gmail_credentials(user_id: str) -> Credentials | None:
     ดึง Gmail credentials สำหรับ user
     - ถ้า token มีอยู่ + valid → ใช้เลย
     - ถ้า token expired → auto-refresh
-    - ถ้าไม่มี token → return None (ต้อง authorize ก่อน)
+    - ถ้าไม่มี token → fallback ใช้ token ของ owner (ถ้ามี)
     """
+    from core.config import OWNER_TELEGRAM_CHAT_ID
+
     token_path = get_gmail_token_path(user_id)
 
     if not token_path.exists():
-        log.warning(f"No Gmail token for user {user_id}")
+        if user_id != OWNER_TELEGRAM_CHAT_ID:
+            log.debug(f"No Gmail token for user {user_id}, falling back to owner token")
+            return get_gmail_credentials(OWNER_TELEGRAM_CHAT_ID)
+        log.warning(f"No Gmail token for owner {user_id} — run authorize_gmail_interactive()")
         return None
 
     try:
@@ -38,9 +43,13 @@ def get_gmail_credentials(user_id: str) -> Credentials | None:
 
         if creds and creds.expired and creds.refresh_token:
             log.info(f"Refreshing Gmail token for user {user_id}")
-            creds.refresh(Request())
-            token_path.write_text(creds.to_json())
-            return creds
+            try:
+                creds.refresh(Request())
+                token_path.write_text(creds.to_json())
+                return creds
+            except Exception as refresh_err:
+                log.error(f"Gmail token refresh failed for user {user_id}: {refresh_err}")
+                return None
 
         log.warning(f"Gmail token invalid for user {user_id}, re-auth needed")
         return None
