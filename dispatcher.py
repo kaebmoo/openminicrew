@@ -7,7 +7,7 @@
 import asyncio
 from core.llm import llm_router
 from core.memory import save_user_message, save_assistant_message, get_context
-from core.user_manager import get_preference, set_preference
+from core.user_manager import get_preference, set_preference, is_owner
 from core import db
 from tools.registry import registry
 from interfaces.telegram_common import parse_command
@@ -18,7 +18,9 @@ log = get_logger(__name__)
 SYSTEM_PROMPT = (
     "คุณเป็นผู้ช่วยส่วนตัว ชื่อ OpenMiniCrew ตอบเป็นภาษาไทย กระชับ ได้ใจความ "
     "ถ้า user ต้องการทำงานที่ตรงกับ tool ที่มี ให้เรียกใช้ tool นั้น "
-    "ถ้าไม่ตรงกับ tool ไหน ให้ตอบคำถามทั่วไปตามความรู้ของคุณ"
+    "ถ้าไม่ตรงกับ tool ไหน ให้ตอบคำถามทั่วไปตามความรู้ของคุณ "
+    "สำหรับคำถามเกี่ยวกับการจัดการผู้ใช้ เช่น ดูรายชื่อ user, เพิ่ม/ลบ user "
+    "ให้แนะนำให้ใช้คำสั่งโดยตรง: /listusers, /adduser <chat_id> [ชื่อ], /removeuser <chat_id>"
 )
 
 
@@ -38,6 +40,41 @@ async def dispatch(user_id: str, user: dict, text: str) -> str:
     # ---- /model ----
     if command == "/model":
         return _handle_model_command(user_id, args), None, None, 0
+
+    # ---- /adduser — owner only ----
+    if command == "/adduser":
+        if not is_owner(user):
+            return "❌ คำสั่งนี้ใช้ได้เฉพาะ owner", None, None, 0
+        parts = args.strip().split(None, 1)
+        if not parts:
+            return "❌ ใช้: /adduser <chat_id> [ชื่อ]", None, None, 0
+        new_chat_id = parts[0]
+        display_name = parts[1] if len(parts) > 1 else new_chat_id
+        db.upsert_user(new_chat_id, new_chat_id, display_name)
+        log.info(f"Owner {user_id} added user: {new_chat_id} ({display_name})")
+        return f"✅ เพิ่มผู้ใช้ *{display_name}* (chat\\_id: `{new_chat_id}`) แล้ว", None, None, 0
+
+    # ---- /removeuser — owner only ----
+    if command == "/removeuser":
+        if not is_owner(user):
+            return "❌ คำสั่งนี้ใช้ได้เฉพาะ owner", None, None, 0
+        target_id = args.strip()
+        if not target_id:
+            return "❌ ใช้: /removeuser <chat_id>", None, None, 0
+        db.deactivate_user(target_id)
+        log.info(f"Owner {user_id} deactivated: {target_id}")
+        return f"✅ ปิดการใช้งาน chat\\_id: `{target_id}` แล้ว", None, None, 0
+
+    # ---- /listusers — owner only ----
+    if command == "/listusers":
+        if not is_owner(user):
+            return "❌ คำสั่งนี้ใช้ได้เฉพาะ owner", None, None, 0
+        users = db.get_all_users()
+        lines = [f"👥 *ผู้ใช้ทั้งหมด ({len(users)} คน):*\n"]
+        for u in users:
+            status = "✅" if u["is_active"] else "❌"
+            lines.append(f"{status} {u['display_name']} — `{u['telegram_chat_id']}` ({u['role']})")
+        return "\n".join(lines), None, None, 0
 
     # ---- Direct command → tool (ไม่เสีย LLM token) ----
     tool = registry.get_by_command(command) if command else None

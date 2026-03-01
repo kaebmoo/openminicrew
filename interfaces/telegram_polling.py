@@ -44,6 +44,8 @@ def start_polling():
         except KeyboardInterrupt:
             log.info("Polling stopped by user")
             break
+        except requests.exceptions.ReadTimeout:
+            continue  # normal long-poll timeout, retry immediately
         except Exception as e:
             log.error(f"Polling error: {e}")
             import time
@@ -81,13 +83,9 @@ def _handle_update(update: dict):
     # Run async dispatcher in sync context
     from dispatcher import process_message
 
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(process_message(user_id, user, chat_id, text))
-        else:
-            loop.run_until_complete(process_message(user_id, user, chat_id, text))
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         loop.run_until_complete(process_message(user_id, user, chat_id, text))
+    finally:
+        loop.close()

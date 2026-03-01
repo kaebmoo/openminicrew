@@ -74,7 +74,7 @@ class GeminiProvider(BaseLLMProvider):
 
         config = genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
-        resp = self._client.models.generate_content(
+        resp = await self._client.aio.models.generate_content(
             model=model,
             contents=gemini_contents,
             config=config,
@@ -85,7 +85,7 @@ class GeminiProvider(BaseLLMProvider):
         tool_call = None
 
         if resp.candidates and resp.candidates[0].content:
-            for part in resp.candidates[0].content.parts:
+            for part in (resp.candidates[0].content.parts or []):
                 if part.text:
                     content += part.text
                 elif part.function_call:
@@ -97,8 +97,8 @@ class GeminiProvider(BaseLLMProvider):
         token_used = 0
         if resp.usage_metadata:
             token_used = (
-                getattr(resp.usage_metadata, "prompt_token_count", 0) +
-                getattr(resp.usage_metadata, "candidates_token_count", 0)
+                (getattr(resp.usage_metadata, "prompt_token_count", 0) or 0) +
+                (getattr(resp.usage_metadata, "candidates_token_count", 0) or 0)
             )
 
         return {

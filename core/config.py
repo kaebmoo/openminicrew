@@ -60,6 +60,9 @@ FOURSQUARE_API_KEY = _optional("FOURSQUARE_API_KEY", "")
 MAX_CONTEXT_MESSAGES = int(_optional("MAX_CONTEXT_MESSAGES", "10"))
 CHAT_HISTORY_RETENTION_DAYS = int(_optional("CHAT_HISTORY_RETENTION_DAYS", "30"))
 
+# === Location ===
+LOCATION_TTL_MINUTES = int(_optional("LOCATION_TTL_MINUTES", "60"))  # 0 = ไม่หมดอายุ
+
 # === Schedule ===
 TIMEZONE = _optional("TIMEZONE", "Asia/Bangkok")
 MORNING_BRIEFING_TIME = _optional("MORNING_BRIEFING_TIME", "07:00")

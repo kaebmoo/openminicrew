@@ -24,25 +24,22 @@ MAX_MSG_LENGTH = 4096  # Telegram max message length
 
 
 # ------------------------------------------------------------------
-# User Location Cache (in-memory, ephemeral)
+# User Location (persisted in SQLite with configurable TTL)
 # ------------------------------------------------------------------
-
-_user_locations: dict[str, dict] = {}  # {user_id: {"lat": float, "lng": float, "updated_at": str}}
 
 
 def save_user_location(user_id: str, lat: float, lng: float):
-    """บันทึกตำแหน่งล่าสุดของ user"""
-    _user_locations[str(user_id)] = {
-        "lat": lat,
-        "lng": lng,
-        "updated_at": datetime.now().isoformat(),
-    }
+    """บันทึกตำแหน่งล่าสุดของ user ลง DB"""
+    from core import db
+    db.save_location(str(user_id), lat, lng)
     log.info(f"Saved location for user {user_id}: {lat}, {lng}")
 
 
 def get_user_location(user_id: str) -> dict | None:
-    """ดึงตำแหน่งล่าสุดของ user — return None ถ้าไม่เคยแชร์"""
-    return _user_locations.get(str(user_id))
+    """ดึงตำแหน่งล่าสุดของ user — return None ถ้าไม่มีหรือหมดอายุ (TTL)"""
+    from core import db
+    from core.config import LOCATION_TTL_MINUTES
+    return db.get_location(str(user_id), ttl_minutes=LOCATION_TTL_MINUTES)
 
 
 def send_location_request(chat_id: str | int, text: str = "📍 กดปุ่มด้านล่างเพื่อส่งตำแหน่งปัจจุบัน"):

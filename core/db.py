@@ -73,6 +73,14 @@ CREATE TABLE IF NOT EXISTS schedules (
     last_run_at       TEXT,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
+
+CREATE TABLE IF NOT EXISTS user_locations (
+    user_id           TEXT PRIMARY KEY,
+    latitude          REAL NOT NULL,
+    longitude         REAL NOT NULL,
+    updated_at        TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
 """
 
 
@@ -113,7 +121,10 @@ def get_user_by_chat_id(chat_id: str) -> dict | None:
 
 
 def upsert_user(user_id: str, chat_id: str, display_name: str, role: str = "user",
-                default_llm: str = "claude", timezone: str = "Asia/Bangkok"):
+                default_llm: str = None, timezone: str = None):
+    from core.config import DEFAULT_LLM, TIMEZONE as DEFAULT_TIMEZONE
+    default_llm = default_llm or DEFAULT_LLM
+    timezone = timezone or DEFAULT_TIMEZONE
     now = datetime.now().isoformat()
     with get_conn() as conn:
         conn.execute("""
@@ -125,6 +136,22 @@ def upsert_user(user_id: str, chat_id: str, display_name: str, role: str = "user
                 updated_at=?
         """, (user_id, str(chat_id), display_name, role,
               default_llm, timezone, now, now, now))
+
+
+def get_all_users() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM users ORDER BY created_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def deactivate_user(chat_id: str):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET is_active = 0, updated_at = ? WHERE telegram_chat_id = ?",
+            (datetime.now().isoformat(), str(chat_id))
+        )
 
 
 def update_user_preference(user_id: str, key: str, value: str):
@@ -243,3 +270,41 @@ def get_last_scheduler_run() -> str | None:
             "SELECT MAX(last_run_at) as last FROM schedules"
         ).fetchone()
         return row["last"] if row else None
+
+
+# === User locations ===
+
+def save_location(user_id: str, lat: float, lng: float):
+    """บันทึกตำแหน่ง GPS ล่าสุดของ user (upsert)"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO user_locations (user_id, latitude, longitude, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                latitude=excluded.latitude,
+                longitude=excluded.longitude,
+                updated_at=excluded.updated_at
+        """, (str(user_id), lat, lng, now))
+
+
+def get_location(user_id: str, ttl_minutes: int = 60) -> dict | None:
+    """ดึงตำแหน่งล่าสุด — return None ถ้าไม่มีหรือหมดอายุ
+    ttl_minutes=0 หมายถึงไม่หมดอายุ
+    """
+    with get_conn() as conn:
+        if ttl_minutes > 0:
+            row = conn.execute("""
+                SELECT latitude, longitude, updated_at FROM user_locations
+                WHERE user_id = ?
+                  AND updated_at > datetime('now', ?)
+            """, (str(user_id), f"-{ttl_minutes} minutes")).fetchone()
+        else:
+            row = conn.execute("""
+                SELECT latitude, longitude, updated_at FROM user_locations
+                WHERE user_id = ?
+            """, (str(user_id),)).fetchone()
+
+        if not row:
+            return None
+        return {"lat": row["latitude"], "lng": row["longitude"], "updated_at": row["updated_at"]}

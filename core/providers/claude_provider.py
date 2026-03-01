@@ -29,7 +29,7 @@ class ClaudeProvider(BaseLLMProvider):
     def __init__(self):
         self._client = None
         if ANTHROPIC_API_KEY:
-            self._client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            self._client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
     def is_configured(self) -> bool:
         return self._client is not None
@@ -70,7 +70,7 @@ class ClaudeProvider(BaseLLMProvider):
         if tools:
             kwargs["tools"] = [self.convert_tool_spec(t) for t in tools]
 
-        resp = self._client.messages.create(**kwargs)
+        resp = await self._client.messages.create(**kwargs)
 
         content = ""
         tool_call = None
