@@ -96,7 +96,9 @@ python main.py
 ```python
 """My Tool — คำอธิบายสั้นๆ"""
 
+import requests          # ถ้าต้องเรียก API
 from tools.base import BaseTool
+from core import db
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -106,6 +108,7 @@ class MyTool(BaseTool):
     name = "my_tool"
     description = "คำอธิบายที่ LLM จะใช้ตัดสินใจว่าจะเรียก tool นี้เมื่อไหร่"
     commands = ["/mytool"]
+    direct_output = True   # True = ส่งผลตรงๆ, False = ส่งให้ LLM สรุปอีกที
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         """
@@ -114,11 +117,10 @@ class MyTool(BaseTool):
         Parameters:
             user_id: Telegram chat ID ของ user (string)
             args: ข้อความที่ตามหลัง command เช่น "/mytool hello" → args = "hello"
-            **kwargs: parameter เพิ่มเติมที่ LLM ส่งมา (เช่น mode, category)
-                      ต้องมี **kwargs เสมอเพื่อรองรับ parameter ที่ไม่รู้จักล่วงหน้า
+            **kwargs: parameter เพิ่มเติมที่ LLM ส่งมา
 
         Returns:
-            string ที่จะส่งกลับให้ user (หรือส่งให้ LLM สรุปอีกที)
+            string ที่จะส่งกลับให้ user
         """
         if not args:
             return "กรุณาระบุ... เช่น /mytool xxx"
@@ -126,10 +128,27 @@ class MyTool(BaseTool):
         try:
             # === ทำงานหลัก ===
             result = f"ผลลัพธ์สำหรับ: {args}"
+
+            # === Log usage (บังคับ) ===
+            db.log_tool_usage(
+                user_id=user_id,
+                tool_name=self.name,
+                input_summary=args[:100],
+                output_summary=result[:200],
+                status="success",
+            )
+
             return result
 
         except Exception as e:
-            log.error(f"MyTool failed: {e}")
+            log.error(f"MyTool failed for {user_id}: {e}")
+            db.log_tool_usage(
+                user_id=user_id,
+                tool_name=self.name,
+                input_summary=args[:100],
+                status="failed",
+                error_message=str(e),
+            )
             return f"เกิดข้อผิดพลาด: {e}"
 
     def get_tool_spec(self) -> dict:
@@ -138,7 +157,7 @@ class MyTool(BaseTool):
         LLM Router จะแปลง format ให้ตรง provider (Claude/Gemini) อัตโนมัติ
         """
         return {
-            "name": "my_tool",
+            "name": self.name,               # ❗ ใช้ self.name เสมอ ห้าม hardcode
             "description": "คำอธิบายที่ LLM จะใช้ตัดสินใจ",
             "parameters": {
                 "type": "object",
@@ -813,7 +832,7 @@ Tool spec เป็น **format กลาง** — LLM Router จะแปลง
 ```python
 def get_tool_spec(self) -> dict:
     return {
-        "name": "tool_name",           # ต้องตรงกับ self.name
+        "name": self.name,             # ❗ ใช้ self.name เสมอ ห้าม hardcode
         "description": "คำอธิบาย",     # LLM ใช้ตัดสินใจ — ยิ่งชัดเจนยิ่งดี
         "parameters": {
             "type": "object",
@@ -881,23 +900,45 @@ async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
 > ⚠️ **อย่าให้ exception หลุดออกจาก `execute()`** — dispatcher จะ catch ได้
 > แต่ user จะได้ error message ที่ไม่สวย ควร catch เองแล้ว return ข้อความที่อ่านง่าย
 
+### 6. `direct_output` — ส่งตรง vs ผ่าน LLM
+
+```python
+class MyTool(BaseTool):
+    direct_output = True   # ส่งผลตรงๆ ไม่ต้องให้ LLM สรุปอีกที
+    # direct_output = False  # ส่งผลให้ LLM สรุปเป็นภาษาธรรมชาติอีกที
+```
+
+| ค่า | ใช้เมื่อ | ตัวอย่าง |
+|---|---|---|
+| `True` (default) | tool format output เองสวยแล้ว | lotto, traffic, news |
+| `False` | อยากให้ LLM สรุปข้อมูลดิบเป็นภาษาธรรมชาติ | email_summary |
+
 ---
 
 ## Checklist ก่อน Deploy
+
+### บังคับ (ขาดข้อใด = bug)
 
 - [ ] ไฟล์อยู่ใน `tools/` directory
 - [ ] Class inherit จาก `BaseTool`
 - [ ] ตั้ง `name`, `description`, `commands` ครบ
 - [ ] `execute()` มี signature: `async def execute(self, user_id: str, args: str = "", **kwargs) -> str`
 - [ ] `execute()` return string เสมอ (ไม่ return None)
-- [ ] `execute()` ไม่ให้ exception หลุด — catch ทุกกรณี
+- [ ] `execute()` ครอบด้วย `try/except` ไม่ให้ exception หลุด
+- [ ] `get_tool_spec()` ใช้ `self.name` (**ห้าม hardcode** ชื่อ tool)
+- [ ] `db.log_tool_usage()` ทั้ง success และ failed
+- [ ] ตั้ง `direct_output` ตามที่ต้องการ (ดูหัวข้อ `direct_output` ข้างล่าง)
+
+### ควรทำ (ไม่ทำ = ทำงานได้แต่ไม่ดี)
+
 - [ ] `get_tool_spec()` มี description ชัดเจน (LLM ใช้ตัดสินใจ)
-- [ ] ถ้าใช้ enum parameter → ระบุ `"enum": [...]` ใน properties แทนการ regex text เอง
+- [ ] ถ้าใช้ enum parameter → ระบุ `"enum": [...]` ใน properties
 - [ ] ถ้าใช้ API key → เพิ่มใน `.env`, `.env.example`, `core/config.py`
 - [ ] ถ้าใช้ library ใหม่ → เพิ่มใน `requirements.txt`
 - [ ] ทดสอบผ่าน `/command` ตรง
 - [ ] ทดสอบผ่านพิมพ์อิสระ (LLM เลือก tool ถูก)
 - [ ] อัพเดท README.md (ตาราง commands)
+- [ ] output ไม่เกิน Telegram limit (~4096 chars)
 
 ---
 
@@ -907,14 +948,17 @@ async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
 |---|---|---|---|
 | พยากรณ์อากาศ | `/weather` | Open-Meteo (ฟรี) | ง่าย |
 | แปลภาษา | `/translate` | ใช้ LLM (ไม่ต้อง API เพิ่ม) | ง่าย |
-| สรุปข่าว | `/news` | RSS + LLM | ง่าย |
+| สรุปข่าว | `/news` | RSS + LLM | **Done ✅** |
+| เส้นทาง/จราจร | `/traffic` | Google Maps Directions API | **Done ✅** |
+| ค้นหาสถานที่ | `/places` | Foursquare / Google Places | **Done ✅** |
+| สรุปอีเมล Gmail | `/email` | Gmail API + LLM | **Done ✅** |
+| อีเมลองค์กร (IMAP) | `/wm` | IMAP + pdfplumber/docx/openpyxl | **Done ✅** |
+| ตรวจผลสลาก | `/lotto` | lotto.api.rayriffy.com | **Done ✅** |
 | จดบันทึก/เตือนความจำ | `/note` | SQLite (มีอยู่แล้ว) | ง่าย |
 | ค้นหาเว็บ | `/search` | Google Custom Search / SerpAPI | ปานกลาง |
-| เส้นทาง/จราจร | `/traffic` | Google Maps Directions API | ปานกลาง |
 | ค่าเงิน/อัตราแลกเปลี่ยน | `/fx` | exchangerate-api (ฟรี) | ง่าย |
 | ติดตามพัสดุ | `/track` | Thailand Post API / Kerry API | ปานกลาง |
 | จัดการ Google Calendar | `/cal` | Google Calendar API | ยาก |
-| อ่านไฟล์แนบ email | `/attachment` | Gmail API + PDF parser | ยาก |
 | สรุป YouTube | `/yt` | YouTube Transcript API + LLM | ปานกลาง |
 
 ---

@@ -96,7 +96,9 @@ python main.py
 ```python
 """My Tool — Brief description"""
 
+import requests          # if calling external API
 from tools.base import BaseTool
+from core import db
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -106,6 +108,7 @@ class MyTool(BaseTool):
     name = "my_tool"
     description = "Description that LLM uses to decide when to call this tool"
     commands = ["/mytool"]
+    direct_output = True   # True = send result directly, False = let LLM summarize
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         """
@@ -114,11 +117,10 @@ class MyTool(BaseTool):
         Parameters:
             user_id: Telegram chat ID of the user (string)
             args: text after the command, e.g. "/mytool hello" → args = "hello"
-            **kwargs: extra parameters from LLM (e.g. mode, category)
-                      always include **kwargs to absorb unknown parameters
+            **kwargs: extra parameters from LLM
 
         Returns:
-            string to send back to user (or passed to LLM for summarization)
+            string to send back to user
         """
         if not args:
             return "Please specify... e.g. /mytool xxx"
@@ -126,10 +128,27 @@ class MyTool(BaseTool):
         try:
             # === Main logic ===
             result = f"Result for: {args}"
+
+            # === Log usage (mandatory) ===
+            db.log_tool_usage(
+                user_id=user_id,
+                tool_name=self.name,
+                input_summary=args[:100],
+                output_summary=result[:200],
+                status="success",
+            )
+
             return result
 
         except Exception as e:
-            log.error(f"MyTool failed: {e}")
+            log.error(f"MyTool failed for {user_id}: {e}")
+            db.log_tool_usage(
+                user_id=user_id,
+                tool_name=self.name,
+                input_summary=args[:100],
+                status="failed",
+                error_message=str(e),
+            )
             return f"Error: {e}"
 
     def get_tool_spec(self) -> dict:
@@ -138,7 +157,7 @@ class MyTool(BaseTool):
         LLM Router auto-converts format to match provider (Claude/Gemini).
         """
         return {
-            "name": "my_tool",
+            "name": self.name,               # ❗ always use self.name, never hardcode
             "description": "Description that LLM uses to decide",
             "parameters": {
                 "type": "object",
@@ -807,7 +826,7 @@ The tool spec uses a **generic format** — LLM Router auto-converts to match th
 ```python
 def get_tool_spec(self) -> dict:
     return {
-        "name": "tool_name",           # must match self.name
+        "name": self.name,             # ❗ always use self.name, never hardcode
         "description": "Description",  # LLM uses this to decide — clearer is better
         "parameters": {
             "type": "object",
@@ -874,23 +893,45 @@ async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
 > ⚠️ **Never let exceptions escape `execute()`** — the dispatcher will catch them,
 > but the user will get an ugly error message. Always catch and return a friendly message.
 
+### 6. `direct_output` — Direct vs LLM-summarized
+
+```python
+class MyTool(BaseTool):
+    direct_output = True   # send result directly, no LLM re-summarization
+    # direct_output = False  # pass result to LLM for natural language summary
+```
+
+| Value | Use when | Examples |
+|---|---|---|
+| `True` (default) | tool formats output nicely on its own | lotto, traffic, news |
+| `False` | you want LLM to summarize raw data | email_summary |
+
 ---
 
 ## Pre-Deploy Checklist
+
+### Mandatory (missing any = bug)
 
 - [ ] File is in the `tools/` directory
 - [ ] Class inherits from `BaseTool`
 - [ ] `name`, `description`, `commands` are all set
 - [ ] `execute()` has signature: `async def execute(self, user_id: str, args: str = "", **kwargs) -> str`
 - [ ] `execute()` always returns a string (never returns None)
-- [ ] `execute()` catches all exceptions — no unhandled errors
+- [ ] `execute()` wrapped in `try/except` — no unhandled exceptions
+- [ ] `get_tool_spec()` uses `self.name` (**never hardcode** the tool name)
+- [ ] `db.log_tool_usage()` for both success and failed
+- [ ] `direct_output` set appropriately (see `direct_output` section above)
+
+### Recommended (skipping = works but not great)
+
 - [ ] `get_tool_spec()` has a clear description (LLM uses it to decide)
-- [ ] If using enum parameter → use `"enum": [...]` in properties instead of regex parsing text
+- [ ] If using enum parameter → use `"enum": [...]` in properties
 - [ ] If using an API key → added to `.env`, `.env.example`, `core/config.py`
 - [ ] If using a new library → added to `requirements.txt`
 - [ ] Tested via direct `/command`
 - [ ] Tested via free text (LLM selects correct tool)
 - [ ] Updated README.md (commands table)
+- [ ] Output fits within Telegram limit (~4096 chars)
 
 ---
 
@@ -900,15 +941,17 @@ async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
 |---|---|---|---|
 | Weather Forecast | `/weather` | Open-Meteo (free) | Easy |
 | Translation | `/translate` | Use LLM (no extra API) | Easy |
-| News Summary | `/news` | RSS + LLM | Easy |
+| News Summary | `/news` | RSS + LLM | **Done ✅** |
+| Route / Traffic | `/traffic` | Google Maps Directions API | **Done ✅** |
+| Place Search | `/places` | Foursquare / Google Places | **Done ✅** |
+| Gmail Summary | `/email` | Gmail API + LLM | **Done ✅** |
+| Work Email (IMAP) | `/wm` | IMAP + pdfplumber/docx/openpyxl | **Done ✅** |
+| Thai Lottery Check | `/lotto` | lotto.api.rayriffy.com | **Done ✅** |
 | Notes / Reminders | `/note` | SQLite (already available) | Easy |
 | Web Search | `/search` | Google Custom Search / SerpAPI | Medium |
-| Route / Traffic | `/traffic` | Google Maps Directions API | Medium |
 | Exchange Rates | `/fx` | exchangerate-api (free) | Easy |
 | Package Tracking | `/track` | Carrier APIs | Medium |
-| **Work Email (IMAP)** | **`/wm`** | **IMAP + pdfplumber/docx/openpyxl** | **Done ✅** |
 | Google Calendar | `/cal` | Google Calendar API | Hard |
-| Email Attachments | `/attachment` | Gmail API + PDF parser | Hard |
 | YouTube Summary | `/yt` | YouTube Transcript API + LLM | Medium |
 
 ---
