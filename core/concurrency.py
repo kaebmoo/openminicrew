@@ -112,6 +112,9 @@ class LLMSemaphore:
 
     ป้องกันไม่ให้ยิง LLM พร้อมกันมากเกินไป → ลด risk ของ 429 Too Many Requests
 
+    หมายเหตุ: ใน polling mode แต่ละ message ใช้ event loop ใหม่ — semaphore
+    ต้อง reset ตาม loop ไม่งั้น count ติดค้างข้าม loop และ deadlock ได้
+
     Usage:
         sem = LLMSemaphore(max_concurrent=5)
         async with sem.acquire():
@@ -121,11 +124,19 @@ class LLMSemaphore:
     def __init__(self, max_concurrent: int = 5):
         self.max_concurrent = max_concurrent
         self._semaphore: asyncio.Semaphore | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def _get_semaphore(self) -> asyncio.Semaphore:
-        """Lazy init — สร้าง semaphore ใน event loop ที่ใช้งานจริง"""
-        if self._semaphore is None:
+        """Lazy init — สร้าง semaphore ใหม่ถ้า event loop เปลี่ยน"""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._semaphore is None or self._loop is not current_loop:
             self._semaphore = asyncio.Semaphore(self.max_concurrent)
+            self._loop = current_loop
+
         return self._semaphore
 
     def acquire(self):
