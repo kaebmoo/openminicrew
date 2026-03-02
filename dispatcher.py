@@ -26,7 +26,7 @@ SYSTEM_PROMPT = (
 )
 
 
-async def dispatch(user_id: str, user: dict, text: str) -> str:
+async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None, str | None, int]:
     """
     ตัดสินใจ route message → return ข้อความที่จะส่งกลับ user
 

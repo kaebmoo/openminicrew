@@ -112,6 +112,3 @@ class NewsSummaryTool(BaseTool):
         refs_text = "\n".join(references)
 
         return f"📰 สรุปข่าว: {display_label}\n\n{summary}\n\n🔗 ลิงก์อ้างอิง:\n{refs_text}"
-
-# ลงทะเบียน Tool ไปเลย
-tool = NewsSummaryTool()
