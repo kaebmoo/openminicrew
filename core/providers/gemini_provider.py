@@ -22,7 +22,10 @@ class GeminiProvider(BaseLLMProvider):
     def __init__(self):
         self._client = None
         if GEMINI_API_KEY:
-            self._client = genai.Client(api_key=GEMINI_API_KEY)
+            self._client = genai.Client(
+                api_key=GEMINI_API_KEY,
+                http_options={"timeout": 60000},  # 60s timeout (milliseconds) — ป้องกัน polling thread ค้าง
+            )
 
     def is_configured(self) -> bool:
         return self._client is not None

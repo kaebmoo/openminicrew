@@ -29,7 +29,10 @@ class ClaudeProvider(BaseLLMProvider):
     def __init__(self):
         self._client = None
         if ANTHROPIC_API_KEY:
-            self._client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+            self._client = anthropic.AsyncAnthropic(
+                api_key=ANTHROPIC_API_KEY,
+                timeout=60.0,  # 60s timeout — ป้องกัน polling thread ค้าง
+            )
 
     def is_configured(self) -> bool:
         return self._client is not None

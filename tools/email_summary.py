@@ -1,5 +1,6 @@
 """Email Summary Tool — ดึงเมลจาก Gmail + สรุปด้วย LLM"""
 
+import asyncio
 import base64
 import re
 from email.utils import parseaddr
@@ -110,6 +111,7 @@ class EmailSummaryTool(BaseTool):
             return "❌ ยังไม่ได้เชื่อมต่อ Gmail\nกรุณารัน: python main.py --auth-gmail"
 
         try:
+            loop = asyncio.get_event_loop()
             service = build("gmail", "v1", credentials=creds)
 
             # 2. ดึงเมลตามช่วงเวลา + search query
@@ -118,9 +120,13 @@ class EmailSummaryTool(BaseTool):
                 query += f" {search_query}"
             log.info(f"Gmail query: {query}")
 
-            results = service.users().messages().list(
-                userId="me", q=query, maxResults=GMAIL_MAX_RESULTS
-            ).execute()
+            # run_in_executor เพื่อไม่ block event loop (Gmail API เป็น sync)
+            results = await loop.run_in_executor(
+                None,
+                lambda: service.users().messages().list(
+                    userId="me", q=query, maxResults=GMAIL_MAX_RESULTS
+                ).execute()
+            )
 
             messages = results.get("messages", [])
             if not messages:
@@ -136,9 +142,12 @@ class EmailSummaryTool(BaseTool):
                     skipped += 1
                     continue
 
-                msg = service.users().messages().get(
-                    userId="me", id=msg_id, format="full"
-                ).execute()
+                msg = await loop.run_in_executor(
+                    None,
+                    lambda mid=msg_id: service.users().messages().get(
+                        userId="me", id=mid, format="full"
+                    ).execute()
+                )
 
                 headers = {h["name"]: h["value"]
                            for h in msg.get("payload", {}).get("headers", [])}

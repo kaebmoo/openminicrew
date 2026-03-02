@@ -32,7 +32,9 @@ def _run_tool_for_user(user_id: str, chat_id: str, tool_name: str, args: str = "
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(tool.execute(user_id, args))
+            result = loop.run_until_complete(
+                asyncio.wait_for(tool.execute(user_id, args), timeout=120)
+            )
         finally:
             loop.close()
 

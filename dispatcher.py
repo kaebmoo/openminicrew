@@ -218,7 +218,12 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
     with TypingIndicator(chat_id):
         save_user_message(user_id, text)
 
-        result = await dispatch(user_id, user, text)
+        try:
+            result = await asyncio.wait_for(dispatch(user_id, user, text), timeout=120)
+        except asyncio.TimeoutError:
+            log.error(f"dispatch timeout for user {user_id}")
+            send_message(chat_id, "⏱ หมดเวลา — กรุณาลองใหม่")
+            return
 
         if isinstance(result, tuple):
             response_text, tool_used, llm_model, token_used = result
