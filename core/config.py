@@ -76,3 +76,11 @@ LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 DB_FILE = DATA_DIR / "openminicrew.db"
 GMAIL_CREDENTIALS_FILE = BASE_DIR / "credentials.json"  # OAuth client secret
+
+# === Work Email (IMAP) ===
+WORK_IMAP_HOST = _optional("WORK_IMAP_HOST", "")
+WORK_IMAP_PORT = int(_optional("WORK_IMAP_PORT", "993"))
+WORK_IMAP_USER = _optional("WORK_IMAP_USER", "")
+WORK_IMAP_PASSWORD = _optional("WORK_IMAP_PASSWORD", "")
+WORK_EMAIL_MAX_RESULTS = int(_optional("WORK_EMAIL_MAX_RESULTS", "30"))
+WORK_EMAIL_ATTACHMENT_MAX_MB = int(_optional("WORK_EMAIL_ATTACHMENT_MAX_MB", "5"))
