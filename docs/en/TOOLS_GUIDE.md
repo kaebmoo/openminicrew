@@ -906,6 +906,7 @@ async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
 | Route / Traffic | `/traffic` | Google Maps Directions API | Medium |
 | Exchange Rates | `/fx` | exchangerate-api (free) | Easy |
 | Package Tracking | `/track` | Carrier APIs | Medium |
+| **Work Email (IMAP)** | **`/wm`** | **IMAP + pdfplumber/docx/openpyxl** | **Done ✅** |
 | Google Calendar | `/cal` | Google Calendar API | Hard |
 | Email Attachments | `/attachment` | Gmail API + PDF parser | Hard |
 | YouTube Summary | `/yt` | YouTube Transcript API + LLM | Medium |

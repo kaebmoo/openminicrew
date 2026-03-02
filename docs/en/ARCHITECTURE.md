@@ -133,7 +133,11 @@ openminicrew/
 │   ├── __init__.py
 │   ├── base.py                   # BaseTool abstract class
 │   ├── registry.py               # Auto-discover (importlib + inspect)
-│   └── email_summary.py          # Email summary (time range + search + force)
+│   ├── email_summary.py          # Email summary (Gmail, time range + search + force)
+│   ├── work_email.py             # Work Email (IMAP, summary + search + attachments)
+│   ├── traffic.py                # Traffic + route (Google Maps, multi-mode)
+│   ├── places.py                 # Nearby place search (Foursquare)
+│   └── news_summary.py           # News summary (RSS + LLM)
 │
 ├── interfaces/
 │   ├── __init__.py
@@ -432,6 +436,14 @@ TELEGRAM_BOT_TOKEN=123:ABCxxx
 
 # === Gmail ===
 GMAIL_MAX_RESULTS=30
+
+# === Work Email (IMAP) ===
+WORK_IMAP_HOST=mail.company.co.th
+WORK_IMAP_PORT=993
+WORK_IMAP_USER=user@company.co.th
+WORK_IMAP_PASSWORD=secret
+WORK_EMAIL_MAX_RESULTS=30
+WORK_EMAIL_ATTACHMENT_MAX_MB=5
 
 # === Memory ===
 MAX_CONTEXT_MESSAGES=10

@@ -64,6 +64,22 @@ cp .env.example .env
 
 > **สำคัญ:** ตรวจสอบว่า download credentials.json มาจาก project ที่ถูกต้อง — ชื่อ project ที่ตั้งไว้ใน Google Cloud Console จะแสดงบนหน้า consent screen ตอน authorize
 
+### 4. ตั้งค่า Work Email / IMAP (สำหรับ work_email tool)
+
+สำหรับอีเมลองค์กรที่เชื่อมต่อผ่าน IMAP (เช่น Zimbra, Exchange, hMailServer)
+
+```bash
+# ใส่ใน .env
+WORK_IMAP_HOST=mail.company.co.th
+WORK_IMAP_PORT=993
+WORK_IMAP_USER=yourname@company.co.th
+WORK_IMAP_PASSWORD=yourpassword
+WORK_EMAIL_MAX_RESULTS=30        # optional, default 30
+WORK_EMAIL_ATTACHMENT_MAX_MB=5   # optional, default 5
+```
+
+> **หมายเหตุ:** ถ้าไม่ตั้งค่า IMAP คำสั่ง `/wm` จะแจ้ง error แต่ tool อื่นยังทำงานได้ตามปกติ
+
 ### 4. รัน
 
 ```bash
@@ -130,6 +146,18 @@ python main.py
 | `/email from:ktc.co.th` | ค้นหาจากผู้ส่ง KTC |
 | `/email from:grab.com 7d` | อีเมลจาก Grab ย้อนหลัง 7 วัน |
 | `/email force บัตรเครดิต 7d` | รวมทุก option ได้ |
+
+### Work Email (IMAP) — อีเมลองค์กร
+
+| คำสั่ง | คำอธิบาย |
+|---|---|
+| `/wm` | สรุปอีเมลองค์กรวันนี้ (ยังไม่เคยสรุป) |
+| `/wm 7d` | สรุปอีเมลองค์กรย้อนหลัง 7 วัน |
+| `/wm force 7d` | บังคับสรุปซ้ำทั้งหมด (แม้เคยสรุปแล้ว) |
+| `/wm subject:ประชุม` | ค้นหาเมลที่มีคำว่า "ประชุม" ใน subject |
+| `/wm from:hr@company.com` | ค้นหาจากผู้ส่ง |
+| `/wm folder:Sent` | ดึงเมลจาก folder อื่น (ไม่ใช่ INBOX) |
+| `/wm ใบแจ้งหนี้ 30d` | ค้นหาเมลที่มีคำว่า "ใบแจ้งหนี้" ย้อนหลัง 30 วัน |
 
 **รูปแบบผลสรุป:**
 - 📋 ภาพรวม — สรุปสั้นๆ ว่ามีอีเมลอะไรบ้าง
@@ -240,6 +268,7 @@ openminicrew/
 │   ├── base.py        BaseTool abstract class
 │   ├── registry.py    Auto-discover tools
 │   ├── email_summary.py  Email summary (time range + search + force)
+│   ├── work_email.py     Work Email via IMAP (สรุป + ค้นหา + อ่านไฟล์แนบ)
 │   ├── traffic.py     Traffic + route (Google Maps, multi-mode)
 │   ├── places.py      Nearby place search (Foursquare)
 │   └── news_summary.py   News summary (RSS + LLM)
