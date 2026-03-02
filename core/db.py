@@ -1,11 +1,15 @@
-"""SQLite database — WAL mode, multi-tenant ready"""
+"""SQLite database — WAL mode, multi-tenant ready, thread-local connection pool"""
 
 import sqlite3
+import threading
 from datetime import datetime
 from core.config import DB_FILE
 from core.logger import get_logger
 
 log = get_logger(__name__)
+
+# Thread-local storage — แต่ละ thread reuse connection ของตัวเอง
+_local = threading.local()
 
 _CREATE_TABLES = """
 PRAGMA journal_mode=WAL;
@@ -92,10 +96,21 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 
 
 def get_conn() -> sqlite3.Connection:
+    """Return thread-local connection — reuse ภายใน thread เดียวกัน"""
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.execute("SELECT 1")  # ตรวจว่า connection ยังใช้ได้
+            return conn
+        except sqlite3.ProgrammingError:
+            # Connection ถูกปิดไปแล้ว → สร้างใหม่
+            _local.conn = None
+
     conn = sqlite3.connect(str(DB_FILE), timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
+    _local.conn = conn
     return conn
 
 

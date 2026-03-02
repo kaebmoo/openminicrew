@@ -62,6 +62,7 @@ class PlacesTool(BaseTool):
         }
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        args = args or ""
         # 1. Validate API key
         if not GOOGLE_MAPS_API_KEY:
             return (

@@ -8,6 +8,7 @@ import asyncio
 from core.llm import llm_router
 from core.memory import save_user_message, save_assistant_message, get_context
 from core.user_manager import get_preference, set_preference, is_owner
+from core.concurrency import user_rate_limiter, request_dedup
 from core import db
 from tools.registry import registry
 from interfaces.telegram_common import parse_command
@@ -210,10 +211,21 @@ def _handle_model_command(user_id: str, args: str) -> str:
 
 async def process_message(user_id: str, user: dict, chat_id: str | int, text: str):
     """
-    Full pipeline: dispatch + save memory + send Telegram
+    Full pipeline: dedup → rate limit → dispatch + save memory + send Telegram
     เรียกจากทั้ง polling และ webhook
     """
     from interfaces.telegram_common import send_message, TypingIndicator
+
+    # ---- Dedup: ข้อความซ้ำภายใน 5 วินาที → skip ----
+    if request_dedup.is_duplicate(user_id, text):
+        log.info(f"Skipping duplicate message from {user_id}")
+        return
+
+    # ---- Rate limit: เกิน 10 msg/นาที → แจ้ง user ----
+    if not user_rate_limiter.allow(user_id):
+        remaining = user_rate_limiter.remaining(user_id)
+        send_message(chat_id, "⏳ ส่งข้อความเร็วเกินไป กรุณารอสักครู่แล้วลองใหม่")
+        return
 
     with TypingIndicator(chat_id):
         save_user_message(user_id, text)
@@ -222,6 +234,7 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
             result = await asyncio.wait_for(dispatch(user_id, user, text), timeout=120)
         except asyncio.TimeoutError:
             log.error(f"dispatch timeout for user {user_id}")
+            request_dedup.remove(user_id, text)  # ให้ retry ได้
             send_message(chat_id, "⏱ หมดเวลา — กรุณาลองใหม่")
             return
 
@@ -229,6 +242,10 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
             response_text, tool_used, llm_model, token_used = result
         else:
             response_text, tool_used, llm_model, token_used = result, None, None, 0
+
+        # ถ้า dispatch ส่ง error กลับมา → clear dedup ให้ user retry ได้ทันที
+        if response_text and ("ไม่สำเร็จ" in response_text or "ข้อผิดพลาด" in response_text):
+            request_dedup.remove(user_id, text)
 
         # บันทึก memory
         save_assistant_message(

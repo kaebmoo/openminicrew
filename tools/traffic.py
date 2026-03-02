@@ -97,6 +97,8 @@ class TrafficTool(BaseTool):
         }
 
     async def execute(self, user_id: str, args: str = "", mode: str = "driving", **kwargs) -> str:
+        args = args or ""
+        mode = mode or "driving"
         # 1. Validate API key
         if not GOOGLE_MAPS_API_KEY:
             return (

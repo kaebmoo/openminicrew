@@ -3,6 +3,7 @@
 """
 
 from core.providers.registry import provider_registry
+from core.concurrency import llm_semaphore
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -41,7 +42,8 @@ class LLMRouter:
             )
 
         try:
-            return await p.chat(messages, tier, system, tools)
+            async with llm_semaphore.acquire():
+                return await p.chat(messages, tier, system, tools)
         except Exception as e:
             error_str = str(e).lower()
             is_auth_error = (
