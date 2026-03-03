@@ -44,47 +44,58 @@ class LottoTool(BaseTool):
         """
         Return dict with keys: mode, number, date_id
 
-        Examples:
-            ""              → mode="summary"
-            "check 820866"  → mode="check", number="820866"
-            "16022568"      → mode="summary", date_id="16022568"
-            "list"          → mode="list"
+        Supported forms:
+            ""                      → mode="summary"
+            "list"                  → mode="list"
+            "list 2"                → mode="list", page=2
+            "check 820866"          → mode="check", number="820866"
             "check 820866 16022568" → mode="check", number="820866", date_id="16022568"
+            "820866"                → mode="check", number="820866"
+            "16022568"              → mode="summary", date_id="16022568"
+            "16022568 820866"       → mode="check", number="820866", date_id="16022568"
         """
-        result = {"mode": "summary", "number": None, "date_id": None}
+        result = {"mode": "summary", "number": None, "date_id": None, "page": 1}
 
         tokens = args.strip().split()
         if not tokens:
             return result
 
-        idx = 0
-
-        # Check mode keywords
         first = tokens[0].lower()
-        if first == "check":
-            result["mode"] = "check"
-            idx = 1
-            if idx < len(tokens):
-                result["number"] = tokens[idx].strip()
-                idx += 1
-        elif first in ("list", "งวด", "รายการ"):
+
+        # --- list mode ---
+        if first in ("list", "งวด", "รายการ"):
             result["mode"] = "list"
+            # optional page number: /lotto list 2
+            if len(tokens) >= 2 and re.match(r"^\d+$", tokens[1]):
+                result["page"] = int(tokens[1])
             return result
 
-        # remaining tokens: look for date_id (8 digits)
-        for t in tokens[idx:]:
-            if re.match(r"^\d{8}$", t):
-                result["date_id"] = t
-                break
-            elif result["mode"] == "summary" and re.match(r"^\d{8}$", t) is None:
-                # Not a date and not check mode — might be a number for check
-                if re.match(r"^\d{2,6}$", t):
-                    result["mode"] = "check"
+        # --- explicit check mode ---
+        if first == "check":
+            result["mode"] = "check"
+            remaining = tokens[1:]  # everything after "check"
+            for t in remaining:
+                if re.match(r"^\d{8}$", t) and result["date_id"] is None:
+                    result["date_id"] = t
+                elif re.match(r"^\d{2,6}$", t) and result["number"] is None:
                     result["number"] = t
+            return result
 
-        # If first token is 8 digits and mode is still summary, it's a date
-        if result["mode"] == "summary" and tokens[0] and re.match(r"^\d{8}$", tokens[0]):
-            result["date_id"] = tokens[0]
+        # --- positional args (no mode keyword) ---
+        # Collect 8-digit tokens as date_id candidates, others as number candidates
+        date_candidates = [t for t in tokens if re.match(r"^\d{8}$", t)]
+        num_candidates  = [t for t in tokens if re.match(r"^\d{2,6}$", t)]
+
+        if date_candidates:
+            result["date_id"] = date_candidates[0]
+
+        if num_candidates:
+            result["mode"] = "check"
+            result["number"] = num_candidates[0]
+
+        # Pure date only → stay in summary mode
+        if result["date_id"] and not num_candidates:
+            result["mode"] = "summary"
 
         return result
 
@@ -116,10 +127,10 @@ class LottoTool(BaseTool):
             log.error(f"Lotto API error: {e}")
             return None
 
-    def _fetch_draw_list(self) -> list | None:
+    def _fetch_draw_list(self, page: int = 1) -> list | None:
         """Fetch list of available draws from API."""
         try:
-            resp = requests.get(f"{API_BASE}/list/1", timeout=10)
+            resp = requests.get(f"{API_BASE}/list/{page}", timeout=10)
             data = resp.json()
             if data.get("status") != "success":
                 return None
@@ -164,13 +175,13 @@ class LottoTool(BaseTool):
             lines.append(f"   • {date}  →  /lotto {did}")
         return "\n".join(lines)
 
-    def _format_draw_list(self) -> str:
+    def _format_draw_list(self, page: int = 1) -> str:
         """Format list of available draws."""
-        draws = self._fetch_draw_list()
+        draws = self._fetch_draw_list(page=page)
         if not draws:
             return self._fallback_links()
 
-        lines = ["📅 รายการงวดสลากที่มีผล:\n"]
+        lines = [f"📅 รายการงวดสลากที่มีผล (หน้า {page}):\n"]
         for d in draws:
             date = d.get('date', '')
             did = d.get('id', '')
@@ -306,7 +317,7 @@ class LottoTool(BaseTool):
         try:
             # List mode
             if parsed["mode"] == "list":
-                return self._format_draw_list()
+                return self._format_draw_list(page=parsed.get("page", 1))
 
             # Validate check number format
             if parsed["mode"] == "check":

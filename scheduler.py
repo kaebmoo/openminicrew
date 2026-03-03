@@ -15,7 +15,10 @@ from interfaces.telegram_common import send_message
 
 log = get_logger(__name__)
 
-scheduler = BackgroundScheduler(timezone=TIMEZONE)
+scheduler = BackgroundScheduler(
+    timezone=TIMEZONE,
+    job_defaults={"misfire_grace_time": 3600, "coalesce": True},
+)
 _last_run_info = {"last_run": None}
 
 
