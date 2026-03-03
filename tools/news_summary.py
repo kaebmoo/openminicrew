@@ -103,7 +103,7 @@ class NewsSummaryTool(BaseTool):
         chat_resp = await llm_router.chat(
             messages=[{"role": "user", "content": prompt_text}],
             provider=provider,
-            tier="cheap",
+            tier=self.preferred_tier,
             system=system_prompt,
         )
 

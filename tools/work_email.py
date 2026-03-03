@@ -65,6 +65,7 @@ class WorkEmailTool(BaseTool):
     name = "work_email"
     description = "สรุปอีเมลที่ทำงาน (IMAP) พร้อมอ่านไฟล์แนบ ค้นหาได้"
     commands = ["/wm", "/workmail"]
+    preferred_tier = "mid"
     
     TIME_RANGES = {
         "today": ("1d", "วันนี้"),
@@ -526,7 +527,7 @@ class WorkEmailTool(BaseTool):
             resp = await llm_router.chat(
                 messages=[{"role": "user", "content": f"สรุปอีเมล {prompt_count_text} ({display_label}):\n{emails_text}"}],
                 provider=provider,
-                tier="cheap",
+                tier=self.preferred_tier,
                 system=system_prompt,
             )
             

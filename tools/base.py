@@ -8,6 +8,7 @@ class BaseTool(ABC):
     description: str = ""
     commands: list[str] = []
     direct_output: bool = True  # True = ส่งผลลัพธ์ตรงๆ ไม่ต้องผ่าน LLM สรุปซ้ำ
+    preferred_tier: str = "cheap"  # cheap = Haiku/Flash, mid = Sonnet/Pro
 
     @abstractmethod
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:

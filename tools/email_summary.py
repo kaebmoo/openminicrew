@@ -45,6 +45,7 @@ class EmailSummaryTool(BaseTool):
     name = "email_summary"
     description = "สรุปอีเมลที่ยังไม่ได้อ่านจาก Gmail"
     commands = ["/email"]
+    preferred_tier = "mid"
 
     # Mapping ของ time range shortcuts
     TIME_RANGES = {
@@ -206,7 +207,7 @@ class EmailSummaryTool(BaseTool):
             resp = await llm_router.chat(
                 messages=[{"role": "user", "content": f"สรุปอีเมล {len(emails_data)} ฉบับ ({display_label}):\n{emails_text}"}],
                 provider=provider,
-                tier="cheap",
+                tier=self.preferred_tier,
                 system=system,
             )
 
