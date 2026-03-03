@@ -9,9 +9,12 @@
 - [Basic Template](#basic-template)
 - [Example 1: Simple Tool — Weather](#example-1-simple-tool--weather)
 - [Example 2: API Tool — Google Maps Traffic](#example-2-api-tool--google-maps-traffic)
-- [Example 3: LLM Tool — News Summary](#example-3-llm-tool--news-summary)
+- [Example 3: Places Search Tool — Google Places](#example-3-places-search-tool--google-places)
+- [Example 4: LLM Tool — News Summary](#example-4-llm-tool--news-summary)
+- [Example 5: Advanced LLM Tool (Using Mid-Tier Model)](#example-5-advanced-llm-tool-using-mid-tier-model)
 - [Important Details](#important-details)
 - [Pre-Deploy Checklist](#pre-deploy-checklist)
+- [Current Tools Reference](#current-tools-reference)
 - [Tool Ideas](#tool-ideas)
 
 ---
@@ -20,7 +23,7 @@
 
 OpenMiniCrew's tool system is designed for easy extension:
 
-```
+```text
 Create a new .py file in tools/
          │
          ▼
@@ -55,6 +58,8 @@ class MyTool(BaseTool):
     name = "my_tool"           # tool name (must be unique)
     description = "Description" # LLM uses this to decide when to call the tool
     commands = ["/mytool"]     # direct command (zero token cost)
+    direct_output = True       # True = send result directly, False = let LLM summarize
+    preferred_tier = "cheap"   # cheap = Haiku/Flash, mid = Sonnet/Pro
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         # main logic
@@ -108,7 +113,8 @@ class MyTool(BaseTool):
     name = "my_tool"
     description = "Description that LLM uses to decide when to call this tool"
     commands = ["/mytool"]
-    direct_output = True   # True = send result directly, False = let LLM summarize
+    direct_output = True       # True = send result directly, False = let LLM summarize
+    preferred_tier = "cheap"   # cheap = Haiku/Flash, mid = Sonnet/Pro (used when tool calls LLM internally)
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         """
@@ -129,7 +135,7 @@ class MyTool(BaseTool):
             # === Main logic ===
             result = f"Result for: {args}"
 
-            # === Log usage (mandatory) ===
+            # === Log usage (recommended) ===
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
@@ -250,7 +256,7 @@ class WeatherTool(BaseTool):
 
     def get_tool_spec(self) -> dict:
         return {
-            "name": "weather",
+            "name": self.name,
             "description": "Get today's weather forecast for a city",
             "parameters": {
                 "type": "object",
@@ -266,7 +272,8 @@ class WeatherTool(BaseTool):
 ```
 
 **Usage:**
-```
+
+```text
 /weather bangkok
 /weather tokyo
 Or type: "What's the weather like today?"
@@ -276,7 +283,7 @@ Or type: "What's the weather like today?"
 
 ## Example 2: API Tool — Google Maps Traffic
 
-Check routes + real-time traffic via Google Maps Directions API.
+Check routes + real-time traffic + travel time via Google Maps Directions API and Routes API.
 
 ### Step 1: Configure
 
@@ -292,25 +299,42 @@ GOOGLE_MAPS_API_KEY = _optional("GOOGLE_MAPS_API_KEY", "")
 
 ### Step 2: Create the Tool
 
+> This example is simplified from the actual `tools/traffic.py` to show the key structure.
+
 ```python
 # tools/traffic.py
-"""Traffic Tool — Check routes + traffic via Google Maps"""
+"""Traffic Tool — Check routes, traffic conditions, and travel time via Google Maps"""
 
 import re
+import urllib.parse
+
 import requests
+
 from tools.base import BaseTool
 from core.config import GOOGLE_MAPS_API_KEY
+from core import db
 from core.logger import get_logger
 
 log = get_logger(__name__)
 
+# Separators for splitting origin and destination
+SEPARATORS = [" ไป ", " to ", "→", "➡", " ถึง ", "|"]
+
+# Regex patterns for detecting travel mode from Thai text
+_MODE_FALLBACK = [
+    (re.compile(r"มอเตอร์ไซค์|มอไซค์|motorcycle|motorbike", re.IGNORECASE), "two_wheeler"),
+    (re.compile(r"เดินเท้า|เดิน(?!ทาง)|walking|on\s+foot", re.IGNORECASE), "walking"),
+    (re.compile(r"รถโดยสาร|ขนส่งสาธารณะ|รถเมล์|รถไฟฟ้า|transit|bus|bts|mrt", re.IGNORECASE), "transit"),
+]
+
 
 class TrafficTool(BaseTool):
     name = "traffic"
-    description = "Check routes and traffic conditions between two locations via Google Maps"
-    commands = ["/traffic"]
+    description = "Check routes, traffic conditions, and travel time between two locations via Google Maps"
+    commands = ["/traffic", "/route"]
+    direct_output = True
 
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", mode: str = "driving", **kwargs) -> str:
         if not GOOGLE_MAPS_API_KEY:
             return "GOOGLE_MAPS_API_KEY not configured in .env"
 
@@ -318,302 +342,82 @@ class TrafficTool(BaseTool):
             return (
                 "Please specify origin and destination:\n"
                 "/traffic Siam to Silom\n"
-                "/traffic Home to Airport"
+                "/traffic Home to Airport walking\n"
+                "/traffic Siam to Asok motorcycle"
             )
 
-        # Parse origin and destination
-        separators = [" to ", " → ", " -> ", " ไป "]
-        parts = None
-        for sep in separators:
-            if sep in args.lower() if sep == " to " else sep in args:
-                parts = args.split(sep, 1) if sep == " to " else args.split(sep, 1)
+        # Split origin and destination (supports multiple separators)
+        origin, destination = None, None
+        for sep in SEPARATORS:
+            if sep in args:
+                parts = args.split(sep, 1)
+                origin, destination = parts[0].strip(), parts[1].strip()
                 break
 
-        if not parts or len(parts) < 2:
+        if not origin or not destination:
             return "Please use format: /traffic [origin] to [destination]"
 
-        origin = parts[0].strip()
-        destination = parts[1].strip()
+        # Detect mode from text (e.g. "motorcycle", "walking")
+        for pattern, detected_mode in _MODE_FALLBACK:
+            if pattern.search(args):
+                mode = detected_mode
+                break
 
         try:
-            resp = requests.get(
-                "https://maps.googleapis.com/maps/api/directions/json",
-                params={
-                    "origin": origin,
-                    "destination": destination,
-                    "mode": "driving",
-                    "departure_time": "now",
-                    "language": "en",
-                    "key": GOOGLE_MAPS_API_KEY,
-                },
-                timeout=10,
-            )
-            data = resp.json()
+            # Call appropriate API based on mode
+            if mode == "two_wheeler":
+                # Use Routes API (New) for motorcycle
+                result = self._call_routes_api(origin, destination)
+            else:
+                # Use Directions API for driving/walking/transit
+                result = self._call_directions_api(origin, destination, mode)
 
-            if data["status"] != "OK":
-                return f"Could not find route: {data['status']}"
-
-            route = data["routes"][0]
-            leg = route["legs"][0]
-
-            distance = leg["distance"]["text"]
-            duration = leg["duration"]["text"]
-
-            traffic_duration = leg.get("duration_in_traffic", {}).get("text", "")
-            traffic_info = f"\n🚦 With traffic: {traffic_duration}" if traffic_duration else ""
-
-            # Route summary (first 5 steps)
-            steps_summary = []
-            for i, step in enumerate(leg["steps"][:5], 1):
-                instruction = re.sub(r"<[^>]+>", "", step["html_instructions"])
-                step_dist = step["distance"]["text"]
-                steps_summary.append(f"  {i}. {instruction} ({step_dist})")
-
-            steps_text = "\n".join(steps_summary)
-            if len(leg["steps"]) > 5:
-                steps_text += f"\n  ... and {len(leg['steps']) - 5} more steps"
-
-            return (
-                f"🗺 From: {leg['start_address']}\n"
-                f"➡️ To: {leg['end_address']}\n\n"
-                f"📏 Distance: {distance}\n"
-                f"⏱ Normal time: {duration}"
-                f"{traffic_info}\n\n"
-                f"📍 Route:\n{steps_text}"
-            )
+            db.log_tool_usage(user_id, self.name, args[:100], result[:200], "success")
+            return result
 
         except Exception as e:
             log.error(f"Traffic API error: {e}")
+            db.log_tool_usage(user_id, self.name, args[:100], status="failed", error_message=str(e))
             return f"Error: {e}"
+
+    def _call_directions_api(self, origin, destination, mode):
+        """Call Google Maps Directions API"""
+        params = {
+            "origin": origin,
+            "destination": destination,
+            "mode": mode,
+            "departure_time": "now",
+            "alternatives": "true",
+            "language": "th",
+            "region": "th",
+            "key": GOOGLE_MAPS_API_KEY,
+        }
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/directions/json",
+            params=params, timeout=15,
+        )
+        data = resp.json()
+        if data["status"] != "OK":
+            return f"Could not find route: {data['status']}"
+
+        # Format result (route, distance, duration, traffic, Google Maps link)
+        # ... (abbreviated — see full source in tools/traffic.py)
+        route = data["routes"][0]
+        leg = route["legs"][0]
+        return f"🗺 {leg['start_address']} → {leg['end_address']}\n📏 {leg['distance']['text']} ⏱ {leg['duration']['text']}"
+
+    def _call_routes_api(self, origin, destination):
+        """Call Routes API (New) for two_wheeler mode"""
+        # POST https://routes.googleapis.com/directions/v2:computeRoutes
+        # ... (abbreviated — see full source in tools/traffic.py)
+        return "🏍 Motorcycle route..."
 
     def get_tool_spec(self) -> dict:
         return {
             "name": "traffic",
             "description": (
-                "Check route and traffic between two locations, e.g. "
-                "'Siam to Silom', 'Home to Airport'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": "Origin and destination separated by 'to', e.g. 'Siam to Silom'",
-                    }
-                },
-                "required": ["args"],
-            },
-        }
-```
-
-**Usage:**
-```
-/traffic Siam to Silom
-/traffic Home to Airport
-Or type: "How long from Siam to Silom? Is there traffic?"
-```
-
----
-
-## Google Maps API Requirements & Alternatives
-
-### 📋 Required Google Maps APIs
-
-If you want to add Google Maps functionality, here are the APIs you need to enable:
-
-#### For Routes & Traffic (like the example above)
-
-- **Directions API** — Calculate routes between locations (supports driving, walking, biking, transit)
-- **Distance Matrix API** — Calculate distance/time between multiple points
-- **Geolocation API** — Get user's current location
-- **Maps JavaScript API** (if showing maps on web) — Includes Traffic Layer for real-time traffic
-
-#### For Places Search (cafes, restaurants, etc.)
-
-- **Places API (New)** or **Places API** — Search for places nearby
-  - Nearby Search — Find places around a location
-  - Text Search — Search with text queries
-  - Place Details — Get details (reviews, photos, phone, hours)
-- **Geocoding API** — Convert addresses to coordinates or vice versa
-- **Geolocation API** — Detect current location
-
-### 💳 Billing Requirements
-
-**Important:** Google Maps APIs require a **Billing Account** (credit card) to be enabled, even though they offer a generous free tier.
-
-| Aspect          | Details                                                   |
-|-----------------|-----------------------------------------------------------|
-| **Billing Account** | **Required** — Must add credit card to Google Cloud  |
-| **Free Tier**       | $200/month credit (enough for ~40,000 requests)      |
-| **Personal Use**    | Won't exceed free tier for personal bots             |
-| **Cost**            | No charges if you stay within free tier              |
-
-**Comparison with Current Tools:**
-
-- ✅ Gmail API — OAuth only, **no billing required**
-- ✅ Google News RSS — **No API key needed**, completely free
-- ❌ Google Maps APIs — **Billing account required** (but has free tier)
-
-### 🆓 Free Alternatives (No Billing Required)
-
-If you don't want to add a credit card, here are **completely free alternatives**:
-
-#### For Routes & Traffic
-
-| API                  | Free Tier             | Traffic Data                     | Notes                |
-|----------------------|-----------------------|----------------------------------|----------------------|
-| **OpenRouteService** | 2,500 requests/day    | Traffic patterns (not real-time) | No billing required  |
-| **Mapbox Directions** | 100,000 requests/month | Traffic patterns                 | No credit card needed |
-| **OSRM** (self-hosted) | Unlimited             | No traffic data                  | Requires hosting      |
-
-#### For Places Search
-
-| API                   | Free Tier            | Features                                | Notes                 |
-|-----------------------|----------------------|-----------------------------------------|-----------------------|
-| **Foursquare Places** | 100,000 requests/day | Rich POI data, wifi, power outlets      | **Best free option**  |
-| **Overpass API**      | Unlimited            | OpenStreetMap data                      | Raw data, needs processing |
-| **Mapbox Search**     | 100,000 requests/month | Good for addresses                    | Limited POI data      |
-
-### 🤔 Which Should You Choose?
-
-**Use Google Maps if:**
-
-- ✅ You have a credit card and are okay with billing setup
-- ✅ You want the most accurate data and best Thai language support
-- ✅ You need real-time traffic data
-
-**Use Free Alternatives if:**
-
-- ✅ You don't want to add a credit card
-- ✅ You're okay with slightly less accurate data
-- ✅ You don't need real-time traffic (traffic patterns are enough)
-
-**Recommended Free Combo:**
-
-- **Foursquare** for places search (has `wifi`, `power_outlets` attributes!)
-- **OpenRouteService** for routes/directions (good accuracy, traffic patterns)
-
----
-
-## Example 2.1: Places Search Tool — Using Foursquare (Free)
-
-Search for nearby places without billing requirements using Foursquare Places API.
-
-### Step 1: Get Free API Key
-
-1. Go to [Foursquare Developers](https://foursquare.com/developers/signup)
-2. Create a free account
-3. Create a new project
-4. Copy your API Key
-
-### Step 2: Configure
-
-```bash
-# Add to .env
-FOURSQUARE_API_KEY=fsq3xxx
-```
-
-```python
-# Add to core/config.py
-FOURSQUARE_API_KEY = _optional("FOURSQUARE_API_KEY", "")
-```
-
-### Step 3: Create the Tool
-
-```python
-# tools/places.py
-"""Places Search Tool — Find nearby places using Foursquare API"""
-
-import requests
-from tools.base import BaseTool
-from core.config import FOURSQUARE_API_KEY
-from core.logger import get_logger
-
-log = get_logger(__name__)
-
-
-class PlacesTool(BaseTool):
-    name = "places"
-    description = (
-        "Search for nearby places like cafes, restaurants, shops. "
-        "Can filter by features like wifi, power outlets, etc."
-    )
-    commands = ["/places", "/nearby"]
-
-    async def execute(self, user_id: str, args: str = "") -> str:
-        if not FOURSQUARE_API_KEY:
-            return "FOURSQUARE_API_KEY not configured in .env"
-
-        if not args:
-            return (
-                "Please specify what you're looking for:\n"
-                "/places cafe with wifi near Siam\n"
-                "/places restaurants near me\n"
-                "/places coworking spaces with power outlets"
-            )
-
-        try:
-            # Use Foursquare Places API
-            headers = {
-                "Accept": "application/json",
-                "Authorization": FOURSQUARE_API_KEY,
-            }
-
-            params = {
-                "query": args,
-                "limit": 10,
-            }
-
-            # If user says "near me", you could add user's location here
-            # For now, default to a common location (e.g., Bangkok city center)
-            # In production, you'd get user's location via Geolocation API
-
-            resp = requests.get(
-                "https://api.foursquare.com/v3/places/search",
-                headers=headers,
-                params=params,
-                timeout=10,
-            )
-            data = resp.json()
-
-            results = data.get("results", [])
-            if not results:
-                return f"No places found for: {args}"
-
-            # Format results
-            output = f"📍 Found {len(results)} places:\n\n"
-
-            for i, place in enumerate(results[:5], 1):  # Show top 5
-                name = place.get("name", "Unknown")
-                location = place.get("location", {})
-                address = location.get("formatted_address", "Address not available")
-                distance = place.get("distance", 0)
-
-                # Categories
-                categories = place.get("categories", [])
-                category_names = [cat.get("name") for cat in categories[:2]]
-                category_str = ", ".join(category_names) if category_names else "N/A"
-
-                output += f"{i}. **{name}**\n"
-                output += f"   📂 {category_str}\n"
-                output += f"   📍 {address}\n"
-                output += f"   📏 {distance}m away\n\n"
-
-            if len(results) > 5:
-                output += f"... and {len(results) - 5} more\n"
-
-            return output
-
-        except Exception as e:
-            log.error(f"Places API error: {e}")
-            return f"Error: {e}"
-
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": "places",
-            "description": (
-                "Search for nearby places, e.g. 'cafe with wifi near Siam', "
-                "'restaurants with outdoor seating', 'coworking spaces near me'"
+                "Check route, distance, travel time, and real-time traffic "
+                "between two locations via Google Maps"
             ),
             "parameters": {
                 "type": "object",
@@ -621,8 +425,238 @@ class PlacesTool(BaseTool):
                     "args": {
                         "type": "string",
                         "description": (
-                            "Search query describing what to find, e.g. "
-                            "'cafe with power outlets near Siam', 'restaurants near Central World'"
+                            "Origin and destination separated by 'to' or 'ไป', e.g. "
+                            "'Siam to Silom', 'Central World ไป Suvarnabhumi'"
+                        ),
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["driving", "walking", "transit", "two_wheeler"],
+                        "description": (
+                            "Travel mode: driving=car, walking=on foot, "
+                            "transit=public transport, two_wheeler=motorcycle"
+                        ),
+                    },
+                },
+                "required": ["args"],
+            },
+        }
+```
+
+**Key features of the actual Traffic Tool:**
+
+- **Travel modes**: driving, walking, transit, motorcycle (two_wheeler)
+- **Toll avoidance**: detects "avoid tolls" or specific toll road names
+- **GPS location**: detects "near me/here" keywords and uses user's GPS
+- **Alternative routes**: shows up to 3 route options
+- **Google Maps URL**: clickable link to open in Maps app
+- Uses **Directions API** (driving/walking/transit) + **Routes API New** (two_wheeler)
+
+**Usage:**
+
+```text
+/traffic Siam to Silom
+/traffic Siam to Asok motorcycle
+/traffic Siam to Silom walking
+/route Home to Airport
+Or type: "How long from Siam to Silom? Is there traffic?"
+```
+
+---
+
+## Google Maps API Requirements & Alternatives
+
+### 📋 Google Maps APIs Used in This Project
+
+The current project uses these APIs (must be enabled in Google Cloud Console):
+
+- **Directions API** — Calculate routes (driving, walking, transit)
+- **Routes API** — Motorcycle routes (two_wheeler)
+- **Places API (New)** — Search for places (Text Search)
+- **Geocoding API** — Convert place names to coordinates
+
+#### For Additional Features
+
+- **Distance Matrix API** — Calculate distance/time between multiple points
+- **Geolocation API** — Get user's current location
+- **Maps JavaScript API** (if showing maps on web) — Includes Traffic Layer for real-time traffic
+
+### 💳 Billing Requirements
+
+**Important:** Google Maps APIs require a **Billing Account** (credit card) to be enabled, even though they offer a generous free tier.
+
+| Aspect | Details |
+| --- | --- |
+| **Billing Account** | **Required** — Must add credit card to Google Cloud |
+| **Free Tier** | $200/month credit (enough for ~40,000 requests) |
+| **Personal Use** | Won't exceed free tier for personal bots |
+| **Cost** | No charges if you stay within free tier |
+
+**Comparison with Current Tools:**
+
+- ✅ Gmail API — OAuth only, **no billing required**
+- ✅ Google News RSS — **No API key needed**, completely free
+- ✅ Bank of Thailand API — **No billing required**, uses free token
+- ✅ Rayriffy Lotto API — **No API key needed**, completely free
+- ❌ Google Maps/Places APIs — **Billing account required** (but has free tier)
+
+### 🆓 Free Alternatives (No Billing Required)
+
+If you don't want to add a credit card, here are **completely free alternatives**:
+
+#### For Routes & Traffic
+
+| API | Free Tier | Traffic Data | Notes |
+| --- | --- | --- | --- |
+| **OpenRouteService** | 2,500 requests/day | Traffic patterns (not real-time) | No billing required |
+| **Mapbox Directions** | 100,000 requests/month | Traffic patterns | No credit card needed |
+| **OSRM** (self-hosted) | Unlimited | No traffic data | Requires hosting |
+
+#### For Places Search
+
+| API | Free Tier | Features | Notes |
+| --- | --- | --- | --- |
+| **Foursquare Places** | 100,000 requests/day | Rich POI data, wifi, power outlets | Good free option |
+| **Overpass API** | Unlimited | OpenStreetMap data | Raw data, needs processing |
+| **Mapbox Search** | 100,000 requests/month | Good for addresses | Limited POI data |
+
+---
+
+## Example 3: Places Search Tool — Google Places
+
+Search for nearby places using Google Places API (New) — Text Search endpoint.
+
+> This example is simplified from the actual `tools/places.py`.
+
+```python
+# tools/places.py
+"""Places Tool — Search for nearby places via Google Places API (New)"""
+
+import re
+
+import requests
+
+from tools.base import BaseTool
+from core.config import GOOGLE_MAPS_API_KEY
+from core import db
+from core.logger import get_logger
+
+log = get_logger(__name__)
+
+# Price level mapping from Places API (New)
+PRICE_LEVELS = {
+    "PRICE_LEVEL_FREE": "Free",
+    "PRICE_LEVEL_INEXPENSIVE": "💰 Inexpensive",
+    "PRICE_LEVEL_MODERATE": "💰💰 Moderate",
+    "PRICE_LEVEL_EXPENSIVE": "💰💰💰 Expensive",
+    "PRICE_LEVEL_VERY_EXPENSIVE": "💰💰💰💰 Very Expensive",
+}
+
+
+class PlacesTool(BaseTool):
+    name = "places"
+    description = "Search for nearby places like cafes, restaurants, hospitals, convenience stores"
+    commands = ["/places", "/nearby", "/search"]
+    direct_output = True
+
+    # Keywords indicating user means "near me" (requires GPS)
+    _NEARBY_KEYWORDS = re.compile(r"(แถวนี้|ใกล้นี้|ตรงนี้|nearby|near me)")
+    _OPEN_NOW_KEYWORDS = re.compile(r"(เปิดอยู่|เปิดตอนนี้|open now|ยังเปิด|เปิดไหม)")
+    _BANGKOK_CENTER = {"latitude": 13.7563, "longitude": 100.5018}
+
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        if not GOOGLE_MAPS_API_KEY:
+            return "GOOGLE_MAPS_API_KEY not configured in .env"
+
+        if not args:
+            return (
+                "Please specify what you're looking for:\n"
+                "/places cafe near Siam\n"
+                "/places restaurant open now nearby"
+            )
+
+        try:
+            # Detect "open now" → filter
+            open_now = bool(self._OPEN_NOW_KEYWORDS.search(args))
+
+            # Build location bias (circle around user or Bangkok center)
+            location_bias = {
+                "circle": {
+                    "center": self._BANGKOK_CENTER,
+                    "radius": 30000.0,  # 30km
+                }
+            }
+
+            # Call Google Places API (New) — Text Search
+            headers = {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+                "X-Goog-FieldMask": (
+                    "places.displayName,places.formattedAddress,places.rating,"
+                    "places.userRatingCount,places.currentOpeningHours,"
+                    "places.priceLevel,places.googleMapsUri"
+                ),
+            }
+
+            body = {
+                "textQuery": args,
+                "languageCode": "th",
+                "locationBias": location_bias,
+                "maxResultCount": 10,
+            }
+            if open_now:
+                body["openNow"] = True
+
+            resp = requests.post(
+                "https://places.googleapis.com/v1/places:searchText",
+                headers=headers,
+                json=body,
+                timeout=10,
+            )
+            data = resp.json()
+            results = data.get("places", [])
+
+            if not results:
+                return f"No places found for: {args}"
+
+            # Format results
+            output = f"📍 Found {len(results)} places:\n\n"
+            for i, place in enumerate(results[:5], 1):
+                name = place.get("displayName", {}).get("text", "Unknown")
+                address = place.get("formattedAddress", "")
+                rating = place.get("rating")
+                stars = "⭐" * int(rating) if rating else ""
+                maps_url = place.get("googleMapsUri", "")
+
+                output += f"{i}. {name} {stars}\n"
+                output += f"   📍 {address}\n"
+                if maps_url:
+                    output += f"   🔗 {maps_url}\n"
+                output += "\n"
+
+            db.log_tool_usage(user_id, self.name, args[:100], status="success")
+            return output
+
+        except Exception as e:
+            log.error(f"Places API error: {e}")
+            db.log_tool_usage(user_id, self.name, args[:100], status="failed", error_message=str(e))
+            return f"Error: {e}"
+
+    def get_tool_spec(self) -> dict:
+        return {
+            "name": "places",
+            "description": (
+                "Search for nearby places, e.g. 'cafe near Siam', "
+                "'restaurant near Sukhumvit', 'hospital near Ladprao'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "args": {
+                        "type": "string",
+                        "description": (
+                            "Search query with location, e.g. "
+                            "'cafe near Siam', 'restaurant near Sukhumvit'"
                         ),
                     }
                 },
@@ -631,140 +665,195 @@ class PlacesTool(BaseTool):
         }
 ```
 
+**Key features of the actual Places Tool:**
+
+- Uses **Google Places API (New)** — Text Search endpoint
+- **Location Bias**: uses user's GPS (if available) or falls back to Bangkok 30km radius
+- **Open Now Filter**: detects "open now" / "เปิดอยู่" keywords and filters accordingly
+- Displays: name, star rating, address, open/closed status, price level, phone, website, Google Maps link
+
 **Usage:**
-```
-/places cafe with wifi near Siam
-/places restaurants with outdoor seating
-/places coworking spaces near me
+
+```text
+/places cafe near Siam
+/places restaurant open now nearby
+/search ATM near MBK
+/nearby hospital near Ladprao
 Or type: "Find cafes with power outlets near here"
 ```
 
-**Features of Foursquare:**
-
-- ✅ 100,000 free requests/day
-- ✅ Rich place data (photos, ratings, hours, phone)
-- ✅ Attributes like `wifi`, `outdoor_seating`, `delivery`
-- ✅ No billing account required
-- ✅ Good international coverage
-
 ---
 
-## Example 3: LLM Tool — News Summary
+## Example 4: LLM Tool — News Summary
 
-Fetch news from RSS feeds and let LLM summarize.
+Fetch news from Google News RSS and let LLM summarize.
+
+> This example is simplified from the actual `tools/news_summary.py`.
 
 ```python
 # tools/news_summary.py
-"""News Summary Tool — Summarize latest news from RSS feeds"""
+"""News Summary Tool — Fetch news from Google News RSS + summarize with LLM"""
 
-import feedparser
+import urllib.parse
+import xml.etree.ElementTree as ET
+
+import requests
+
 from tools.base import BaseTool
-from core.config import DEFAULT_LLM
 from core.llm import llm_router
+from core.user_manager import get_user, get_preference
 from core.logger import get_logger
 
 log = get_logger(__name__)
 
-FEEDS = {
-    "tech": {
-        "label": "Technology",
-        "url": "https://feeds.arstechnica.com/arstechnica/technology-lab",
-    },
-    "world": {
-        "label": "World News",
-        "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
-    },
-}
-
 
 class NewsSummaryTool(BaseTool):
     name = "news_summary"
-    description = "Summarize latest news from various sources"
+    description = "Summarize today's top news or search for news by topic from Google News"
     commands = ["/news"]
-
-    async def execute(self, user_id: str, args: str = "") -> str:
-        category = args.strip().lower() if args else "tech"
-
-        feed_info = FEEDS.get(category)
-        if not feed_info:
-            categories = ", ".join(f"{k} ({v['label']})" for k, v in FEEDS.items())
-            return f"Available categories: {categories}"
-
-        try:
-            # 1. Fetch news from RSS
-            feed = feedparser.parse(feed_info["url"])
-            entries = feed.entries[:10]
-
-            if not entries:
-                return f"No recent {feed_info['label']} news found"
-
-            # 2. Prepare data for LLM
-            news_text = ""
-            for i, entry in enumerate(entries, 1):
-                title = entry.get("title", "")
-                summary = entry.get("summary", "")[:300]
-                news_text += f"\n--- Article #{i} ---\n"
-                news_text += f"Title: {title}\n"
-                news_text += f"Content: {summary}\n"
-
-            # 3. Let LLM summarize
-            system = (
-                "You are a news summarizer. Be concise and clear. "
-                "Group related articles. Highlight key points. "
-                "Use emoji for readability."
-            )
-            resp = await llm_router.chat(
-                messages=[{"role": "user", "content": f"Summarize these {feed_info['label']} articles:\n{news_text}"}],
-                provider=DEFAULT_LLM,
-                tier="cheap",
-                system=system,
-            )
-
-            return f"📰 Latest {feed_info['label']}:\n\n{resp['content']}"
-
-        except Exception as e:
-            log.error(f"News fetch error: {e}")
-            return f"Failed to fetch news: {e}"
+    # direct_output = True (default) — tool summarizes with LLM internally, sends result directly
 
     def get_tool_spec(self) -> dict:
         return {
-            "name": "news_summary",
-            "description": "Summarize latest news, choose category: tech, world",
+            "name": self.name,
+            "description": "Search and summarize latest news from Google News by keyword or general headlines",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "args": {
                         "type": "string",
-                        "description": "News category: tech (Technology), world (World News)",
+                        "description": "News topic to search for, e.g. 'technology', 'politics', 'stocks', or leave empty for top news",
                     }
                 },
-                "required": [],
             },
         }
+
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        topic = (args or "").strip()
+
+        # 1. Choose RSS URL based on search query
+        if topic:
+            query = urllib.parse.quote(topic)
+            rss_url = f"https://news.google.com/rss/search?q={query}&hl=th&gl=TH&ceid=TH:th"
+            display_label = f"Topic: {topic}"
+        else:
+            rss_url = "https://news.google.com/rss?hl=th&gl=TH&ceid=TH:th"
+            display_label = "Top headlines"
+
+        # 2. Fetch RSS data
+        try:
+            resp = requests.get(rss_url, timeout=10)
+            resp.raise_for_status()
+
+            root = ET.fromstring(resp.content)
+            items = root.findall("./channel/item")
+
+            if not items:
+                return f"No news found for {display_label}"
+
+            # 3. Extract top 10 headlines + strip source name
+            max_news = 10
+            headlines = []
+            references = []
+
+            for i, item in enumerate(items[:max_news], 1):
+                title = item.findtext("title")
+                link = item.findtext("link")
+
+                if title and " - " in title:
+                    clean_title = title.rsplit(" - ", 1)[0]
+                    source = title.rsplit(" - ", 1)[1].strip()
+                else:
+                    clean_title = title or ""
+                    source = "Read more"
+
+                headlines.append(f"[{i}] {clean_title}")
+                references.append(f"{i}. [{source}]({link})")
+
+            headlines_text = "\n".join(headlines)
+
+        except Exception as e:
+            log.error(f"Failed to fetch Google News: {e}")
+            return "❌ Failed to fetch news. Please try again."
+
+        # 4. Summarize with LLM (send only headlines, not URLs)
+        user = get_user(user_id) or {}
+        provider = get_preference(user, "default_llm")
+
+        system_prompt = (
+            "You are a smart news anchor. Tone: concise, friendly, easy to understand.\n"
+            "1. Group related news together\n"
+            "2. Summarize key points concisely\n"
+            "3. Add reference numbers [1] [2] at the end of each story\n"
+            "4. Do not add URLs — the system appends them automatically"
+        )
+
+        chat_resp = await llm_router.chat(
+            messages=[{"role": "user", "content": f"Summarize these news ({display_label}):\n{headlines_text}"}],
+            provider=provider,
+            tier=self.preferred_tier,
+            system=system_prompt,
+        )
+
+        # 5. Combine: summary + clickable reference links
+        summary = chat_resp.get("content", "")
+        refs_text = "\n".join(references)
+
+        return f"📰 News Summary: {display_label}\n\n{summary}\n\n🔗 References:\n{refs_text}"
 ```
 
+**Key points:**
+
+- Uses **Google News RSS** (free, no API key required)
+- **Keyword search** supported (not category-based)
+- Tool calls **LLM internally** to summarize → uses `direct_output = True` (default) so dispatcher doesn't re-summarize
+- Uses `self.preferred_tier` instead of hardcoding `tier="cheap"`
+
 **Usage:**
-```
-/news tech
-/news world
+
+```text
+/news
+/news technology
+/news politics
+/news stocks
 Or type: "What's the latest tech news?"
 ```
 
 ---
 
-## Example 4: Advanced LLM Tool (Using Mid-Tier Model)
+## Example 5: Advanced LLM Tool (Using Mid-Tier Model)
 
-Sometimes you may build a highly complex tool such as deep data analysis, summarizing extremely long documents, or writing intricate code where the default (cheap) model might struggle. In the **OpenMiniCrew** system, you can explicitly request a higher-tier (**Mid**) model (like `CLAUDE_MODEL_MID` or Gemini's premium tier) during the tools execution.
+Sometimes you may build a complex tool (deep data analysis, long document summarization, code generation) where the default cheap model might struggle.
 
-You simply call `llm_router.chat()` internally to perform the analysis, providing the parameter `tier="mid"`.
+**Method 1: Set `preferred_tier` at class level** (recommended — all LLM calls in the tool use the same tier)
+
+```python
+class MySmartTool(BaseTool):
+    preferred_tier = "mid"  # ← all llm_router.chat() calls using self.preferred_tier get Sonnet/Pro
+
+    async def execute(self, ...):
+        resp = await llm_router.chat(..., tier=self.preferred_tier, ...)
+```
+
+**Method 2: Specify `tier` per call** (for mixing tiers within the same tool)
+
+```python
+# First call: use cheap for simple tasks
+resp1 = await llm_router.chat(..., tier="cheap", ...)
+
+# Second call: use mid for complex analysis
+resp2 = await llm_router.chat(..., tier="mid", ...)
+```
+
+**Full example:**
 
 ```python
 # tools/research_tool.py
 """Research Tool — In-depth data analysis using an advanced LLM"""
 
 from tools.base import BaseTool
-from core.config import DEFAULT_LLM
 from core.llm import llm_router
+from core.user_manager import get_user, get_preference
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -773,36 +862,35 @@ class ResearchSummaryTool(BaseTool):
     name = "research_summary"
     description = "Conducts deep and comprehensive analysis on a given topic"
     commands = ["/research"]
-    direct_output = True  # We return the AI's result directly without further wrapping
-    
+    direct_output = True
+    preferred_tier = "mid"  # ← always use the advanced model
+
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         if not args:
             return "Please provide a topic: /research [topic]"
-            
+
         try:
-            # Imagine here you fetch massive data or search Google prior to the prompt
-            # data_to_analyze = await search_google(args)
-            data_to_analyze = f"Raw data concepts regarding the mechanics of {args}"
-            
+            user = get_user(user_id) or {}
+            provider = get_preference(user, "default_llm")
+
             system_prompt = (
                 "You are a Senior Data Analyst. "
-                "Analyze the data using rigorous logic. State the impacts and recommendations."
+                "Analyze data using rigorous logic. State impacts and recommendations."
             )
-            
-            # The key is to specify tier="mid" to employ the most capable model
+
             resp = await llm_router.chat(
-                messages=[{"role": "user", "content": f"Please analyze this dataset:\n{data_to_analyze}"}],
-                provider=DEFAULT_LLM,
-                tier="mid",  # <-- Right here
+                messages=[{"role": "user", "content": f"Analyze this topic:\n{args}"}],
+                provider=provider,
+                tier=self.preferred_tier,  # ← uses "mid" from class attribute
                 system=system_prompt,
             )
-            
+
             return f"🔬 **Deep Analysis: {args}**\n\n{resp['content']}"
 
         except Exception as e:
             log.error(f"Research failed: {e}")
             return f"Analysis failed: {e}"
-            
+
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
@@ -821,10 +909,16 @@ class ResearchSummaryTool(BaseTool):
 ```
 
 **What happens here:**
+
 1. The dispatcher routes the request to this tool (using the cheap model as usual).
-2. Once inside the tool, we launch an internal chat session targeting the advanced/expensive (Mid) tier model.
-3. The highly analytical result is instantly returned to the user.
-(By setting `direct_output=True`, the main dispatcher skips re-summarizing using the cheap model, thereby preserving 100% of the advanced model's original output.)
+2. Once inside the tool, it launches an internal chat session with the advanced (Mid) tier model.
+3. The highly analytical result is returned to the user.
+(With `direct_output=True`, the dispatcher skips re-summarizing with the cheap model, preserving 100% of the advanced model's output.)
+
+**Tools using `preferred_tier = "mid"` currently:**
+
+- `email_summary` — Gmail summarization needs deep comprehension
+- `work_email` — IMAP + attachment summarization needs deep comprehension
 
 ---
 
@@ -832,7 +926,7 @@ class ResearchSummaryTool(BaseTool):
 
 ### 1. `execute()` Input/Output
 
-```
+```text
 Signature:
   async def execute(self, user_id: str, args: str = "", **kwargs) -> str
 
@@ -850,7 +944,7 @@ Output:
 
 ### 2. How it Works with LLM (Function Calling)
 
-```
+```text
 User types: "What's the weather like today?"
          │
          ▼
@@ -863,7 +957,8 @@ LLM selects: weather tool (because description matches)
 Dispatcher calls WeatherTool.execute(user_id, args)
          │
          ▼
-Result is sent back to LLM for natural language summary
+If direct_output=True → send result directly to user
+If direct_output=False → pass result to LLM for summarization
          │
          ▼
 Sent to user via Telegram
@@ -881,13 +976,17 @@ db.log_tool_usage(user_id, "my_tool", status="success")
 
 # LLM
 from core.llm import llm_router
-from core.config import DEFAULT_LLM
-resp = await llm_router.chat(messages=[...], provider=DEFAULT_LLM, tier="cheap")
+resp = await llm_router.chat(messages=[...], provider=provider, tier="cheap")
+
+# User preference (get user's LLM provider)
+from core.user_manager import get_user, get_preference
+user = get_user(user_id) or {}
+provider = get_preference(user, "default_llm")
 
 # Config
 from core.config import SOME_CONFIG
 
-# Security (Gmail)
+# Gmail credentials
 from core.security import get_gmail_credentials
 
 # Logger
@@ -978,9 +1077,36 @@ class MyTool(BaseTool):
 ```
 
 | Value | Use when | Examples |
-|---|---|---|
-| `True` (default) | tool formats output nicely on its own | lotto, traffic, news |
-| `False` | you want LLM to summarize raw data | email_summary |
+| --- | --- | --- |
+| `True` (default) | tool formats output nicely, or tool summarizes with LLM internally | traffic, places, lotto, email_summary, news_summary |
+| `False` | you want the dispatcher to pass raw data to LLM for summarization | (no current tools use this — but the framework supports it) |
+
+> **Note:** Tools that call LLM internally (e.g. email_summary, news_summary)
+> use `direct_output = True` because their output is already summarized — no need for the dispatcher to re-summarize.
+
+### 7. `preferred_tier` — Choosing LLM Quality Level
+
+```python
+class MyTool(BaseTool):
+    preferred_tier = "cheap"   # Haiku/Flash — fast, inexpensive (default)
+    # preferred_tier = "mid"   # Sonnet/Pro — smarter, but slower and more expensive
+```
+
+| Tier | Models | Use when | Tools using it |
+| --- | --- | --- | --- |
+| `"cheap"` (default) | Haiku / Gemini Flash | General summarization, simple tasks | news_summary |
+| `"mid"` | Sonnet / Gemini Pro | Tasks requiring deep comprehension | email_summary, work_email |
+
+Use in `execute()` via `self.preferred_tier`:
+
+```python
+resp = await llm_router.chat(
+    messages=[...],
+    provider=provider,
+    tier=self.preferred_tier,  # ← uses value from class attribute
+    system=system_prompt,
+)
+```
 
 ---
 
@@ -995,40 +1121,49 @@ class MyTool(BaseTool):
 - [ ] `execute()` always returns a string (never returns None)
 - [ ] `execute()` wrapped in `try/except` — no unhandled exceptions
 - [ ] `get_tool_spec()` uses `self.name` (**never hardcode** the tool name)
-- [ ] `db.log_tool_usage()` for both success and failed
-- [ ] `direct_output` set appropriately (see `direct_output` section above)
+- [ ] `direct_output` set appropriately
 
 ### Recommended (skipping = works but not great)
 
+- [ ] `db.log_tool_usage()` for both success and failed (dispatcher handles failed cases, but success must be logged by the tool)
+- [ ] Set `preferred_tier` if tool calls LLM internally (`"mid"` for complex tasks)
 - [ ] `get_tool_spec()` has a clear description (LLM uses it to decide)
 - [ ] If using enum parameter → use `"enum": [...]` in properties
 - [ ] If using an API key → added to `.env`, `.env.example`, `core/config.py`
 - [ ] If using a new library → added to `requirements.txt`
 - [ ] Tested via direct `/command`
 - [ ] Tested via free text (LLM selects correct tool)
-- [ ] Updated README.md (commands table)
 - [ ] Output fits within Telegram limit (~4096 chars)
+
+---
+
+## Current Tools Reference
+
+| Tool | Commands | API/Source | preferred_tier | Required API Keys |
+| --- | --- | --- | --- | --- |
+| **email_summary** — Gmail summary | `/email` | Gmail API (OAuth2) + LLM | mid | `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` |
+| **work_email** — Work email (IMAP) | `/wm`, `/workmail` | IMAP + LLM | mid | `WORK_IMAP_HOST`, `WORK_IMAP_PORT`, `WORK_IMAP_USER`, `WORK_IMAP_PASSWORD` |
+| **traffic** — Routes/traffic | `/traffic`, `/route` | Google Maps Directions + Routes API | cheap | `GOOGLE_MAPS_API_KEY` |
+| **places** — Place search | `/places`, `/nearby`, `/search` | Google Places API (New) | cheap | `GOOGLE_MAPS_API_KEY` |
+| **exchange_rate** — Exchange rates | `/fx`, `/rate`, `/exchange` | Bank of Thailand API | cheap | `BOT_API_EXCHANGE_TOKEN`, `BOT_API_HOLIDAY_TOKEN` |
+| **news_summary** — News summary | `/news` | Google News RSS + LLM | cheap | None (RSS is free) |
+| **lotto** — Thai lottery results | `/lotto` | lotto.api.rayriffy.com | cheap | None (API is free) |
+
+> **Note:** All tools use `direct_output = True` (default) — tools that use LLM (email_summary, work_email, news_summary) handle summarization internally.
 
 ---
 
 ## Tool Ideas
 
 | Tool | Command | API | Difficulty |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Weather Forecast | `/weather` | Open-Meteo (free) | Easy |
 | Translation | `/translate` | Use LLM (no extra API) | Easy |
-| News Summary | `/news` | RSS + LLM | **Done ✅** |
-| Route / Traffic | `/traffic` | Google Maps Directions API | **Done ✅** |
-| Place Search | `/places` | Foursquare / Google Places | **Done ✅** |
-| Gmail Summary | `/email` | Gmail API + LLM | **Done ✅** |
-| Work Email (IMAP) | `/wm` | IMAP + pdfplumber/docx/openpyxl | **Done ✅** |
-| Thai Lottery Check | `/lotto` | lotto.api.rayriffy.com | **Done ✅** |
 | Notes / Reminders | `/note` | SQLite (already available) | Easy |
 | Web Search | `/search` | Google Custom Search / SerpAPI | Medium |
-| Exchange Rates | `/fx` | exchangerate-api (free) | Easy |
-| Package Tracking | `/track` | Carrier APIs | Medium |
-| Google Calendar | `/cal` | Google Calendar API | Hard |
+| Package Tracking | `/track` | Thailand Post API / Kerry API | Medium |
 | YouTube Summary | `/yt` | YouTube Transcript API + LLM | Medium |
+| Google Calendar | `/cal` | Google Calendar API | Hard |
 
 ---
 
@@ -1036,10 +1171,12 @@ class MyTool(BaseTool):
 
 1. **Description matters a lot** — LLM uses the description to decide which tool to call when users type free text. If the description is unclear, LLM will pick the wrong tool.
 
-2. **Use LLM as a formatter** — Let your tool fetch raw data, then pass it to LLM for natural language summarization. The results will be much better than manual formatting (see email_summary for this pattern).
+2. **Use LLM as a formatter** — Let your tool fetch raw data, then pass it to LLM for natural language summarization. The results will be much better than manual formatting (see email_summary, news_summary for this pattern).
 
 3. **Multiple commands are supported** — `commands = ["/weather", "/w"]` lets users type shorter commands.
 
 4. **Test /command first** — Test via direct `/command` before free text, since it bypasses LLM and shows raw output for easier debugging.
 
 5. **Always keep API keys in .env** — Never hardcode them in tool files.
+
+6. **Use `preferred_tier` instead of hardcoding** — Set `preferred_tier = "mid"` at class level instead of writing `tier="mid"` directly in code. This makes it easy to change later.

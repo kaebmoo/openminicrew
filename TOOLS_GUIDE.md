@@ -9,9 +9,12 @@
 - [Template พื้นฐาน](#template-พื้นฐาน)
 - [ตัวอย่าง 1: Tool ง่าย — พยากรณ์อากาศ](#ตัวอย่าง-1-tool-ง่าย--พยากรณ์อากาศ)
 - [ตัวอย่าง 2: Tool ที่เรียก API — Google Maps](#ตัวอย่าง-2-tool-ที่เรียก-api--google-maps)
-- [ตัวอย่าง 3: Tool ที่ใช้ LLM — สรุปข่าว](#ตัวอย่าง-3-tool-ที่ใช้-llm--สรุปข่าว)
+- [ตัวอย่าง 3: Tool ค้นหาสถานที่ — Google Places](#ตัวอย่าง-3-tool-ค้นหาสถานที่--google-places)
+- [ตัวอย่าง 4: Tool ที่ใช้ LLM — สรุปข่าว](#ตัวอย่าง-4-tool-ที่ใช้-llm--สรุปข่าว)
+- [ตัวอย่าง 5: Tool ที่ต้องการความฉลาดสูง (ใช้ LLM ระดับ Mid)](#ตัวอย่าง-5-tool-ที่ต้องการความฉลาดสูง-ใช้-llm-ระดับ-mid)
 - [รายละเอียดสำคัญ](#รายละเอียดสำคัญ)
 - [Checklist ก่อน Deploy](#checklist-ก่อน-deploy)
+- [Tools ที่มีอยู่แล้ว](#tools-ที่มีอยู่แล้ว)
 - [แนวคิด Tool ที่น่าสนใจ](#แนวคิด-tool-ที่น่าสนใจ)
 
 ---
@@ -55,6 +58,8 @@ class MyTool(BaseTool):
     name = "my_tool"           # ชื่อ tool (unique)
     description = "คำอธิบาย"    # LLM ใช้ตัดสินใจเลือก tool
     commands = ["/mytool"]     # คำสั่งตรง (ไม่เสีย token)
+    direct_output = True       # True = ส่งผลตรง, False = ให้ LLM สรุปอีกที
+    preferred_tier = "cheap"   # cheap = Haiku/Flash, mid = Sonnet/Pro
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         # ทำงานหลัก
@@ -108,7 +113,8 @@ class MyTool(BaseTool):
     name = "my_tool"
     description = "คำอธิบายที่ LLM จะใช้ตัดสินใจว่าจะเรียก tool นี้เมื่อไหร่"
     commands = ["/mytool"]
-    direct_output = True   # True = ส่งผลตรงๆ, False = ส่งให้ LLM สรุปอีกที
+    direct_output = True       # True = ส่งผลตรงๆ, False = ส่งให้ LLM สรุปอีกที
+    preferred_tier = "cheap"   # cheap = Haiku/Flash, mid = Sonnet/Pro (ใช้เมื่อ tool เรียก LLM เอง)
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         """
@@ -129,7 +135,7 @@ class MyTool(BaseTool):
             # === ทำงานหลัก ===
             result = f"ผลลัพธ์สำหรับ: {args}"
 
-            # === Log usage (บังคับ) ===
+            # === Log usage (แนะนำ) ===
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
@@ -252,7 +258,7 @@ class WeatherTool(BaseTool):
 
     def get_tool_spec(self) -> dict:
         return {
-            "name": "weather",
+            "name": self.name,
             "description": "พยากรณ์อากาศวันนี้ตามเมืองที่ระบุ",
             "parameters": {
                 "type": "object",
@@ -278,7 +284,7 @@ class WeatherTool(BaseTool):
 
 ## ตัวอย่าง 2: Tool ที่เรียก API — Google Maps
 
-ถามเส้นทาง + สภาพจราจร ผ่าน Google Maps Directions API
+เช็คเส้นทาง + สภาพจราจร + เวลาเดินทาง ผ่าน Google Maps Directions API และ Routes API
 
 ### Step 1: ตั้งค่า
 
@@ -294,24 +300,42 @@ GOOGLE_MAPS_API_KEY = _optional("GOOGLE_MAPS_API_KEY", "")
 
 ### Step 2: สร้าง Tool
 
+> ตัวอย่างนี้ย่อจาก `tools/traffic.py` จริง เพื่อแสดงโครงสร้างหลัก
+
 ```python
 # tools/traffic.py
-"""Traffic Tool — เช็คเส้นทาง + สภาพจราจรผ่าน Google Maps"""
+"""Traffic Tool — เช็คเส้นทาง สภาพจราจร และเวลาเดินทาง ผ่าน Google Maps"""
+
+import re
+import urllib.parse
 
 import requests
+
 from tools.base import BaseTool
 from core.config import GOOGLE_MAPS_API_KEY
+from core import db
 from core.logger import get_logger
 
 log = get_logger(__name__)
 
+# Separators สำหรับแยกต้นทาง-ปลายทาง
+SEPARATORS = [" ไป ", " to ", "→", "➡", " ถึง ", "|"]
+
+# Regex สำหรับตรวจจับโหมดจากภาษาไทย
+_MODE_FALLBACK = [
+    (re.compile(r"มอเตอร์ไซค์|มอไซค์|motorcycle|motorbike", re.IGNORECASE), "two_wheeler"),
+    (re.compile(r"เดินเท้า|เดิน(?!ทาง)|walking|on\s+foot", re.IGNORECASE), "walking"),
+    (re.compile(r"รถโดยสาร|ขนส่งสาธารณะ|รถเมล์|รถไฟฟ้า|transit|bus|bts|mrt", re.IGNORECASE), "transit"),
+]
+
 
 class TrafficTool(BaseTool):
     name = "traffic"
-    description = "เช็คเส้นทางและสภาพจราจรระหว่าง 2 จุด ผ่าน Google Maps"
-    commands = ["/traffic"]
+    description = "เช็คเส้นทาง สภาพจราจร และเวลาการเดินทางระหว่างสองจุด ผ่าน Google Maps"
+    commands = ["/traffic", "/route"]
+    direct_output = True
 
-    async def execute(self, user_id: str, args: str = "") -> str:
+    async def execute(self, user_id: str, args: str = "", mode: str = "driving", **kwargs) -> str:
         if not GOOGLE_MAPS_API_KEY:
             return "ยังไม่ได้ตั้งค่า GOOGLE_MAPS_API_KEY ใน .env"
 
@@ -319,81 +343,82 @@ class TrafficTool(BaseTool):
             return (
                 "กรุณาระบุต้นทางและปลายทาง เช่น:\n"
                 "/traffic สยาม ไป สีลม\n"
-                "/traffic บ้าน ไป ออฟฟิศ"
+                "/traffic บ้าน ไป สนามบิน เดินเท้า\n"
+                "/traffic สยาม ไป อโศก มอไซค์"
             )
 
-        # แยกต้นทาง-ปลายทาง
-        parts = args.replace(" ไป ", "|").replace(" to ", "|").replace("→", "|").split("|")
-        if len(parts) < 2:
+        # แยกต้นทาง-ปลายทาง (รองรับหลาย separator)
+        origin, destination = None, None
+        for sep in SEPARATORS:
+            if sep in args:
+                parts = args.split(sep, 1)
+                origin, destination = parts[0].strip(), parts[1].strip()
+                break
+
+        if not origin or not destination:
             return "กรุณาระบุ: /traffic [ต้นทาง] ไป [ปลายทาง]"
 
-        origin = parts[0].strip()
-        destination = parts[1].strip()
+        # ตรวจจับโหมดจากข้อความ (เช่น "มอไซค์", "เดินเท้า")
+        for pattern, detected_mode in _MODE_FALLBACK:
+            if pattern.search(args):
+                mode = detected_mode
+                break
 
         try:
-            resp = requests.get(
-                "https://maps.googleapis.com/maps/api/directions/json",
-                params={
-                    "origin": origin,
-                    "destination": destination,
-                    "mode": "driving",
-                    "departure_time": "now",      # ข้อมูลจราจร real-time
-                    "language": "th",
-                    "key": GOOGLE_MAPS_API_KEY,
-                },
-                timeout=10,
-            )
-            data = resp.json()
+            # เรียก API ตามโหมด
+            if mode == "two_wheeler":
+                # ใช้ Routes API (New) สำหรับมอเตอร์ไซค์
+                result = self._call_routes_api(origin, destination)
+            else:
+                # ใช้ Directions API สำหรับ driving/walking/transit
+                result = self._call_directions_api(origin, destination, mode)
 
-            if data["status"] != "OK":
-                return f"หาเส้นทางไม่ได้: {data['status']}"
-
-            route = data["routes"][0]
-            leg = route["legs"][0]
-
-            # ข้อมูลพื้นฐาน
-            distance = leg["distance"]["text"]
-            duration = leg["duration"]["text"]
-
-            # ข้อมูลจราจร (ถ้ามี)
-            traffic_duration = leg.get("duration_in_traffic", {}).get("text", "")
-            traffic_info = ""
-            if traffic_duration:
-                traffic_info = f"\n🚦 ใช้เวลาจริง (จราจร): {traffic_duration}"
-
-            # สรุปเส้นทาง
-            steps_summary = []
-            for i, step in enumerate(leg["steps"][:5], 1):  # แสดงแค่ 5 ขั้นตอนแรก
-                instruction = step["html_instructions"]
-                # ลบ HTML tags
-                import re
-                instruction = re.sub(r"<[^>]+>", "", instruction)
-                step_dist = step["distance"]["text"]
-                steps_summary.append(f"  {i}. {instruction} ({step_dist})")
-
-            steps_text = "\n".join(steps_summary)
-            if len(leg["steps"]) > 5:
-                steps_text += f"\n  ... และอีก {len(leg['steps']) - 5} ขั้นตอน"
-
-            return (
-                f"🗺 เส้นทาง: {leg['start_address']}\n"
-                f"➡️ ไป: {leg['end_address']}\n\n"
-                f"📏 ระยะทาง: {distance}\n"
-                f"⏱ เวลาปกติ: {duration}"
-                f"{traffic_info}\n\n"
-                f"📍 เส้นทาง:\n{steps_text}"
-            )
+            db.log_tool_usage(user_id, self.name, args[:100], result[:200], "success")
+            return result
 
         except Exception as e:
             log.error(f"Traffic API error: {e}")
+            db.log_tool_usage(user_id, self.name, args[:100], status="failed", error_message=str(e))
             return f"เกิดข้อผิดพลาด: {e}"
+
+    def _call_directions_api(self, origin, destination, mode):
+        """เรียก Google Maps Directions API"""
+        params = {
+            "origin": origin,
+            "destination": destination,
+            "mode": mode,
+            "departure_time": "now",
+            "alternatives": "true",
+            "language": "th",
+            "region": "th",
+            "key": GOOGLE_MAPS_API_KEY,
+        }
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/directions/json",
+            params=params, timeout=15,
+        )
+        data = resp.json()
+        if data["status"] != "OK":
+            return f"หาเส้นทางไม่ได้: {data['status']}"
+
+        # จัดรูปแบบผลลัพธ์ (เส้นทาง, ระยะทาง, เวลา, จราจร, ลิงก์ Google Maps)
+        # ... (ย่อ — ดู source จริงใน tools/traffic.py)
+        route = data["routes"][0]
+        leg = route["legs"][0]
+        return f"🗺 {leg['start_address']} → {leg['end_address']}\n📏 {leg['distance']['text']} ⏱ {leg['duration']['text']}"
+
+    def _call_routes_api(self, origin, destination):
+        """เรียก Routes API (New) สำหรับ two_wheeler"""
+        # POST https://routes.googleapis.com/directions/v2:computeRoutes
+        # ... (ย่อ — ดู source จริงใน tools/traffic.py)
+        return "🏍 เส้นทางมอเตอร์ไซค์..."
 
     def get_tool_spec(self) -> dict:
         return {
             "name": "traffic",
             "description": (
-                "เช็คเส้นทางและสภาพจราจรระหว่าง 2 จุด เช่น "
-                "'สยาม ไป สีลม', 'บ้าน ไป สนามบิน'"
+                "ใช้เช็คเส้นทาง ระยะทาง เวลาเดินทาง และสภาพจราจร real-time "
+                "ระหว่างสองจุด ผ่าน Google Maps"
             ),
             "parameters": {
                 "type": "object",
@@ -404,17 +429,37 @@ class TrafficTool(BaseTool):
                             "ต้นทางและปลายทาง คั่นด้วย 'ไป' เช่น "
                             "'สยาม ไป สีลม', 'Central World ไป สุวรรณภูมิ'"
                         ),
-                    }
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["driving", "walking", "transit", "two_wheeler"],
+                        "description": (
+                            "โหมดการเดินทาง: driving=รถยนต์, walking=เดินเท้า, "
+                            "transit=รถโดยสาร, two_wheeler=มอเตอร์ไซค์"
+                        ),
+                    },
                 },
                 "required": ["args"],
             },
         }
 ```
 
+**ฟีเจอร์หลักของ Traffic Tool (ใน code จริง):**
+
+- เลือก**โหมด**ได้: รถยนต์, เดินเท้า, ขนส่งสาธารณะ, มอเตอร์ไซค์
+- **หลีกเลี่ยงทางด่วน**: "ไม่ขึ้นทางด่วน" หรือเจาะจง "ไม่ขึ้น ดอนเมืองโทลเวย์"
+- **แถวนี้**: ตรวจจับ GPS ของ user (เช่น "ไปสยาม" = จากตรงนี้ไปสยาม)
+- **เส้นทางทางเลือก**: แสดงได้สูงสุด 3 เส้นทาง
+- **Google Maps URL**: ลิงก์กดเปิดแผนที่ได้เลย
+- ใช้ **Directions API** (driving/walking/transit) + **Routes API New** (two_wheeler)
+
 **ใช้งาน:**
 ```
 /traffic สยาม ไป สีลม
-/traffic บ้าน ไป สนามบิน
+/traffic สยาม ไป อโศก มอไซค์
+/traffic สยาม ไป สีลม เดินเท้า
+/traffic จันทน์ ไป แจ้งวัฒนะ ไม่ขึ้นทางด่วน
+/route บ้าน ไป สนามบิน
 หรือพิมพ์: "จากสยามไปสีลมใช้เวลาเท่าไหร่ รถติดไหม"
 ```
 
@@ -422,25 +467,20 @@ class TrafficTool(BaseTool):
 
 ## ข้อกำหนดและทางเลือกของ Google Maps API
 
-### 📋 Google Maps APIs ที่ต้องเปิดใช้งาน
+### 📋 Google Maps APIs ที่ใช้ในโปรเจกต์นี้
 
-ถ้าคุณต้องการเพิ่มฟีเจอร์ Google Maps นี่คือ APIs ที่ต้อง enable:
+โปรเจกต์ปัจจุบันใช้ APIs เหล่านี้ (ต้อง enable ใน Google Cloud Console):
 
-#### สำหรับเส้นทาง + สภาพจราจร (ตามตัวอย่างข้างบน)
+- **Directions API** — คำนวณเส้นทาง (driving, walking, transit)
+- **Routes API** — เส้นทางมอเตอร์ไซค์ (two_wheeler)
+- **Places API (New)** — ค้นหาสถานที่ (Text Search)
+- **Geocoding API** — แปลงชื่อสถานที่เป็นพิกัด
 
-- **Directions API** — คำนวณเส้นทางระหว่างสถานที่ต่าง ๆ (รองรับขับรถ, เดิน, ปั่นจักรยาน, ขนส่งสาธารณะ)
+#### สำหรับเพิ่มฟีเจอร์เพิ่มเติม
+
 - **Distance Matrix API** — คำนวณระยะทาง/เวลาระหว่างหลายจุด
 - **Geolocation API** — ตรวจจับตำแหน่งปัจจุบันของผู้ใช้
 - **Maps JavaScript API** (ถ้าต้องการแสดงแผนที่บนเว็บ) — มี Traffic Layer สำหรับจราจร real-time
-
-#### สำหรับค้นหาสถานที่ (ร้านกาแฟ, ร้านอาหาร ฯลฯ)
-
-- **Places API (New)** หรือ **Places API** — ค้นหาสถานที่ใกล้เคียง
-  - Nearby Search — ค้นหาสถานที่รอบ ๆ ตำแหน่ง
-  - Text Search — ค้นหาด้วยข้อความ
-  - Place Details — ดูรายละเอียด (รีวิว, รูปภาพ, เบอร์โทร, เวลาเปิด-ปิด)
-- **Geocoding API** — แปลงที่อยู่เป็นพิกัด หรือแปลงกลับ
-- **Geolocation API** — ตรวจจับตำแหน่งปัจจุบัน
 
 ### 💳 ข้อกำหนดเรื่อง Billing
 
@@ -457,7 +497,9 @@ class TrafficTool(BaseTool):
 
 - ✅ Gmail API — ใช้ OAuth อย่างเดียว **ไม่ต้อง billing**
 - ✅ Google News RSS — **ไม่ต้อง API key** ฟรีสนิท
-- ❌ Google Maps APIs — **ต้อง billing account** (แต่มี free tier)
+- ✅ Bank of Thailand API — **ไม่ต้อง billing** ใช้ token ฟรี
+- ✅ Rayriffy Lotto API — **ไม่ต้อง API key** ฟรี
+- ❌ Google Maps/Places APIs — **ต้อง billing account** (แต่มี free tier)
 
 ### 🆓 ทางเลือก APIs ฟรี (ไม่ต้อง Billing)
 
@@ -475,150 +517,138 @@ class TrafficTool(BaseTool):
 
 | API                   | Free Tier              | ฟีเจอร์                                          | หมายเหตุ                |
 |-----------------------|------------------------|--------------------------------------------------|------------------------|
-| **Foursquare Places** | 100,000 requests/วัน   | ข้อมูล POI ละเอียด, wifi, ปลั๊กไฟ              | **ทางเลือกฟรีที่ดีที่สุด** |
+| **Foursquare Places** | 100,000 requests/วัน   | ข้อมูล POI ละเอียด, wifi, ปลั๊กไฟ              | ทางเลือกฟรีที่ดี       |
 | **Overpass API**      | Unlimited              | ข้อมูล OpenStreetMap                             | ข้อมูลดิบ ต้องประมวลผลเอง |
 | **Mapbox Search**     | 100,000 requests/เดือน | เหมาะสำหรับค้นหาที่อยู่                          | ข้อมูล POI จำกัด       |
 
-### 🤔 ควรเลือกใช้แบบไหน?
-
-**ใช้ Google Maps ถ้า:**
-
-- ✅ คุณมีบัตรเครดิตและโอเคกับการ setup billing
-- ✅ ต้องการข้อมูลแม่นยำที่สุด และรองรับภาษาไทยดี
-- ✅ ต้องการข้อมูลจราจร real-time
-
-**ใช้ทางเลือกฟรี ถ้า:**
-
-- ✅ ไม่อยากใส่บัตรเครดิต
-- ✅ โอเคกับข้อมูลที่แม่นยำน้อยกว่าเล็กน้อย
-- ✅ ไม่ต้องการ real-time traffic (traffic patterns ก็พอ)
-
-**แนะนำคู่ฟรี:**
-
-- **Foursquare** สำหรับค้นหาสถานที่ (มี attributes `wifi`, `power_outlets`!)
-- **OpenRouteService** สำหรับเส้นทาง (ความแม่นยำดี, มี traffic patterns)
-
 ---
 
-## ตัวอย่าง 2.1: Tool ค้นหาสถานที่ — ใช้ Foursquare (ฟรี)
+## ตัวอย่าง 3: Tool ค้นหาสถานที่ — Google Places
 
-ค้นหาสถานที่ใกล้เคียงโดยไม่ต้อง billing ด้วย Foursquare Places API
+ค้นหาสถานที่ใกล้เคียง ผ่าน Google Places API (New) — Text Search
 
-### Step 1: สมัคร API Key ฟรี
-
-1. ไปที่ [Foursquare Developers](https://foursquare.com/developers/signup)
-2. สร้าง account ฟรี
-3. สร้าง project ใหม่
-4. Copy API Key มา
-
-### Step 2: ตั้งค่า
-
-```bash
-# เพิ่มใน .env
-FOURSQUARE_API_KEY=fsq3xxx
-```
-
-```python
-# เพิ่มใน core/config.py
-FOURSQUARE_API_KEY = _optional("FOURSQUARE_API_KEY", "")
-```
-
-### Step 3: สร้าง Tool
+> ตัวอย่างนี้ย่อจาก `tools/places.py` จริง
 
 ```python
 # tools/places.py
-"""Places Search Tool — ค้นหาสถานที่ใกล้เคียงด้วย Foursquare API"""
+"""Places Tool — ค้นหาสถานที่ใกล้เคียง ผ่าน Google Places API (New)"""
+
+import re
 
 import requests
+
 from tools.base import BaseTool
-from core.config import FOURSQUARE_API_KEY
+from core.config import GOOGLE_MAPS_API_KEY
+from core import db
 from core.logger import get_logger
 
 log = get_logger(__name__)
 
+# Price level mapping จาก Places API (New)
+PRICE_LEVELS = {
+    "PRICE_LEVEL_FREE": "ฟรี",
+    "PRICE_LEVEL_INEXPENSIVE": "💰 ราคาถูก",
+    "PRICE_LEVEL_MODERATE": "💰💰 ปานกลาง",
+    "PRICE_LEVEL_EXPENSIVE": "💰💰💰 แพง",
+    "PRICE_LEVEL_VERY_EXPENSIVE": "💰💰💰💰 แพงมาก",
+}
+
 
 class PlacesTool(BaseTool):
     name = "places"
-    description = (
-        "ค้นหาสถานที่ใกล้เคียง เช่น ร้านกาแฟ, ร้านอาหาร, ร้านค้า "
-        "กรองตาม features เช่น wifi, ปลั๊กไฟ ได้"
-    )
-    commands = ["/places", "/nearby"]
+    description = "ค้นหาสถานที่ใกล้เคียง เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล ร้านสะดวกซื้อ"
+    commands = ["/places", "/nearby", "/search"]
+    direct_output = True
 
-    async def execute(self, user_id: str, args: str = "") -> str:
-        if not FOURSQUARE_API_KEY:
-            return "ยังไม่ได้ตั้งค่า FOURSQUARE_API_KEY ใน .env"
+    # คำที่บ่งบอกว่าผู้ใช้หมายถึง "ตรงนี้" (ต้องใช้ GPS)
+    _NEARBY_KEYWORDS = re.compile(r"(แถวนี้|ใกล้นี้|ตรงนี้|nearby|near me)")
+    _OPEN_NOW_KEYWORDS = re.compile(r"(เปิดอยู่|เปิดตอนนี้|open now|ยังเปิด|เปิดไหม)")
+    _BANGKOK_CENTER = {"latitude": 13.7563, "longitude": 100.5018}
+
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        if not GOOGLE_MAPS_API_KEY:
+            return "ยังไม่ได้ตั้งค่า GOOGLE_MAPS_API_KEY ใน .env"
 
         if not args:
             return (
                 "กรุณาระบุสิ่งที่ต้องการค้นหา:\n"
-                "/places ร้านกาแฟมี wifi แถวสยาม\n"
-                "/places ร้านอาหารแถวนี้\n"
-                "/places coworking space มีปลั๊กไฟ"
+                "/places ร้านกาแฟแถวสยาม\n"
+                "/places ร้านอาหารเปิดอยู่แถวนี้"
             )
 
         try:
-            # เรียก Foursquare Places API
+            # ตรวจจับ "เปิดอยู่" → openNow filter
+            open_now = bool(self._OPEN_NOW_KEYWORDS.search(args))
+
+            # สร้าง location bias (circle รอบตำแหน่งผู้ใช้หรือกรุงเทพ)
+            location_bias = {
+                "circle": {
+                    "center": self._BANGKOK_CENTER,
+                    "radius": 30000.0,  # 30km
+                }
+            }
+
+            # เรียก Google Places API (New) — Text Search
             headers = {
-                "Accept": "application/json",
-                "Authorization": FOURSQUARE_API_KEY,
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+                "X-Goog-FieldMask": (
+                    "places.displayName,places.formattedAddress,places.rating,"
+                    "places.userRatingCount,places.currentOpeningHours,"
+                    "places.priceLevel,places.googleMapsUri"
+                ),
             }
 
-            params = {
-                "query": args,
-                "limit": 10,
+            body = {
+                "textQuery": args,
+                "languageCode": "th",
+                "locationBias": location_bias,
+                "maxResultCount": 10,
             }
+            if open_now:
+                body["openNow"] = True
 
-            # ถ้า user พูดว่า "แถวนี้" คุณสามารถเพิ่มตำแหน่งของ user ได้
-            # สำหรับตอนนี้ใช้ตำแหน่งกลาง ๆ (เช่น ใจกลางกรุงเทพ)
-            # ในการใช้งานจริง ต้องดึงตำแหน่งผ่าน Geolocation API
-
-            resp = requests.get(
-                "https://api.foursquare.com/v3/places/search",
+            resp = requests.post(
+                "https://places.googleapis.com/v1/places:searchText",
                 headers=headers,
-                params=params,
+                json=body,
                 timeout=10,
             )
             data = resp.json()
+            results = data.get("places", [])
 
-            results = data.get("results", [])
             if not results:
                 return f"ไม่พบสถานที่สำหรับ: {args}"
 
             # จัดรูปแบบผลลัพธ์
             output = f"📍 พบ {len(results)} สถานที่:\n\n"
+            for i, place in enumerate(results[:5], 1):
+                name = place.get("displayName", {}).get("text", "ไม่ระบุ")
+                address = place.get("formattedAddress", "")
+                rating = place.get("rating")
+                stars = "⭐" * int(rating) if rating else ""
+                maps_url = place.get("googleMapsUri", "")
 
-            for i, place in enumerate(results[:5], 1):  # แสดง 5 อันดับแรก
-                name = place.get("name", "ไม่ระบุชื่อ")
-                location = place.get("location", {})
-                address = location.get("formatted_address", "ไม่มีที่อยู่")
-                distance = place.get("distance", 0)
-
-                # ประเภท
-                categories = place.get("categories", [])
-                category_names = [cat.get("name") for cat in categories[:2]]
-                category_str = ", ".join(category_names) if category_names else "N/A"
-
-                output += f"{i}. **{name}**\n"
-                output += f"   📂 {category_str}\n"
+                output += f"{i}. {name} {stars}\n"
                 output += f"   📍 {address}\n"
-                output += f"   📏 {distance}m\n\n"
+                if maps_url:
+                    output += f"   🔗 {maps_url}\n"
+                output += "\n"
 
-            if len(results) > 5:
-                output += f"... และอีก {len(results) - 5} แห่ง\n"
-
+            db.log_tool_usage(user_id, self.name, args[:100], status="success")
             return output
 
         except Exception as e:
             log.error(f"Places API error: {e}")
+            db.log_tool_usage(user_id, self.name, args[:100], status="failed", error_message=str(e))
             return f"เกิดข้อผิดพลาด: {e}"
 
     def get_tool_spec(self) -> dict:
         return {
             "name": "places",
             "description": (
-                "ค้นหาสถานที่ใกล้เคียง เช่น 'ร้านกาแฟมี wifi แถวสยาม', "
-                "'ร้านอาหารมีที่นั่งข้างนอก', 'coworking space แถวนี้'"
+                "ค้นหาสถานที่ใกล้เคียง เช่น 'ร้านกาแฟแถวสยาม', "
+                "'restaurant near Sukhumvit', 'โรงพยาบาลใกล้ลาดพร้าว'"
             ),
             "parameters": {
                 "type": "object",
@@ -626,8 +656,8 @@ class PlacesTool(BaseTool):
                     "args": {
                         "type": "string",
                         "description": (
-                            "คำค้นหาอธิบายสิ่งที่ต้องการ เช่น "
-                            "'ร้านกาแฟมีปลั๊กไฟแถวสยาม', 'ร้านอาหารแถว Central World'"
+                            "สิ่งที่ต้องการค้นหา พร้อมสถานที่ เช่น "
+                            "'ร้านกาแฟแถวสยาม', 'restaurant near Sukhumvit'"
                         ),
                     }
                 },
@@ -636,143 +666,194 @@ class PlacesTool(BaseTool):
         }
 ```
 
+**ฟีเจอร์หลักของ Places Tool (ใน code จริง):**
+
+- ใช้ **Google Places API (New)** — Text Search endpoint
+- **Location Bias**: ใช้ GPS ของ user (ถ้ามี) หรือ fallback กรุงเทพ 30km
+- **Open Now Filter**: ตรวจจับ "เปิดอยู่", "open now" แล้วกรองเฉพาะที่เปิด
+- แสดง: ชื่อ, rating, ที่อยู่, เวลาเปิด-ปิด, ราคา, เบอร์โทร, เว็บไซต์, Google Maps link
+
 **ใช้งาน:**
 ```
-/places ร้านกาแฟมี wifi แถวสยาม
-/places ร้านอาหารมีที่นั่งข้างนอก
-/places coworking space แถวนี้
+/places ร้านกาแฟแถวสยาม
+/places ร้านอาหารเปิดอยู่แถวนี้
+/search ATM ใกล้ MBK
+/nearby โรงพยาบาลใกล้ลาดพร้าว
 หรือพิมพ์: "หาร้านกาแฟมีปลั๊กไฟแถวนี้"
 ```
 
-**ข้อดีของ Foursquare:**
-
-- ✅ ฟรี 100,000 requests/วัน
-- ✅ ข้อมูลสถานที่ละเอียด (รูป, rating, เวลาเปิด-ปิด, เบอร์โทร)
-- ✅ Attributes เช่น `wifi`, `outdoor_seating`, `delivery`
-- ✅ ไม่ต้อง billing account
-- ✅ ครอบคลุมทั่วโลก
-
 ---
 
-## ตัวอย่าง 3: Tool ที่ใช้ LLM — สรุปข่าว
+## ตัวอย่าง 4: Tool ที่ใช้ LLM — สรุปข่าว
 
-ดึงข่าวจาก RSS Feed แล้วให้ LLM สรุป
+ดึงข่าวจาก Google News RSS แล้วให้ LLM สรุป
+
+> ตัวอย่างนี้ย่อจาก `tools/news_summary.py` จริง
 
 ```python
 # tools/news_summary.py
-"""News Summary Tool — สรุปข่าววันนี้จาก RSS feeds"""
+"""News Summary Tool — ดึงข่าวจาก Google News RSS + สรุปด้วย LLM"""
 
-import feedparser
+import urllib.parse
+import xml.etree.ElementTree as ET
+
+import requests
+
 from tools.base import BaseTool
-from core.config import DEFAULT_LLM
 from core.llm import llm_router
+from core.user_manager import get_user, get_preference
 from core.logger import get_logger
 
 log = get_logger(__name__)
 
-# RSS Feeds ภาษาไทย
-FEEDS = {
-    "tech": {
-        "label": "เทคโนโลยี",
-        "url": "https://www.blognone.com/atom.xml",
-    },
-    "news": {
-        "label": "ข่าวทั่วไป",
-        "url": "https://www.thairath.co.th/rss",
-    },
-}
-
 
 class NewsSummaryTool(BaseTool):
     name = "news_summary"
-    description = "สรุปข่าวล่าสุดจากแหล่งข่าวต่างๆ"
+    description = "สรุปข่าวเด่นวันนี้ หรือหาข่าวตามเรื่องที่สนใจจาก Google News"
     commands = ["/news"]
-
-    async def execute(self, user_id: str, args: str = "") -> str:
-        category = args.strip().lower() if args else "tech"
-
-        feed_info = FEEDS.get(category)
-        if not feed_info:
-            categories = ", ".join(f"{k} ({v['label']})" for k, v in FEEDS.items())
-            return f"หมวดที่รองรับ: {categories}"
-
-        try:
-            # 1. ดึงข่าวจาก RSS
-            feed = feedparser.parse(feed_info["url"])
-            entries = feed.entries[:10]  # 10 ข่าวล่าสุด
-
-            if not entries:
-                return f"ไม่พบข่าว{feed_info['label']}ล่าสุด"
-
-            # 2. เตรียมข้อมูลส่ง LLM
-            news_text = ""
-            for i, entry in enumerate(entries, 1):
-                title = entry.get("title", "")
-                summary = entry.get("summary", "")[:300]
-                news_text += f"\n--- ข่าว #{i} ---\n"
-                news_text += f"หัวข้อ: {title}\n"
-                news_text += f"เนื้อหา: {summary}\n"
-
-            # 3. ให้ LLM สรุป
-            system = (
-                "คุณเป็นผู้ช่วยสรุปข่าว ตอบเป็นภาษาไทย กระชับ เข้าใจง่าย "
-                "จัดกลุ่มข่าวที่เกี่ยวข้อง บอกประเด็นสำคัญ "
-                "ใช้ emoji ให้อ่านง่าย"
-            )
-            resp = await llm_router.chat(
-                messages=[{"role": "user", "content": f"สรุปข่าว{feed_info['label']}:\n{news_text}"}],
-                provider=DEFAULT_LLM,
-                tier="cheap",
-                system=system,
-            )
-
-            return f"📰 ข่าว{feed_info['label']}ล่าสุด:\n\n{resp['content']}"
-
-        except Exception as e:
-            log.error(f"News fetch error: {e}")
-            return f"ดึงข่าวไม่ได้: {e}"
+    # direct_output = True (default) — tool สรุปด้วย LLM เองแล้ว ส่งผลตรงๆ
 
     def get_tool_spec(self) -> dict:
         return {
-            "name": "news_summary",
-            "description": "สรุปข่าวล่าสุด เลือกหมวดได้ เช่น tech (เทคโนโลยี), news (ทั่วไป)",
+            "name": self.name,
+            "description": "ค้นหาและสรุปข่าวล่าสุดจาก Google News ค้นหาตาม keyword หรือดูข่าวเด่นทั่วไปได้",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "args": {
                         "type": "string",
-                        "description": "หมวดข่าว: tech (เทคโนโลยี), news (ทั่วไป)",
+                        "description": "หัวข้อข่าวที่สนใจ เช่น 'เทคโนโลยี', 'การเมือง', 'หุ้น', หรือปล่อยว่าง",
                     }
                 },
-                "required": [],
             },
         }
+
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        topic = (args or "").strip()
+
+        # 1. เลือก RSS URL ตามการค้นหา
+        if topic:
+            query = urllib.parse.quote(topic)
+            rss_url = f"https://news.google.com/rss/search?q={query}&hl=th&gl=TH&ceid=TH:th"
+            display_label = f"หัวข้อ: {topic}"
+        else:
+            rss_url = "https://news.google.com/rss?hl=th&gl=TH&ceid=TH:th"
+            display_label = "ข่าวเด่นทั่วไป"
+
+        # 2. ดึงข้อมูล RSS
+        try:
+            resp = requests.get(rss_url, timeout=10)
+            resp.raise_for_status()
+
+            root = ET.fromstring(resp.content)
+            items = root.findall("./channel/item")
+
+            if not items:
+                return f"ไม่พบข่าวสำหรับ {display_label}"
+
+            # 3. คัด 10 ข่าวล่าสุด + แยกชื่อสำนักข่าวออก
+            max_news = 10
+            headlines = []
+            references = []
+
+            for i, item in enumerate(items[:max_news], 1):
+                title = item.findtext("title")
+                link = item.findtext("link")
+
+                if title and " - " in title:
+                    clean_title = title.rsplit(" - ", 1)[0]
+                    source = title.rsplit(" - ", 1)[1].strip()
+                else:
+                    clean_title = title or ""
+                    source = "อ่านข่าว"
+
+                headlines.append(f"[{i}] {clean_title}")
+                references.append(f"{i}. [{source}]({link})")
+
+            headlines_text = "\n".join(headlines)
+
+        except Exception as e:
+            log.error(f"Failed to fetch Google News: {e}")
+            return "❌ ดึงข้อมูลข่าวไม่ได้ ลองใหม่อีกครั้ง"
+
+        # 4. สรุปด้วย LLM (ส่งแค่หัวข้อ ไม่ส่ง URL)
+        user = get_user(user_id) or {}
+        provider = get_preference(user, "default_llm")
+
+        system_prompt = (
+            "คุณเป็นผู้ประกาศข่าวอัจฉริยะ โทนภาษา: กระชับ เป็นกันเอง\n"
+            "1. จัดหมวดหมู่ข่าวที่เกี่ยวข้องเข้าด้วยกัน\n"
+            "2. สรุปใจความสำคัญให้สั้นกระชับ\n"
+            "3. ใส่หมายเลขอ้างอิง [1] [2] ไว้ท้ายแต่ละข่าว\n"
+            "4. ไม่ต้องใส่ URL — ระบบจะแปะให้ท้ายข้อความอัตโนมัติ"
+        )
+
+        chat_resp = await llm_router.chat(
+            messages=[{"role": "user", "content": f"สรุปข่าว ({display_label}):\n{headlines_text}"}],
+            provider=provider,
+            tier=self.preferred_tier,
+            system=system_prompt,
+        )
+
+        # 5. ประกอบผลลัพธ์: สรุป + ลิงก์คลิกได้
+        summary = chat_resp.get("content", "")
+        refs_text = "\n".join(references)
+
+        return f"📰 สรุปข่าว: {display_label}\n\n{summary}\n\n🔗 ลิงก์อ้างอิง:\n{refs_text}"
 ```
+
+**จุดสำคัญ:**
+
+- ใช้ **Google News RSS** (ฟรี ไม่ต้อง API key)
+- **ค้นหาตาม keyword** ได้ (ไม่ใช่ category-based)
+- Tool เรียก **LLM สรุปเอง** ภายใน → ใช้ `direct_output = True` (default) เพราะไม่ต้องให้ dispatcher สรุปซ้ำ
+- ใช้ `self.preferred_tier` แทน hardcode `tier="cheap"`
 
 **ใช้งาน:**
 ```
-/news tech
 /news
+/news เทคโนโลยี
+/news การเมือง
+/news หุ้น
 หรือพิมพ์: "มีข่าวเทคโนโลยีอะไรใหม่บ้าง"
 ```
 
 ---
 
-## ตัวอย่าง 4: Tool ที่ต้องการความฉลาดสูง (ใช้ LLM ระดับ Mid)
+## ตัวอย่าง 5: Tool ที่ต้องการความฉลาดสูง (ใช้ LLM ระดับ Mid)
 
-บางครั้งคุณอาจสร้าง Tool ที่สลับซับซ้อน เช่น การวิเคราะห์ข้อมูลเชิงลึก, สรุปเอกสารยาวๆ หรือ งานเขียนโค้ด 
-ซึ่งโมเดลทั่วไป (Cheap) อาจตอบโจทย์ได้ไม่ดีพอ ในระบบ **OpenMiniCrew** เราสามารถเจาะจงใช้โมเดลระดับ **Mid** ได้
-(เช่น `CLAUDE_MODEL_MID` หรือ โควตาแพงของ Gemini) ในตอนที่กำลัง Execute Tool 
+บางครั้งคุณอาจสร้าง Tool ที่สลับซับซ้อน เช่น การวิเคราะห์ข้อมูลเชิงลึก, สรุปเอกสารยาวๆ หรืองานเขียนโค้ด
+ซึ่งโมเดลทั่วไป (Cheap) อาจตอบโจทย์ได้ไม่ดีพอ
 
-คุณเพียงแค่เรียกใช้ `llm_router.chat()` ขึ้นมาวิเคราะห์งานเองเป็นการภายใน พร้อมส่ง parameter `tier="mid"` เข้าไป
+**วิธีที่ 1: ตั้ง `preferred_tier` ระดับ class** (แนะนำ — ทุก LLM call ในตัว tool ใช้ tier เดียวกัน)
+
+```python
+class MySmartTool(BaseTool):
+    preferred_tier = "mid"  # ← ทุก llm_router.chat() ที่ใช้ self.preferred_tier จะได้ Sonnet/Pro
+
+    async def execute(self, ...):
+        resp = await llm_router.chat(..., tier=self.preferred_tier, ...)
+```
+
+**วิธีที่ 2: ระบุ `tier` เฉพาะ call** (สำหรับกรณีที่ต้องการ mix tier ในตัว tool เดียว)
+
+```python
+# call แรก: ใช้ cheap สำหรับงานง่าย
+resp1 = await llm_router.chat(..., tier="cheap", ...)
+
+# call ที่สอง: ใช้ mid สำหรับงานวิเคราะห์
+resp2 = await llm_router.chat(..., tier="mid", ...)
+```
+
+**ตัวอย่างเต็ม:**
 
 ```python
 # tools/research_tool.py
 """Research Tool — วิเคราะห์ข้อมูลเชิงลึกผ่าน LLM สุดฉลาด"""
 
 from tools.base import BaseTool
-from core.config import DEFAULT_LLM
 from core.llm import llm_router
+from core.user_manager import get_user, get_preference
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -781,36 +862,35 @@ class ResearchSummaryTool(BaseTool):
     name = "research_summary"
     description = "วิเคราะห์และสรุปผลข้อมูลเชิงลึกแบบละเอียดยิบ"
     commands = ["/research"]
-    direct_output = True  # เราจะส่งผลลัพธ์จาก llm_router ของเราตรงๆ ไปที่ user เลย
-    
+    direct_output = True
+    preferred_tier = "mid"  # ← ใช้โมเดลตัวเก่งเสมอ
+
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         if not args:
             return "กรุณาระบุหัวข้อวิเคราะห์: /research [หัวข้อ]"
-            
+
         try:
-            # สมมุติขั้นตอนตรงนี้คือไป Search หาข้อมูล หรืออ่านไฟล์มาให้ได้ก้อน Data ขนาดใหญ่
-            # data_to_analyze = await search_google(args)
-            data_to_analyze = f"ข้อมูลดิบเกี่ยวกับการทำงานของ {args}"
-            
+            user = get_user(user_id) or {}
+            provider = get_preference(user, "default_llm")
+
             system_prompt = (
                 "คุณคือนักวิเคราะห์ข้อมูลอาวุโส "
                 "สรุปวิเคราะห์ข้อมูลด้วยหลักเหตุผลลอจิก วิเคราะห์ผลกระทบ และข้อแนะนำ"
             )
-            
-            # จุดสำคัญ: ระบุ tier="mid" เพื่อดึงสมองโมเดลตัวเก่งสุดมาวิเคราะห์
+
             resp = await llm_router.chat(
-                messages=[{"role": "user", "content": f"รบกวนวิเคราะห์ข้อมูลชุดนี้:\n{data_to_analyze}"}],
-                provider=DEFAULT_LLM,
-                tier="mid",  # <-- ตรงนี้
+                messages=[{"role": "user", "content": f"วิเคราะห์หัวข้อ:\n{args}"}],
+                provider=provider,
+                tier=self.preferred_tier,  # ← ใช้ "mid" จาก class attribute
                 system=system_prompt,
             )
-            
+
             return f"🔬 **บทวิเคราะห์เชิงลึก: {args}**\n\n{resp['content']}"
 
         except Exception as e:
             log.error(f"Research failed: {e}")
             return f"การวิเคราะห์ล้มเหลว: {e}"
-            
+
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
@@ -831,8 +911,12 @@ class ResearchSummaryTool(BaseTool):
 **สิ่งที่เกิดขึ้น:**
 1. dispatcher รับคำร้องและส่งมาหา Tool ตามปกติ (dispatcher ใช้โมเดลถูก)
 2. เมื่อเข้าสู่ตัว Tool, เราให้ Tool สร้างหน้าต่างแชทเพื่อคุยกับโมเดลตัวแพง (Mid)
-3. พ่นผลลัพธ์สุดฉลาดกลับไปยัง user ในท้ายที่สุด 
+3. พ่นผลลัพธ์สุดฉลาดกลับไปยัง user ในท้ายที่สุด
 (ด้วยความที่ `direct_output=True` dispatcher ตัวหลักรอบนอกจึงไม่ต้องย่อสรุปข้อมูลซ้ำด้วยโมเดลถูก ทำให้ผลลัพธ์จากโมเดล Mid ถูกรักษาไว้เต็ม 100%)
+
+**Tools ที่ใช้ `preferred_tier = "mid"` ในปัจจุบัน:**
+- `email_summary` — สรุป Gmail ต้องความเข้าใจสูง
+- `work_email` — สรุป IMAP + ไฟล์แนบ ต้องความเข้าใจสูง
 
 ---
 
@@ -871,7 +955,8 @@ LLM เลือก: weather tool (เพราะ description ตรง)
 Dispatcher เรียก WeatherTool.execute(user_id, args)
          │
          ▼
-ผลลัพธ์ถูกส่งให้ LLM สรุปเป็นภาษาธรรมชาติ
+ถ้า direct_output=True → ส่งผลตรงให้ user
+ถ้า direct_output=False → ส่งผลให้ LLM สรุปอีกที
          │
          ▼
 ส่งกลับ user ผ่าน Telegram
@@ -889,13 +974,17 @@ db.log_tool_usage(user_id, "my_tool", status="success")
 
 # LLM
 from core.llm import llm_router
-from core.config import DEFAULT_LLM
-resp = await llm_router.chat(messages=[...], provider=DEFAULT_LLM, tier="cheap")
+resp = await llm_router.chat(messages=[...], provider=provider, tier="cheap")
+
+# User preference (ดึง LLM provider ของ user)
+from core.user_manager import get_user, get_preference
+user = get_user(user_id) or {}
+provider = get_preference(user, "default_llm")
 
 # Config
 from core.config import SOME_CONFIG
 
-# Security (Gmail)
+# Gmail credentials
 from core.security import get_gmail_credentials
 
 # Logger
@@ -988,8 +1077,35 @@ class MyTool(BaseTool):
 
 | ค่า | ใช้เมื่อ | ตัวอย่าง |
 |---|---|---|
-| `True` (default) | tool format output เองสวยแล้ว | lotto, traffic, news |
-| `False` | อยากให้ LLM สรุปข้อมูลดิบเป็นภาษาธรรมชาติ | email_summary |
+| `True` (default) | tool format output เองสวยแล้ว หรือ tool สรุปด้วย LLM เองภายใน | traffic, places, lotto, email_summary, news_summary |
+| `False` | อยากให้ dispatcher ส่งผลดิบให้ LLM สรุปเป็นภาษาธรรมชาติอีกที | (ไม่มี tool ปัจจุบันที่ใช้ — แต่ framework รองรับ) |
+
+> **หมายเหตุ:** tools ที่เรียก LLM เองภายใน (เช่น email_summary, news_summary)
+> ใช้ `direct_output = True` เพราะ output สรุปแล้ว ไม่ต้องให้ dispatcher สรุปซ้ำ
+
+### 7. `preferred_tier` — เลือกระดับ LLM
+
+```python
+class MyTool(BaseTool):
+    preferred_tier = "cheap"   # Haiku/Flash — เร็ว ถูก (default)
+    # preferred_tier = "mid"   # Sonnet/Pro — ฉลาดกว่า แต่ช้าและแพงกว่า
+```
+
+| Tier | โมเดล | ใช้เมื่อ | Tools ที่ใช้ |
+|---|---|---|---|
+| `"cheap"` (default) | Haiku / Gemini Flash | งานสรุปทั่วไป ไม่ซับซ้อน | news_summary |
+| `"mid"` | Sonnet / Gemini Pro | งานที่ต้องเข้าใจเนื้อหาลึก | email_summary, work_email |
+
+ใช้ใน `execute()` ผ่าน `self.preferred_tier`:
+
+```python
+resp = await llm_router.chat(
+    messages=[...],
+    provider=provider,
+    tier=self.preferred_tier,  # ← ใช้ค่าจาก class attribute
+    system=system_prompt,
+)
+```
 
 ---
 
@@ -1004,19 +1120,35 @@ class MyTool(BaseTool):
 - [ ] `execute()` return string เสมอ (ไม่ return None)
 - [ ] `execute()` ครอบด้วย `try/except` ไม่ให้ exception หลุด
 - [ ] `get_tool_spec()` ใช้ `self.name` (**ห้าม hardcode** ชื่อ tool)
-- [ ] `db.log_tool_usage()` ทั้ง success และ failed
-- [ ] ตั้ง `direct_output` ตามที่ต้องการ (ดูหัวข้อ `direct_output` ข้างล่าง)
+- [ ] ตั้ง `direct_output` ตามที่ต้องการ
 
-### ควรทำ (ไม่ทำ = ทำงานได้แต่ไม่ดี)
+### แนะนำ (ไม่ทำ = ทำงานได้แต่ไม่ดี)
 
+- [ ] `db.log_tool_usage()` ทั้ง success และ failed (dispatcher จัดการ failed ให้แล้ว แต่ success ต้อง log เอง)
+- [ ] ตั้ง `preferred_tier` ถ้า tool เรียก LLM เอง (`"mid"` สำหรับงานซับซ้อน)
 - [ ] `get_tool_spec()` มี description ชัดเจน (LLM ใช้ตัดสินใจ)
 - [ ] ถ้าใช้ enum parameter → ระบุ `"enum": [...]` ใน properties
 - [ ] ถ้าใช้ API key → เพิ่มใน `.env`, `.env.example`, `core/config.py`
 - [ ] ถ้าใช้ library ใหม่ → เพิ่มใน `requirements.txt`
 - [ ] ทดสอบผ่าน `/command` ตรง
 - [ ] ทดสอบผ่านพิมพ์อิสระ (LLM เลือก tool ถูก)
-- [ ] อัพเดท README.md (ตาราง commands)
 - [ ] output ไม่เกิน Telegram limit (~4096 chars)
+
+---
+
+## Tools ที่มีอยู่แล้ว
+
+| Tool | Commands | API/Source | preferred_tier | API Keys ที่ต้องมี |
+|---|---|---|---|---|
+| **email_summary** — สรุป Gmail | `/email` | Gmail API (OAuth2) + LLM | mid | `ANTHROPIC_API_KEY` หรือ `GEMINI_API_KEY` |
+| **work_email** — สรุปอีเมลที่ทำงาน (IMAP) | `/wm`, `/workmail` | IMAP + LLM | mid | `WORK_IMAP_HOST`, `WORK_IMAP_PORT`, `WORK_IMAP_USER`, `WORK_IMAP_PASSWORD` |
+| **traffic** — เส้นทาง/จราจร | `/traffic`, `/route` | Google Maps Directions + Routes API | cheap | `GOOGLE_MAPS_API_KEY` |
+| **places** — ค้นหาสถานที่ | `/places`, `/nearby`, `/search` | Google Places API (New) | cheap | `GOOGLE_MAPS_API_KEY` |
+| **exchange_rate** — อัตราแลกเปลี่ยน | `/fx`, `/rate`, `/exchange` | Bank of Thailand API | cheap | `BOT_API_EXCHANGE_TOKEN`, `BOT_API_HOLIDAY_TOKEN` |
+| **news_summary** — สรุปข่าว | `/news` | Google News RSS + LLM | cheap | ไม่ต้อง (RSS ฟรี) |
+| **lotto** — ตรวจสลากกินแบ่ง | `/lotto` | lotto.api.rayriffy.com | cheap | ไม่ต้อง (API ฟรี) |
+
+> **หมายเหตุ:** ทุก tool ใช้ `direct_output = True` (default) — tools ที่ใช้ LLM (email_summary, work_email, news_summary) สรุปเองภายแล้ว
 
 ---
 
@@ -1026,18 +1158,11 @@ class MyTool(BaseTool):
 |---|---|---|---|
 | พยากรณ์อากาศ | `/weather` | Open-Meteo (ฟรี) | ง่าย |
 | แปลภาษา | `/translate` | ใช้ LLM (ไม่ต้อง API เพิ่ม) | ง่าย |
-| สรุปข่าว | `/news` | RSS + LLM | **Done ✅** |
-| เส้นทาง/จราจร | `/traffic` | Google Maps Directions API | **Done ✅** |
-| ค้นหาสถานที่ | `/places` | Foursquare / Google Places | **Done ✅** |
-| สรุปอีเมล Gmail | `/email` | Gmail API + LLM | **Done ✅** |
-| อีเมลองค์กร (IMAP) | `/wm` | IMAP + pdfplumber/docx/openpyxl | **Done ✅** |
-| ตรวจผลสลาก | `/lotto` | lotto.api.rayriffy.com | **Done ✅** |
 | จดบันทึก/เตือนความจำ | `/note` | SQLite (มีอยู่แล้ว) | ง่าย |
 | ค้นหาเว็บ | `/search` | Google Custom Search / SerpAPI | ปานกลาง |
-| ค่าเงิน/อัตราแลกเปลี่ยน | `/fx` | exchangerate-api (ฟรี) | ง่าย |
 | ติดตามพัสดุ | `/track` | Thailand Post API / Kerry API | ปานกลาง |
-| จัดการ Google Calendar | `/cal` | Google Calendar API | ยาก |
 | สรุป YouTube | `/yt` | YouTube Transcript API + LLM | ปานกลาง |
+| จัดการ Google Calendar | `/cal` | Google Calendar API | ยาก |
 
 ---
 
@@ -1045,10 +1170,12 @@ class MyTool(BaseTool):
 
 1. **description สำคัญมาก** — LLM ใช้ description ตัดสินใจว่าจะเรียก tool ไหนเมื่อ user พิมพ์อิสระ ถ้า description ไม่ชัด LLM จะเลือกผิด
 
-2. **ใช้ LLM เป็น formatter** — tool ดึงข้อมูลดิบมา แล้วส่งให้ LLM สรุปเป็นภาษาธรรมชาติ ผลลัพธ์จะดีกว่า format เองมาก (ดูตัวอย่างใน email_summary)
+2. **ใช้ LLM เป็น formatter** — tool ดึงข้อมูลดิบมา แล้วส่งให้ LLM สรุปเป็นภาษาธรรมชาติ ผลลัพธ์จะดีกว่า format เองมาก (ดูตัวอย่างใน email_summary, news_summary)
 
 3. **ตั้ง command หลายตัวได้** — `commands = ["/weather", "/w"]` ให้ user พิมพ์สั้นๆ ได้
 
 4. **ทดสอบ /command ก่อน** — ทดสอบผ่าน `/command` ตรงก่อน เพราะไม่ผ่าน LLM ดู output ตรงๆ ง่ายกว่า debug
 
 5. **เก็บ API key ใน .env เสมอ** — อย่า hardcode ลงในไฟล์ tool โดยเด็ดขาด
+
+6. **ใช้ `preferred_tier` แทน hardcode** — ตั้ง `preferred_tier = "mid"` ที่ class level แทนใส่ `tier="mid"` ตรงๆ ใน code ทำให้ปรับเปลี่ยนง่าย
