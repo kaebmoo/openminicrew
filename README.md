@@ -80,7 +80,7 @@ WORK_EMAIL_ATTACHMENT_MAX_MB=5   # optional, default 5
 
 > **หมายเหตุ:** ถ้าไม่ตั้งค่า IMAP คำสั่ง `/wm` จะแจ้ง error แต่ tool อื่นยังทำงานได้ตามปกติ
 
-### 5. ตั้งค่า API الاื่นๆ (สำหรับ Tool เพิ่มเติม)
+### 5. ตั้งค่า API อื่น ๆ (สำหรับ Tool เพิ่มเติม)
 
 ระบบมี Tools ที่ใช้ API อื่นๆ ให้พร้อมใช้งานทันที:
 - **Bank of Thailand API** (`/fx` อัตราแลกเปลี่ยน): สมัคร [BOT API](https://api.bot.or.th/home) เพื่อขอ `BOT_API_EXCHANGE_TOKEN` และ `BOT_API_HOLIDAY_TOKEN` ฟรี แล้วใส่ระบบ `.env`
