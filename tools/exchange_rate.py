@@ -1,6 +1,7 @@
 """Exchange Rate Tool — อัตราแลกเปลี่ยนเงินตราต่างประเทศ จาก BOT API (ธนาคารแห่งประเทศไทย)"""
 
 import asyncio
+import calendar
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -43,8 +44,20 @@ DEFAULT_CURRENCIES = ["USD", "GBP", "EUR", "JPY", "CNY"]
 
 # BOT API endpoints
 BOT_API_BASE = "https://gateway.api.bot.or.th"
-EXCHANGE_RATE_DAILY_URL = f"{BOT_API_BASE}/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/"
+EXCHANGE_RATE_URLS = {
+    "daily": f"{BOT_API_BASE}/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/",
+    "monthly": f"{BOT_API_BASE}/Stat-ExchangeRate/v2/MONTHLY_AVG_EXG_RATE/",
+    "quarterly": f"{BOT_API_BASE}/Stat-ExchangeRate/v2/QUARTERLY_AVG_EXG_RATE/",
+    "annual": f"{BOT_API_BASE}/Stat-ExchangeRate/v2/ANNUAL_AVG_EXG_RATE/",
+}
 HOLIDAY_URL = f"{BOT_API_BASE}/financial-institutions-holidays/"
+
+PERIOD_LABELS = {
+    "daily": "รายวัน",
+    "monthly": "เฉลี่ยรายเดือน",
+    "quarterly": "เฉลี่ยรายไตรมาส",
+    "annual": "เฉลี่ยรายปี",
+}
 
 # Cache วันหยุด — เก็บ per-year เพื่อไม่ call API ซ้ำ
 # structure: { year(int): set[date] }
@@ -169,27 +182,42 @@ def last_business_day(from_date: Optional[date] = None) -> date:
 # Helper: Exchange Rate API
 # ---------------------------------------------------------------------------
 
-def _fetch_exchange_rate(target_date: date, currency: str) -> Optional[dict]:
+def _fetch_exchange_rate(target_date: date, currency: str,
+                         period: str = "daily") -> Optional[dict]:
     """
     ดึงอัตราแลกเปลี่ยนจาก BOT API
-    คืน dict ของข้อมูลวันนั้น หรือ None ถ้าไม่มีข้อมูล
+    period: daily | monthly | quarterly | annual
+    คืน dict ของข้อมูล หรือ None ถ้าไม่มีข้อมูล
     """
     headers = {
         "Authorization": f"Bearer {BOT_API_EXCHANGE_TOKEN}",
         "accept": "application/json",
     }
-    date_str = target_date.isoformat()
+
+    # คำนวณ start/end period ตาม format ที่ API ต้องการ
+    if period == "monthly":
+        # YYYY-MM
+        period_str = f"{target_date.year}-{target_date.month:02d}"
+        start_str = end_str = period_str
+    elif period == "quarterly":
+        # YYYY-QN
+        q = (target_date.month - 1) // 3 + 1
+        period_str = f"{target_date.year}-Q{q}"
+        start_str = end_str = period_str
+    elif period == "annual":
+        # YYYY
+        period_str = str(target_date.year)
+        start_str = end_str = period_str
+    else:  # daily — YYYY-MM-DD
+        start_str = end_str = target_date.isoformat()
+
+    url = EXCHANGE_RATE_URLS.get(period, EXCHANGE_RATE_URLS["daily"])
     params = {
-        "start_period": date_str,
-        "end_period": date_str,
+        "start_period": start_str,
+        "end_period": end_str,
         "currency": currency,
     }
-    resp = requests.get(
-        EXCHANGE_RATE_DAILY_URL,
-        headers=headers,
-        params=params,
-        timeout=15,
-    )
+    resp = requests.get(url, headers=headers, params=params, timeout=15)
     resp.raise_for_status()
     data = resp.json()
 
@@ -224,6 +252,43 @@ def _format_rate(record: dict, currency: str) -> str:
     )
 
 
+def _prev_period(target: date, period: str) -> date:
+    """ย้อนกลับ 1 งวด — คืน date ที่อยู่ในงวดก่อนหน้า"""
+    if period == "monthly":
+        # ย้อน 1 เดือน
+        if target.month == 1:
+            return target.replace(year=target.year - 1, month=12, day=1)
+        return target.replace(month=target.month - 1, day=1)
+    elif period == "quarterly":
+        # ย้อน 1 ไตรมาส (3 เดือน)
+        month = target.month - 3
+        year = target.year
+        if month < 1:
+            month += 12
+            year -= 1
+        return target.replace(year=year, month=month, day=1)
+    elif period == "annual":
+        return target.replace(year=target.year - 1, month=1, day=1)
+    return target
+
+
+def _period_label(target: date, period: str) -> str:
+    """สร้าง label วันที่สำหรับแสดงผลตาม period"""
+    if period == "monthly":
+        thai_months = [
+            "", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+            "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
+        ]
+        return f"{thai_months[target.month]} {target.year}"
+    elif period == "quarterly":
+        q = (target.month - 1) // 3 + 1
+        return f"Q{q}/{target.year}"
+    elif period == "annual":
+        return f"ปี {target.year}"
+    else:
+        return target.strftime("%d/%m/%Y")
+
+
 # ---------------------------------------------------------------------------
 # Main Tool Class
 # ---------------------------------------------------------------------------
@@ -232,12 +297,13 @@ class ExchangeRateTool(BaseTool):
     name = "exchange_rate"
     description = (
         "ดูอัตราแลกเปลี่ยนเงินตราต่างประเทศเป็นบาทไทย จากธนาคารแห่งประเทศไทย "
-        "ระบุสกุลเงินและวันที่ได้ ถ้าวันที่เป็นวันหยุดจะหาวันทำการก่อนหน้าให้อัตโนมัติ"
+        "ระบุสกุลเงิน วันที่ และช่วงเวลาได้ (รายวัน/เดือน/ไตรมาส/ปี)"
     )
     commands = ["/fx", "/rate", "/exchange"]
     direct_output = True
 
-    async def execute(self, user_id: str, args: str = "", date: str = "", **kwargs) -> str:
+    async def execute(self, user_id: str, args: str = "", date: str = "",
+                      period: str = "daily", **kwargs) -> str:
         args = args.strip().upper()
 
         # ผู้ใช้ถามว่ามีสกุลอะไรบ้าง
@@ -259,28 +325,49 @@ class ExchangeRateTool(BaseTool):
                 f"พิมพ์ /fx list เพื่อดูรายการสกุลทั้งหมด"
             )
 
+        # Validate period
+        period = period.lower().strip() if period else "daily"
+        if period not in EXCHANGE_RATE_URLS:
+            return f"ไม่รู้จัก period: {period} (ใช้ daily, monthly, quarterly, annual)"
+
         # กำหนดวันที่เป้าหมาย
         if date:
             try:
                 target = datetime.strptime(date.strip(), "%Y-%m-%d").date()
             except ValueError:
                 return f"รูปแบบวันที่ไม่ถูกต้อง: {date} (ใช้ YYYY-MM-DD)"
-            biz_day = target
         else:
-            biz_day = last_business_day()
+            target = date_module_today()
 
-        # ลองย้อนหลังถ้าไม่มีข้อมูล (วันหยุด/เสาร์-อาทิตย์)
-        first_currency = currencies[0]
-        for _ in range(7):
-            try:
-                test = _fetch_exchange_rate(biz_day, first_currency)
-                if test:
-                    break
-            except Exception:
-                pass
-            biz_day -= timedelta(days=1)
-            while biz_day.weekday() >= 5:
+        # สำหรับ daily: ลองย้อนหลังถ้าไม่มีข้อมูล (วันหยุด/เสาร์-อาทิตย์)
+        if period == "daily":
+            if not date:
+                target = last_business_day()
+            biz_day = target
+            first_currency = currencies[0]
+            for _ in range(7):
+                try:
+                    test = _fetch_exchange_rate(biz_day, first_currency, "daily")
+                    if test:
+                        break
+                except Exception:
+                    pass
                 biz_day -= timedelta(days=1)
+                while biz_day.weekday() >= 5:
+                    biz_day -= timedelta(days=1)
+            target = biz_day
+
+        # สำหรับ monthly/quarterly/annual: ลองย้อนงวดถ้าไม่มีข้อมูล (งวดปัจจุบันยังไม่จบ)
+        elif period in ("monthly", "quarterly", "annual"):
+            first_currency = currencies[0]
+            for _ in range(3):
+                try:
+                    test = _fetch_exchange_rate(target, first_currency, period)
+                    if test:
+                        break
+                except Exception:
+                    pass
+                target = _prev_period(target, period)
 
         try:
             results = []
@@ -288,32 +375,31 @@ class ExchangeRateTool(BaseTool):
 
             for currency in currencies:
                 try:
-                    record = _fetch_exchange_rate(biz_day, currency)
+                    record = _fetch_exchange_rate(target, currency, period)
                     if record:
                         results.append(_format_rate(record, currency))
                     else:
-                        errors.append(f"{currency}: ไม่มีข้อมูลวันที่ {biz_day}")
+                        errors.append(f"{currency}: ไม่มีข้อมูล")
                 except Exception as e:
-                    log.warning(f"Failed to fetch {currency}: {e}")
+                    log.warning(f"Failed to fetch {currency} ({period}): {e}")
                     errors.append(f"{currency}: ดึงข้อมูลไม่ได้")
 
             # สร้าง output
-            lines = [f"อัตราแลกเปลี่ยน ณ วันที่ {biz_day.strftime('%d/%m/%Y')} (THB)\n"]
+            label = _period_label(target, period)
+            period_th = PERIOD_LABELS.get(period, "")
+            lines = [f"อัตราแลกเปลี่ยน{period_th} ณ {label} (THB)\n"]
             if results:
                 lines.extend(results)
             if errors:
                 lines.append("\n" + "\n".join(errors))
-            lines.append(
-                f"\nที่มา: ธนาคารแห่งประเทศไทย | อัตราเฉลี่ยรายวัน\n"
-                f"(เสาร์/อาทิตย์/วันหยุดธนาคารจะไม่มีข้อมูล)"
-            )
+            lines.append(f"\nที่มา: ธนาคารแห่งประเทศไทย")
 
             output = "\n".join(lines)
 
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=(args or "default")[:100],
+                input_summary=f"{period} {args or 'default'} {date}"[:100],
                 output_summary=output[:200],
                 status="success",
             )
@@ -324,7 +410,7 @@ class ExchangeRateTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=(args or "default")[:100],
+                input_summary=f"{period} {args or 'default'} {date}"[:100],
                 status="failed",
                 error_message=str(e),
             )
@@ -344,8 +430,9 @@ class ExchangeRateTool(BaseTool):
             "description": (
                 "ดูอัตราแลกเปลี่ยนเงินตราต่างประเทศเป็นบาทไทย จากธนาคารแห่งประเทศไทย "
                 "ต้องเรียก tool นี้เสมอเมื่อผู้ใช้ถามเรื่องอัตราแลกเปลี่ยน ห้ามตอบเองโดยไม่เรียก tool "
+                "รองรับทั้งรายวัน รายเดือน รายไตรมาส และรายปี "
                 "tool จะจัดการวันหยุด/เสาร์-อาทิตย์เอง โดยหาวันทำการก่อนหน้าให้อัตโนมัติ "
-                "ให้ส่ง date ตามที่ผู้ใช้ระบุเสมอ ไม่ต้องตรวจสอบว่าเป็นวันหยุดหรือไม่"
+                "ให้ส่ง date และ period ตามที่ผู้ใช้ระบุเสมอ ไม่ต้องตรวจสอบว่าเป็นวันหยุดหรือไม่"
             ),
             "parameters": {
                 "type": "object",
@@ -362,12 +449,29 @@ class ExchangeRateTool(BaseTool):
                     "date": {
                         "type": "string",
                         "description": (
-                            "วันที่ที่ต้องการดูอัตราแลกเปลี่ยน รูปแบบ YYYY-MM-DD เช่น '2026-03-01' "
-                            "ถ้าไม่ระบุจะใช้วันทำการล่าสุด "
-                            "ถ้าวันที่ระบุเป็นวันหยุดหรือเสาร์-อาทิตย์ จะหาวันทำการก่อนหน้าให้อัตโนมัติ"
+                            "วันที่อ้างอิง รูปแบบ YYYY-MM-DD เช่น '2026-03-01' "
+                            "สำหรับ monthly ใช้วันใดก็ได้ในเดือนนั้น เช่น '2026-02-01' = ก.พ. 2026 "
+                            "สำหรับ quarterly ใช้วันใดก็ได้ในไตรมาสนั้น เช่น '2026-01-01' = Q1/2026 "
+                            "สำหรับ annual ใช้วันใดก็ได้ในปีนั้น เช่น '2025-01-01' = ปี 2025 "
+                            "ถ้าไม่ระบุจะใช้วันปัจจุบัน"
+                        ),
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": (
+                            "ช่วงเวลาของอัตราแลกเปลี่ยน: "
+                            "'daily' = รายวัน (ค่าเริ่มต้น), "
+                            "'monthly' = เฉลี่ยรายเดือน, "
+                            "'quarterly' = เฉลี่ยรายไตรมาส, "
+                            "'annual' = เฉลี่ยรายปี"
                         ),
                     },
                 },
                 "required": [],
             },
         }
+
+
+def date_module_today() -> date:
+    """wrapper เพื่อให้ test mock ได้"""
+    return date.today()
