@@ -758,6 +758,84 @@ class NewsSummaryTool(BaseTool):
 
 ---
 
+## ตัวอย่าง 4: Tool ที่ต้องการความฉลาดสูง (ใช้ LLM ระดับ Mid)
+
+บางครั้งคุณอาจสร้าง Tool ที่สลับซับซ้อน เช่น การวิเคราะห์ข้อมูลเชิงลึก, สรุปเอกสารยาวๆ หรือ งานเขียนโค้ด 
+ซึ่งโมเดลทั่วไป (Cheap) อาจตอบโจทย์ได้ไม่ดีพอ ในระบบ **OpenMiniCrew** เราสามารถเจาะจงใช้โมเดลระดับ **Mid** ได้
+(เช่น `CLAUDE_MODEL_MID` หรือ โควตาแพงของ Gemini) ในตอนที่กำลัง Execute Tool 
+
+คุณเพียงแค่เรียกใช้ `llm_router.chat()` ขึ้นมาวิเคราะห์งานเองเป็นการภายใน พร้อมส่ง parameter `tier="mid"` เข้าไป
+
+```python
+# tools/research_tool.py
+"""Research Tool — วิเคราะห์ข้อมูลเชิงลึกผ่าน LLM สุดฉลาด"""
+
+from tools.base import BaseTool
+from core.config import DEFAULT_LLM
+from core.llm import llm_router
+from core.logger import get_logger
+
+log = get_logger(__name__)
+
+class ResearchSummaryTool(BaseTool):
+    name = "research_summary"
+    description = "วิเคราะห์และสรุปผลข้อมูลเชิงลึกแบบละเอียดยิบ"
+    commands = ["/research"]
+    direct_output = True  # เราจะส่งผลลัพธ์จาก llm_router ของเราตรงๆ ไปที่ user เลย
+    
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        if not args:
+            return "กรุณาระบุหัวข้อวิเคราะห์: /research [หัวข้อ]"
+            
+        try:
+            # สมมุติขั้นตอนตรงนี้คือไป Search หาข้อมูล หรืออ่านไฟล์มาให้ได้ก้อน Data ขนาดใหญ่
+            # data_to_analyze = await search_google(args)
+            data_to_analyze = f"ข้อมูลดิบเกี่ยวกับการทำงานของ {args}"
+            
+            system_prompt = (
+                "คุณคือนักวิเคราะห์ข้อมูลอาวุโส "
+                "สรุปวิเคราะห์ข้อมูลด้วยหลักเหตุผลลอจิก วิเคราะห์ผลกระทบ และข้อแนะนำ"
+            )
+            
+            # จุดสำคัญ: ระบุ tier="mid" เพื่อดึงสมองโมเดลตัวเก่งสุดมาวิเคราะห์
+            resp = await llm_router.chat(
+                messages=[{"role": "user", "content": f"รบกวนวิเคราะห์ข้อมูลชุดนี้:\n{data_to_analyze}"}],
+                provider=DEFAULT_LLM,
+                tier="mid",  # <-- ตรงนี้
+                system=system_prompt,
+            )
+            
+            return f"🔬 **บทวิเคราะห์เชิงลึก: {args}**\n\n{resp['content']}"
+
+        except Exception as e:
+            log.error(f"Research failed: {e}")
+            return f"การวิเคราะห์ล้มเหลว: {e}"
+            
+    def get_tool_spec(self) -> dict:
+        return {
+            "name": self.name,
+            "description": "ระดมสมองวิเคราะห์หัวข้อยากๆ หรือพิจารณาข้อมูลเชิงลึก",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "args": {
+                        "type": "string",
+                        "description": "หัวข้อที่จะให้เจาะลึกวิเคราะห์",
+                    }
+                },
+                "required": [],
+            },
+        }
+```
+
+**สิ่งที่เกิดขึ้น:**
+1. dispatcher รับคำร้องและส่งมาหา Tool ตามปกติ (dispatcher ใช้โมเดลถูก)
+2. เมื่อเข้าสู่ตัว Tool, เราให้ Tool สร้างหน้าต่างแชทเพื่อคุยกับโมเดลตัวแพง (Mid)
+3. พ่นผลลัพธ์สุดฉลาดกลับไปยัง user ในท้ายที่สุด 
+(ด้วยความที่ `direct_output=True` dispatcher ตัวหลักรอบนอกจึงไม่ต้องย่อสรุปข้อมูลซ้ำด้วยโมเดลถูก ทำให้ผลลัพธ์จากโมเดล Mid ถูกรักษาไว้เต็ม 100%)
+
+---
+
 ## รายละเอียดสำคัญ
 
 ### 1. `execute()` รับ-ส่งอะไร

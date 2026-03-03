@@ -69,9 +69,20 @@ class ClaudeProvider(BaseLLMProvider):
             "messages": messages,
         }
         if system:
-            kwargs["system"] = system
+            # Prompt caching: system prompt as content blocks with cache_control
+            kwargs["system"] = [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
         if tools:
-            kwargs["tools"] = [self.convert_tool_spec(t) for t in tools]
+            converted = [self.convert_tool_spec(t) for t in tools]
+            # Prompt caching: mark last tool with cache_control as breakpoint
+            if converted:
+                converted[-1]["cache_control"] = {"type": "ephemeral"}
+            kwargs["tools"] = converted
 
         resp = await self._client.messages.create(**kwargs)
 
@@ -85,6 +96,16 @@ class ClaudeProvider(BaseLLMProvider):
                 tool_call = {"name": block.name, "args": block.input}
 
         token_used = (resp.usage.input_tokens + resp.usage.output_tokens) if resp.usage else 0
+
+        # Log prompt caching metrics
+        if resp.usage:
+            cache_created = getattr(resp.usage, "cache_creation_input_tokens", 0) or 0
+            cache_read = getattr(resp.usage, "cache_read_input_tokens", 0) or 0
+            if cache_created or cache_read:
+                log.info(
+                    f"Claude cache — created: {cache_created}, "
+                    f"read: {cache_read}, input: {resp.usage.input_tokens}"
+                )
 
         return {
             "content": content,

@@ -752,6 +752,82 @@ Or type: "What's the latest tech news?"
 
 ---
 
+## Example 4: Advanced LLM Tool (Using Mid-Tier Model)
+
+Sometimes you may build a highly complex tool such as deep data analysis, summarizing extremely long documents, or writing intricate code where the default (cheap) model might struggle. In the **OpenMiniCrew** system, you can explicitly request a higher-tier (**Mid**) model (like `CLAUDE_MODEL_MID` or Gemini's premium tier) during the tools execution.
+
+You simply call `llm_router.chat()` internally to perform the analysis, providing the parameter `tier="mid"`.
+
+```python
+# tools/research_tool.py
+"""Research Tool — In-depth data analysis using an advanced LLM"""
+
+from tools.base import BaseTool
+from core.config import DEFAULT_LLM
+from core.llm import llm_router
+from core.logger import get_logger
+
+log = get_logger(__name__)
+
+class ResearchSummaryTool(BaseTool):
+    name = "research_summary"
+    description = "Conducts deep and comprehensive analysis on a given topic"
+    commands = ["/research"]
+    direct_output = True  # We return the AI's result directly without further wrapping
+    
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        if not args:
+            return "Please provide a topic: /research [topic]"
+            
+        try:
+            # Imagine here you fetch massive data or search Google prior to the prompt
+            # data_to_analyze = await search_google(args)
+            data_to_analyze = f"Raw data concepts regarding the mechanics of {args}"
+            
+            system_prompt = (
+                "You are a Senior Data Analyst. "
+                "Analyze the data using rigorous logic. State the impacts and recommendations."
+            )
+            
+            # The key is to specify tier="mid" to employ the most capable model
+            resp = await llm_router.chat(
+                messages=[{"role": "user", "content": f"Please analyze this dataset:\n{data_to_analyze}"}],
+                provider=DEFAULT_LLM,
+                tier="mid",  # <-- Right here
+                system=system_prompt,
+            )
+            
+            return f"🔬 **Deep Analysis: {args}**\n\n{resp['content']}"
+
+        except Exception as e:
+            log.error(f"Research failed: {e}")
+            return f"Analysis failed: {e}"
+            
+    def get_tool_spec(self) -> dict:
+        return {
+            "name": self.name,
+            "description": "Brainstorm and analyze deeply on difficult or complex topics",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "args": {
+                        "type": "string",
+                        "description": "The particular topic for in-depth analysis",
+                    }
+                },
+                "required": [],
+            },
+        }
+```
+
+**What happens here:**
+1. The dispatcher routes the request to this tool (using the cheap model as usual).
+2. Once inside the tool, we launch an internal chat session targeting the advanced/expensive (Mid) tier model.
+3. The highly analytical result is instantly returned to the user.
+(By setting `direct_output=True`, the main dispatcher skips re-summarizing using the cheap model, thereby preserving 100% of the advanced model's original output.)
+
+---
+
 ## Important Details
 
 ### 1. `execute()` Input/Output

@@ -103,6 +103,13 @@ class GeminiProvider(BaseLLMProvider):
                 (getattr(resp.usage_metadata, "prompt_token_count", 0) or 0) +
                 (getattr(resp.usage_metadata, "candidates_token_count", 0) or 0)
             )
+            # Log implicit caching metrics
+            cached_tokens = getattr(resp.usage_metadata, "cached_content_token_count", 0) or 0
+            if cached_tokens:
+                log.info(
+                    f"Gemini cache — cached: {cached_tokens}, "
+                    f"prompt: {getattr(resp.usage_metadata, 'prompt_token_count', 0)}"
+                )
 
         return {
             "content": content,
