@@ -63,7 +63,29 @@ cp .env.example .env
 
 > **Important:** Make sure you download `credentials.json` from the correct project — the project name set in Google Cloud Console will be displayed on the consent screen during authorization.
 
-### 4. Run
+### 4. Set Up Work Email / IMAP (for work_email tool)
+
+For corporate emails connected via IMAP (e.g. Zimbra, Exchange, hMailServer)
+
+```bash
+# Add to .env
+WORK_IMAP_HOST=mail.company.co.th
+WORK_IMAP_PORT=993
+WORK_IMAP_USER=yourname@company.co.th
+WORK_IMAP_PASSWORD=yourpassword
+WORK_EMAIL_MAX_RESULTS=30        # optional, default 30
+WORK_EMAIL_ATTACHMENT_MAX_MB=5   # optional, default 5
+```
+
+> **Note:** If IMAP is not configured, the `/wm` command will return an error but other tools will work normally.
+
+### 5. Set Up Other APIs (for Additional Tools)
+
+The system includes tools that utilize other APIs ready out-of-the-box:
+- **Bank of Thailand API** (`/fx` exchange rates): Sign up at [BOT API](https://api.bot.or.th/home) to request `BOT_API_EXCHANGE_TOKEN` and `BOT_API_HOLIDAY_TOKEN` for free, then add them to `.env`.
+- **Google Maps/Places API** (`/traffic`, `/places`): Enable Directions API, Routes API, Places API (New), and Geocoding API in Google Cloud Console. See the full list of APIs in [TOOLS_GUIDE.md](TOOLS_GUIDE.md).
+
+### 6. Run
 
 ```bash
 # Normal run — auto-detects Gmail auth
@@ -105,11 +127,12 @@ python main.py
 | Command | Description |
 |---|---|
 | `/email` | Summarize unread emails (today) |
-| `/model` | Show available LLM providers |
-| `/model claude` | Switch to Claude |
-| `/model gemini` | Switch to Gemini |
-| `/help` | Show all commands |
-| Free text | AI will choose a tool or respond directly |
+| `/wm` | Summarize corporate emails via IMAP (today) |
+| `/traffic สยาม ไป สีลม` | Check route + traffic conditions |
+| `/places ร้านกาแฟแถวนี้` | Search for nearby places |
+| `/news` | Summarize latest top news from RSS |
+| `/fx` | Check current currency exchange rates |
+| `/lotto` | Check latest government lottery results |
 
 ### Email Summary — Advanced Options
 
@@ -186,7 +209,13 @@ openminicrew/
 ├── tools/             Tool system
 │   ├── base.py        BaseTool abstract class
 │   ├── registry.py    Auto-discover
-│   └── email_summary.py  Email summary (time range + search + force)
+│   ├── email_summary.py  Email summary (time range + search + force)
+│   ├── work_email.py     Work Email via IMAP (Summarize + Search + Read Attachments)
+│   ├── traffic.py     Traffic + route (Google Maps, multi-mode)
+│   ├── places.py      Nearby place search (Google Places API)
+│   ├── news_summary.py   News summary (RSS + LLM)
+│   ├── lotto.py       Lotto result checker
+│   └── exchange_rate.py  Currency exchange rate via BOT API
 ├── interfaces/        Telegram interface
 │   ├── telegram_polling.py   Long polling
 │   ├── telegram_webhook.py   Webhook + FastAPI

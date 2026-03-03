@@ -80,7 +80,13 @@ WORK_EMAIL_ATTACHMENT_MAX_MB=5   # optional, default 5
 
 > **หมายเหตุ:** ถ้าไม่ตั้งค่า IMAP คำสั่ง `/wm` จะแจ้ง error แต่ tool อื่นยังทำงานได้ตามปกติ
 
-### 4. รัน
+### 5. ตั้งค่า API الاื่นๆ (สำหรับ Tool เพิ่มเติม)
+
+ระบบมี Tools ที่ใช้ API อื่นๆ ให้พร้อมใช้งานทันที:
+- **Bank of Thailand API** (`/fx` อัตราแลกเปลี่ยน): สมัคร [BOT API](https://api.bot.or.th/home) เพื่อขอ `BOT_API_EXCHANGE_TOKEN` และ `BOT_API_HOLIDAY_TOKEN` ฟรี แล้วใส่ระบบ `.env`
+- **Google Maps/Places API** (`/traffic`, `/places`): เปิดใช้งาน Directions API, Routes API, Places API (New) และ Geocoding API ใน Google Cloud ดูรายชื่อ APIs เต็มๆ ได้ใน [TOOLS_GUIDE.md](TOOLS_GUIDE.md)
+
+### 6. รัน
 
 ```bash
 # รันปกติ — ระบบจะ auto-detect Gmail auth
@@ -122,10 +128,12 @@ python main.py
 | คำสั่ง | คำอธิบาย |
 |---|---|
 | `/email` | สรุปอีเมลที่ยังไม่ได้อ่าน (วันนี้) |
+| `/wm` | สรุปอีเมลองค์กรทาง IMAP (วันนี้) |
 | `/traffic สยาม ไป สีลม` | เช็คเส้นทาง + สภาพจราจร |
 | `/places ร้านกาแฟแถวนี้` | ค้นหาสถานที่ใกล้เคียง |
-| `/news` | สรุปข่าวเทคโนโลยีล่าสุด |
-| `/news tech` | สรุปข่าวตามหมวด |
+| `/news` | สรุปข่าวเด่นล่าสุดจาก RSS |
+| `/fx` | ตรวจสอบอัตราแลกเปลี่ยนเงินตรา |
+| `/lotto` | ตรวจสลากกินแบ่งรัฐบาลล่าสุด |
 | `/model` | แสดง LLM ที่ใช้ได้ |
 | `/model claude` | เปลี่ยนไปใช้ Claude |
 | `/model gemini` | เปลี่ยนไปใช้ Gemini |
@@ -270,8 +278,10 @@ openminicrew/
 │   ├── email_summary.py  Email summary (time range + search + force)
 │   ├── work_email.py     Work Email via IMAP (สรุป + ค้นหา + อ่านไฟล์แนบ)
 │   ├── traffic.py     Traffic + route (Google Maps, multi-mode)
-│   ├── places.py      Nearby place search (Foursquare)
-│   └── news_summary.py   News summary (RSS + LLM)
+│   ├── places.py      Nearby place search (Google Places API)
+│   ├── news_summary.py   News summary (RSS + LLM)
+│   ├── lotto.py       Lotto result checker
+│   └── exchange_rate.py  Currency exchange rate via BOT API
 ├── interfaces/        Telegram interface
 │   ├── telegram_polling.py   Long polling
 │   ├── telegram_webhook.py   Webhook + FastAPI + Gmail OAuth callback
