@@ -296,20 +296,172 @@ openminicrew/
 
 ## Production Deployment (Webhook Mode)
 
-```bash
-# ต้องมี domain + HTTPS
-# ตั้งค่าใน .env:
-BOT_MODE=webhook
-WEBHOOK_HOST=https://your-domain.com
-WEBHOOK_PORT=8443
-TELEGRAM_WEBHOOK_SECRET=random-secret-string
+Webhook mode เหมาะสำหรับ VPS / server ที่มี public IP + HTTPS ต่างจาก polling ที่บอท *ดึง* update เข้ามา webhook คือ Telegram จะ *ส่ง* update มาหาบอทโดยตรง — latency ต่ำกว่า และไม่มี connection loop ให้ดูแล
 
-# รัน
+### Endpoints ที่มีให้
+
+| Method | Path | คำอธิบาย |
+|--------|------|-----------|
+| `POST` | `WEBHOOK_PATH` | รับ update จาก Telegram |
+| `GET` | `/health` | ตรวจสถานะ bot, DB, LLM, scheduler |
+| `GET` | `/gmail-callback` | OAuth callback หลัง authorize Gmail |
+
+---
+
+### 1. กำหนด Webhook Path ที่ปลอดภัย
+
+> [!IMPORTANT]
+> **อย่าใช้ path ทั่วไปเช่น `/webhook` หรือ `/bot`** เพราะถูก scan ได้ง่าย ควรใส่ random token ต่อท้าย path เพื่อให้ยากต่อการเดา
+
+สร้าง token แบบสุ่ม:
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+# ตัวอย่าง: g7Kx2mNpQ4rJ8sLvW1cF5hBd6yAeUiZt3oR9TkXnMwY0
+
+python3 -c "import secrets; print(secrets.token_urlsafe(24))"
+# ตัวอย่าง: qW3eR5tY7uI9oP2aS4dF6gH8jK  (สำหรับ secret token)
+```
+
+---
+
+### 2. ตั้งค่า .env
+
+```bash
+# Bot mode
+BOT_MODE=webhook
+
+# Domain และ port ที่บอท FastAPI ฟังอยู่ (ไม่ใช่ port ของ nginx)
+WEBHOOK_HOST=https://centraldigital.cattelecom.com
+WEBHOOK_PORT=8100
+
+# Secure path — ใส่ token ที่สุ่มได้จากขั้นตอนบน
+WEBHOOK_PATH=/webhook/g7Kx2mNpQ4rJ8sLvW1cF5hBd6yAeUiZt3oR9TkXnMwY0
+
+# Secret token — Telegram จะส่ง header X-Telegram-Bot-Api-Secret-Token: <value> มาทุก request
+TELEGRAM_WEBHOOK_SECRET=qW3eR5tY7uI9oP2aS4dF6gH8jK
+```
+
+> **หมายเหตุ:** `WEBHOOK_HOST` คือ URL ที่ Telegram จะเรียก (https ของ nginx) — บอทเองรันที่ port 8100 บน localhost
+
+---
+
+### 3. เพิ่ม nginx location
+
+เพิ่ม location block ต่อไปนี้ใน `/etc/nginx/sites-enabled/default` ภายใน server block `listen 443 ssl`:
+
+```nginx
+# OpenMiniCrew Telegram Bot Webhook
+location /webhook/ {
+    proxy_pass http://127.0.0.1:8100;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Forward Telegram secret token header
+    proxy_set_header X-Telegram-Bot-Api-Secret-Token $http_x_telegram_bot_api_secret_token;
+
+    proxy_read_timeout 30s;
+    proxy_connect_timeout 5s;
+}
+
+# Gmail OAuth callback
+location /gmail-callback {
+    proxy_pass http://127.0.0.1:8100;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# Health check (ปิดไว้ถ้าไม่ต้องการให้เข้าถึงจากภายนอก)
+location /health {
+    proxy_pass http://127.0.0.1:8100;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    # allow 127.0.0.1;  # uncomment เพื่อจำกัดให้เข้าถึงได้เฉพาะ localhost
+    # deny all;
+}
+```
+
+Reload nginx:
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+---
+
+### 4. รัน Bot
+
+```bash
+# ทดสอบก่อน
 python main.py
 
-# Health check
-curl https://your-domain.com/health
+# ดู log ว่า webhook set สำเร็จ
+# [INFO] scheduler: [Catchup] morning_briefing ...
+# [INFO] webhook set: https://centraldigital.cattelecom.com/webhook/g7Kx2...
+# [INFO] Starting Telegram bot in WEBHOOK mode on port 8100...
 ```
+
+ตรวจสอบ webhook:
+```bash
+# Health check
+curl https://centraldigital.cattelecom.com/health
+
+# ดูสถานะ webhook จาก Telegram โดยตรง
+curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"
+```
+
+---
+
+### 5. รันเป็น systemd Service (แนะนำ)
+
+```bash
+sudo nano /etc/systemd/system/openminicrew.service
+```
+
+```ini
+[Unit]
+Description=OpenMiniCrew Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=seal
+WorkingDirectory=/home/seal/openminicrew
+ExecStart=/usr/bin/python3 main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable openminicrew
+sudo systemctl start openminicrew
+
+# ดู log
+sudo journalctl -u openminicrew -f
+```
+
+---
+
+### ความแตกต่าง Polling vs Webhook
+
+| | Polling | Webhook |
+|-|---------|---------|
+| เหมาะกับ | localhost / dev | VPS / production |
+| ต้องการ public HTTPS | ❌ | ✅ |
+| Latency | ~1-2 วินาที | ทันที |
+| Gmail OAuth callback | ใช้ CLI `--auth-gmail` | ใช้ `/authgmail` ใน Telegram |
+| ดูแลง่าย | ✅ | ต้องตั้ง nginx |
 
 **Webhook mode เพิ่มเติม:**
 - Gmail OAuth callback: `GET /gmail-callback` — รองรับ per-user Gmail authorization ผ่าน `/authgmail`

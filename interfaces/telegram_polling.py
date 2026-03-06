@@ -16,7 +16,25 @@ def start_polling():
     """Start long polling loop — blocking"""
     log.info("Starting Telegram bot in POLLING mode...")
 
-    # ลบ webhook เก่า (ถ้ามี)
+    # ตรวจก่อนว่ามี webhook ตั้งอยู่ไหม — ถ้ามี แสดงว่า server production กำลังใช้งาน
+    try:
+        info = requests.get(f"{API_BASE}/getWebhookInfo", timeout=5).json()
+        active_url = info.get("result", {}).get("url", "")
+        if active_url:
+            log.error("=" * 60)
+            log.error(f"ABORT: Webhook กำลังใช้งานอยู่ที่: {active_url}")
+            log.error("การรัน polling จะ deleteWebhook และทำให้ server หยุดรับ update!")
+            log.error("ถ้าต้องการรัน polling ทดสอบ: ใช้ Bot Token แยกต่างหาก")
+            log.error("ถ้าต้องการ override: ตั้ง POLLING_FORCE=true ใน .env")
+            log.error("=" * 60)
+            import sys, os
+            if os.getenv("POLLING_FORCE", "").lower() != "true":
+                sys.exit(1)
+            log.warning("POLLING_FORCE=true — ลบ webhook และเริ่ม polling (server จะหยุดรับ update)")
+    except Exception as e:
+        log.warning(f"ไม่สามารถตรวจสอบ webhook info: {e} — ดำเนินการต่อ")
+
+    # ลบ webhook ก่อน polling
     requests.post(f"{API_BASE}/deleteWebhook")
 
     offset = None
