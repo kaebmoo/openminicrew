@@ -22,8 +22,10 @@ SYSTEM_PROMPT = (
     "ถ้าไม่ตรงกับ tool ไหน ให้ตอบคำถามทั่วไปตามความรู้ของคุณ "
     "สำหรับคำถามเกี่ยวกับการจัดการผู้ใช้ เช่น ดูรายชื่อ user, เพิ่ม/ลบ user "
     "ให้แนะนำให้ใช้คำสั่งโดยตรง: /listusers, /adduser <chat_id> [ชื่อ], /removeuser <chat_id> "
-    "สำคัญ: เมื่อ user ขอข้อมูลจาก tool (อีเมล, แผนที่, ข่าว, อัตราแลกเปลี่ยน, ผลสลากกินแบ่ง หรือ หวย ฯลฯ) "
-    "ให้เรียก tool เสมอ — อย่าตอบจากประวัติการสนทนาเก่าหรือความรู้ของตัวเอง เพราะข้อมูลอาจล้าสมัยหรือผิดพลาด "
+    "สำคัญมาก: เมื่อ user ขอข้อมูลจาก tool (อีเมล, แผนที่, ข่าว, อัตราแลกเปลี่ยน, ผลสลากกินแบ่ง หรือ หวย ฯลฯ) "
+    "ให้เรียก tool ทันทีเสมอ ห้ามถามกลับหรือขอข้อมูลเพิ่ม — tool ทุกตัวมีค่าเริ่มต้นจัดการเองได้ "
+    "ถ้า user ไม่ระบุรายละเอียด ให้เรียก tool โดยไม่ส่ง parameter (tool จะใช้ค่าเริ่มต้น) "
+    "อย่าตอบจากประวัติการสนทนาเก่าหรือความรู้ของตัวเอง เพราะข้อมูลอาจล้าสมัยหรือผิดพลาด "
     "โดยเฉพาะ exchange_rate: ให้ส่ง date ตามที่ผู้ใช้ระบุเสมอ tool จัดการวันหยุดเอง"
 )
 
@@ -217,6 +219,8 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
     """
     from interfaces.telegram_common import send_message, TypingIndicator
 
+    log.info(f"[process_message] user={user_id}, chat={chat_id}, text={text[:80]}")
+
     # ---- Dedup: ข้อความซ้ำภายใน 5 วินาที → skip ----
     if request_dedup.is_duplicate(user_id, text):
         log.info(f"Skipping duplicate message from {user_id}")
@@ -257,3 +261,10 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
 
     # ส่งกลับ Telegram (หลัง typing หยุด)
     send_message(chat_id, response_text)
+
+    # ส่งข้อความค้าง (เช่น morning briefing ที่ส่งไม่ได้ตอนเน็ตหลุด)
+    try:
+        from scheduler import flush_pending
+        flush_pending(str(chat_id))
+    except Exception as e:
+        log.warning(f"flush_pending failed: {e}")

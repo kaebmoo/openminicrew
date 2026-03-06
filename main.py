@@ -17,6 +17,9 @@ Usage:
 
 import signal
 import sys
+import os
+import atexit
+from pathlib import Path
 
 from core.config import BOT_MODE, OWNER_TELEGRAM_CHAT_ID, CREDENTIALS_DIR
 from core.db import init_db
@@ -27,6 +30,26 @@ from tools.registry import registry
 from scheduler import init_scheduler, stop_scheduler
 
 log = get_logger("OpenMiniCrew")
+
+_PID_FILE = Path("/tmp/openminicrew.pid")
+
+
+def _acquire_pid_lock():
+    """ป้องกัน bot รันซ้ำ — เขียน PID file, exit ถ้ามีตัวอื่นรันอยู่"""
+    if _PID_FILE.exists():
+        try:
+            existing_pid = int(_PID_FILE.read_text().strip())
+            # ตรวจว่า process ยังอยู่ไหม
+            os.kill(existing_pid, 0)  # signal 0 = แค่ตรวจว่ามีอยู่ไหม ไม่ได้ส่ง signal
+            print(f"❌ Bot อยู่แล้ว! (PID {existing_pid}) -- ส่ง kill {existing_pid} ถ้าต้องการ restart")
+            sys.exit(1)
+        except (ProcessLookupError, ValueError):
+            # Process ตายไปแล้ว → ลบ PID file เก่า
+            _PID_FILE.unlink(missing_ok=True)
+
+    _PID_FILE.write_text(str(os.getpid()))
+    atexit.register(lambda: _PID_FILE.unlink(missing_ok=True))
+    log.info(f"PID lock acquired: {os.getpid()}")
 
 
 def _graceful_shutdown(signum, frame):
@@ -117,6 +140,9 @@ def main():
     # Graceful shutdown handlers
     signal.signal(signal.SIGTERM, _graceful_shutdown)
     signal.signal(signal.SIGINT, _graceful_shutdown)
+
+    # PID lock — ป้องกัน bot รันซ้ำ
+    _acquire_pid_lock()
 
     log.info("=" * 50)
     log.info("OpenMiniCrew starting up...")

@@ -92,6 +92,25 @@ CREATE TABLE IF NOT EXISTS oauth_states (
     chat_id    TEXT NOT NULL,
     expires_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pending_messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    source      TEXT,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS job_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id       TEXT NOT NULL,
+    scheduled_at TEXT NOT NULL,
+    ran_at       TEXT NOT NULL,
+    status       TEXT DEFAULT 'success'
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_runs_job_time
+    ON job_runs(job_id, scheduled_at DESC);
 """
 
 
@@ -352,3 +371,70 @@ def get_location(user_id: str, ttl_minutes: int = 60) -> dict | None:
         if not row:
             return None
         return {"lat": row["latitude"], "lng": row["longitude"], "updated_at": row["updated_at"]}
+
+
+# === Pending messages (สำหรับ scheduled jobs ที่ส่งไม่ได้) ===
+
+def save_pending_message(chat_id: str, message: str, source: str = ""):
+    """เก็บข้อความที่ส่งไม่ได้ไว้ส่งทีหลัง"""
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO pending_messages (chat_id, message, source, created_at)
+            VALUES (?, ?, ?, ?)
+        """, (str(chat_id), message[:4000], source, datetime.now().isoformat()))
+
+
+def get_pending_messages(chat_id: str) -> list[dict]:
+    """ดึงข้อความค้างส่งสำหรับ chat_id นี้"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM pending_messages WHERE chat_id = ? ORDER BY created_at",
+            (str(chat_id),)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_pending_message(msg_id: int):
+    """ลบข้อความค้างส่งที่ส่งสำเร็จแล้ว"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM pending_messages WHERE id = ?", (msg_id,))
+
+
+def cleanup_old_pending(days: int = 7):
+    """ลบข้อความค้างส่งที่เก่าเกิน N วัน"""
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM pending_messages WHERE created_at < datetime('now', ?)",
+            (f"-{days} days",)
+        )
+
+
+# === Job runs (สำหรับ catchup logic) ===
+
+def log_job_run(job_id: str, scheduled_at: str, status: str = "success"):
+    """บันทึกว่า scheduled job รันแล้ว"""
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO job_runs (job_id, scheduled_at, ran_at, status)
+            VALUES (?, ?, ?, ?)
+        """, (job_id, scheduled_at, datetime.now().isoformat(), status))
+
+
+def get_last_job_run(job_id: str) -> dict | None:
+    """ดึง record การรันล่าสุดของ job_id นี้"""
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT * FROM job_runs
+            WHERE job_id = ? AND status = 'success'
+            ORDER BY scheduled_at DESC LIMIT 1
+        """, (job_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def cleanup_old_job_runs(days: int = 30):
+    """ลบ job run records ที่เก่าเกิน N วัน"""
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM job_runs WHERE ran_at < datetime('now', ?)",
+            (f"-{days} days",)
+        )

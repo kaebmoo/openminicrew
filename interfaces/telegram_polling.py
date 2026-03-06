@@ -39,6 +39,7 @@ def start_polling():
 
             for update in updates:
                 offset = update["update_id"] + 1
+                log.info(f"Received update_id: {update['update_id']}")
                 _handle_update(update)
 
         except KeyboardInterrupt:
@@ -56,9 +57,11 @@ def _handle_update(update: dict):
     """ประมวลผล update — เรียก dispatcher"""
     message = update.get("message")
     if not message:
+        log.debug(f"Update has no 'message' field: {list(update.keys())}")
         return
 
     chat_id = message["chat"]["id"]
+    log.info(f"Incoming message from chat_id: {chat_id}")
 
     # Auth check
     user = get_user(chat_id)
@@ -78,7 +81,10 @@ def _handle_update(update: dict):
 
     text = message.get("text", "").strip()
     if not text:
+        log.info(f"Empty text from chat_id: {chat_id} (message keys: {list(message.keys())})")
         return
+
+    log.info(f"Processing text from {user_id}: {text[:80]}")
 
     # Run async dispatcher in sync context
     from dispatcher import process_message
@@ -87,5 +93,8 @@ def _handle_update(update: dict):
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(process_message(user_id, user, chat_id, text))
+    except Exception as e:
+        log.error(f"process_message failed for {user_id}: {e}", exc_info=True)
     finally:
         loop.close()
+        log.info(f"Finished processing for {user_id}")
