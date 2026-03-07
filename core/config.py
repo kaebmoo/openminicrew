@@ -66,6 +66,7 @@ LOCATION_TTL_MINUTES = int(_optional("LOCATION_TTL_MINUTES", "60"))  # 0 = à¹„à¸
 # === Schedule ===
 TIMEZONE = _optional("TIMEZONE", "Asia/Bangkok")
 MORNING_BRIEFING_TIME = _optional("MORNING_BRIEFING_TIME", "07:00")
+MORNING_BRIEFING_TOOL = _optional("MORNING_BRIEFING_TOOL", "email_summary")
 
 # === Paths ===
 CREDENTIALS_DIR = BASE_DIR / "credentials"

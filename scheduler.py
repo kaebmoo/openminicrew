@@ -16,7 +16,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
-from core.config import TIMEZONE, MORNING_BRIEFING_TIME, CHAT_HISTORY_RETENTION_DAYS
+from core.config import TIMEZONE, MORNING_BRIEFING_TIME, MORNING_BRIEFING_TOOL, CHAT_HISTORY_RETENTION_DAYS
 from core import db
 from core.logger import get_logger
 from interfaces.telegram_common import send_message
@@ -174,16 +174,40 @@ def _make_trigger(cron_expr: str):
 def _seed_default_schedules():
     """Seed owner's morning briefing เป็น DB row ถ้ายังไม่มี"""
     from core.config import OWNER_TELEGRAM_CHAT_ID
+    from tools.registry import registry
 
     owner_id = str(OWNER_TELEGRAM_CHAT_ID)
-    hour, minute = MORNING_BRIEFING_TIME.split(":")
-    cron_expr = f"{int(minute)} {int(hour)} * * *"
+    tool_name = MORNING_BRIEFING_TOOL
 
-    if not db.schedule_exists(owner_id, "email_summary", cron_expr):
-        db.add_schedule(owner_id, "email_summary", cron_expr)
-        log.info(f"Seeded morning briefing schedule for owner at {MORNING_BRIEFING_TIME}")
+    # Validate time format
+    try:
+        hour, minute = MORNING_BRIEFING_TIME.split(":")
+        hour, minute = int(hour), int(minute)
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+    except (ValueError, AttributeError):
+        log.error(
+            f"MORNING_BRIEFING_TIME ไม่ถูกต้อง: '{MORNING_BRIEFING_TIME}' "
+            f"(ต้องเป็น HH:MM เช่น 07:00) — ข้าม seed"
+        )
+        return
+
+    # Validate tool exists
+    if not registry.get_tool(tool_name):
+        available = [t.name for t in registry.get_all() if t.name != "schedule"]
+        log.error(
+            f"MORNING_BRIEFING_TOOL ไม่พบ: '{tool_name}' "
+            f"(ใช้ได้: {', '.join(available)}) — ข้าม seed"
+        )
+        return
+
+    cron_expr = f"{minute} {hour} * * *"
+
+    if not db.schedule_exists(owner_id, tool_name, cron_expr):
+        db.add_schedule(owner_id, tool_name, cron_expr)
+        log.info(f"Seeded default schedule: {tool_name} at {MORNING_BRIEFING_TIME}")
     else:
-        log.info("Morning briefing schedule already exists in DB — skip seed")
+        log.info(f"Default schedule already exists ({tool_name} {MORNING_BRIEFING_TIME}) — skip seed")
 
 
 def _load_custom_schedules():
