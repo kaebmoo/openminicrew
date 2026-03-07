@@ -30,9 +30,20 @@ API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 _start_time = time.time()
 
 
+async def _scheduler_watchdog():
+    """Background task: ตรวจ scheduler thread ทุก 2.5 นาที → restart ถ้าตาย"""
+    from scheduler import ensure_scheduler_alive
+    while True:
+        await asyncio.sleep(150)
+        try:
+            ensure_scheduler_alive()
+        except Exception as e:
+            log.error(f"[Watchdog] Error in scheduler check: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: set webhook / Shutdown: cleanup"""
+    """Startup: set webhook + watchdog / Shutdown: cleanup"""
     # Set webhook
     webhook_url = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
     payload = {"url": webhook_url}
@@ -45,9 +56,14 @@ async def lifespan(app: FastAPI):
     else:
         log.error(f"Failed to set webhook: {resp.text}")
 
+    # Start scheduler watchdog
+    watchdog_task = asyncio.create_task(_scheduler_watchdog())
+    log.info("[Watchdog] Scheduler watchdog started (interval: 150s)")
+
     yield
 
-    # Shutdown: delete webhook
+    # Shutdown: cancel watchdog + delete webhook
+    watchdog_task.cancel()
     requests.post(f"{API_BASE}/deleteWebhook", timeout=10)
     log.info("Webhook deleted, shutting down")
 

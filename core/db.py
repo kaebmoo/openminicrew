@@ -313,6 +313,56 @@ def get_last_scheduler_run() -> str | None:
         return row["last"] if row else None
 
 
+def add_schedule(user_id: str, tool_name: str, cron_expr: str, args: str = "") -> int:
+    """เพิ่ม schedule ใหม่ → return id"""
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO schedules (user_id, tool_name, cron_expr, args, is_active) "
+            "VALUES (?, ?, ?, ?, 1)",
+            (user_id, tool_name, cron_expr, args),
+        )
+        return cursor.lastrowid
+
+
+def remove_schedule(schedule_id: int, user_id: str) -> bool:
+    """Soft-delete schedule (is_active=0). user_id filter ป้องกันลบของคนอื่น"""
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE schedules SET is_active = 0 WHERE id = ? AND user_id = ?",
+            (schedule_id, user_id),
+        )
+        return cursor.rowcount > 0
+
+
+def get_user_schedules(user_id: str) -> list[dict]:
+    """ดึง active schedules ของ user คนเดียว"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM schedules WHERE user_id = ? AND is_active = 1 ORDER BY id",
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_schedule_by_id(schedule_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM schedules WHERE id = ?", (schedule_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def schedule_exists(user_id: str, tool_name: str, cron_expr: str) -> bool:
+    """ตรวจว่ามี schedule เหมือนกันอยู่แล้วหรือไม่"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM schedules "
+            "WHERE user_id = ? AND tool_name = ? AND cron_expr = ? AND is_active = 1",
+            (user_id, tool_name, cron_expr),
+        ).fetchone()
+        return row is not None
+
+
 # === User locations ===
 
 def save_location(user_id: str, lat: float, lng: float):

@@ -130,6 +130,12 @@ async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None
             tools=tool_specs if tool_specs else None,
         )
 
+        # Log LLM decision
+        if resp["tool_call"]:
+            log.info(f"LLM → tool_call: {resp['tool_call']['name']}({resp['tool_call'].get('args', {})})")
+        else:
+            log.info(f"LLM → text response ({len(resp.get('content',''))} chars)")
+
         # Step 2: ถ้า LLM เลือก tool → เรียก tool แล้วส่งผลกลับให้ LLM สรุป
         if resp["tool_call"]:
             tool_name = resp["tool_call"]["name"]
@@ -184,6 +190,8 @@ async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None
                 log.warning(f"LLM selected unknown tool: {tool_name}")
 
         # Step 3: ไม่ได้เรียก tool → ใช้ text response ตรง
+        if not resp["content"]:
+            log.warning(f"LLM returned empty content (no tool call) for: {text[:80]}")
         return resp["content"], None, resp["model"], resp["token_used"]
 
     except Exception as e:
@@ -260,6 +268,9 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
         )
 
     # ส่งกลับ Telegram (หลัง typing หยุด)
+    if not response_text:
+        log.warning(f"Empty response for user {user_id}, text={text[:50]}")
+        response_text = "ไม่สามารถประมวลผลได้ กรุณาลองใหม่"
     send_message(chat_id, response_text)
 
     # ส่งข้อความค้าง (เช่น morning briefing ที่ส่งไม่ได้ตอนเน็ตหลุด)

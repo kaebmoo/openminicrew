@@ -1,7 +1,8 @@
 """Scheduler — APScheduler single-process + SQLite jobstore
-   - Morning briefing (email summary)
+   - Custom per-user schedules (from DB)
+   - Morning briefing seeded as default schedule
    - Memory cleanup
-   - Custom per-user schedules
+   - Watchdog + heartbeat for reliability
 """
 
 import asyncio
@@ -11,6 +12,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
 from core.config import TIMEZONE, MORNING_BRIEFING_TIME, CHAT_HISTORY_RETENTION_DAYS
@@ -40,19 +43,36 @@ scheduler = BackgroundScheduler(
 _last_run_info = {"last_run": None}
 
 
+# === Tool execution for scheduled jobs ===
+
 def _run_tool_for_user(user_id: str, chat_id: str, tool_name: str, args: str = "",
-                       job_id: str = None, scheduled_at: str = None):
+                       job_id: str = None, scheduled_at: str = None,
+                       schedule_id: int = None):
     """Helper: รัน tool แล้วส่งผลไป Telegram — retry + save pending ถ้าส่งไม่ได้"""
     log.info(f"[Scheduled] Starting {tool_name} for user={user_id}, chat={chat_id}")
     try:
         success = _run_tool_for_user_inner(user_id, chat_id, tool_name, args)
-        if success and job_id and scheduled_at:
-            db.log_job_run(job_id, scheduled_at, status="success")
+        if job_id and scheduled_at:
+            status = "success" if success else "failed"
+            db.log_job_run(job_id, scheduled_at, status=status)
+
+        # Auto-deactivate "once" schedules หลังรันสำเร็จ
+        if success and schedule_id:
+            sched = db.get_schedule_by_id(schedule_id)
+            if sched and sched.get("cron_expr", "").startswith("once:"):
+                db.remove_schedule(schedule_id, user_id)
+                log.info(f"[Scheduled] Auto-deactivated once schedule id={schedule_id}")
+
     except Exception as e:
         log.error(
             f"[Scheduled] Unhandled exception in {tool_name} for {user_id}: {e}\n"
             + traceback.format_exc()
         )
+        if job_id and scheduled_at:
+            try:
+                db.log_job_run(job_id, scheduled_at, status="failed")
+            except Exception:
+                pass
 
 
 def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: str = ""):
@@ -61,7 +81,7 @@ def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: s
     tool = registry.get_tool(tool_name)
     if not tool:
         log.warning(f"Scheduled tool not found: {tool_name}")
-        return
+        return False
 
     # Step 1: รัน tool เพื่อได้ผลลัพธ์
     try:
@@ -118,6 +138,13 @@ def flush_pending(chat_id: str):
             break  # หยุดส่ง ถ้ายังส่งไม่ได้
 
 
+# === System jobs ===
+
+def _heartbeat_job():
+    """Heartbeat: log ว่า scheduler thread ยัง alive"""
+    log.info("[Heartbeat] Scheduler is alive")
+
+
 def _cleanup_job():
     """Daily cleanup: chat history + old logs + old emails + old pending + old job_runs"""
     try:
@@ -132,84 +159,190 @@ def _cleanup_job():
         log.error(f"Cleanup failed: {e}")
 
 
-def _morning_briefing_job():
-    """Wrapper สำหรับ morning_briefing cron — คำนวณ scheduled_at ตอน runtime"""
-    from core.config import OWNER_TELEGRAM_CHAT_ID
-    tz = ZoneInfo(TIMEZONE)
-    hour, minute = MORNING_BRIEFING_TIME.split(":")
-    now = datetime.now(tz)
-    scheduled_at = now.replace(hour=int(hour), minute=int(minute), second=0, microsecond=0)
-    _run_tool_for_user(
-        str(OWNER_TELEGRAM_CHAT_ID),
-        str(OWNER_TELEGRAM_CHAT_ID),
-        "email_summary",
-        job_id="morning_briefing",
-        scheduled_at=scheduled_at.isoformat(),
-    )
+# === Schedule helpers ===
+
+def _make_trigger(cron_expr: str):
+    """สร้าง APScheduler trigger จาก cron_expr — รองรับ cron ปกติและ 'once:...'"""
+    if cron_expr.startswith("once:"):
+        dt_str = cron_expr[5:]  # "2026-03-10 09:00"
+        tz = ZoneInfo(TIMEZONE)
+        run_date = datetime.strptime(dt_str, "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+        return DateTrigger(run_date=run_date, timezone=TIMEZONE)
+    return CronTrigger.from_crontab(cron_expr, timezone=TIMEZONE)
 
 
-def check_missed_jobs():
-    """ตรวจว่า job ไหนควรรันใน 12 ชั่วโมงที่ผ่านมาแต่ไม่มีบันทึก → รัน catchup"""
+def _seed_default_schedules():
+    """Seed owner's morning briefing เป็น DB row ถ้ายังไม่มี"""
     from core.config import OWNER_TELEGRAM_CHAT_ID
 
-    tz = ZoneInfo(TIMEZONE)
-    now = datetime.now(tz)
+    owner_id = str(OWNER_TELEGRAM_CHAT_ID)
     hour, minute = MORNING_BRIEFING_TIME.split(":")
+    cron_expr = f"{int(minute)} {int(hour)} * * *"
 
-    # คำนวณว่า morning_briefing ควรเกิดตอนไหนล่าสุด
-    today_scheduled = now.replace(hour=int(hour), minute=int(minute), second=0, microsecond=0)
-    if now < today_scheduled:
-        # ยังไม่ถึงเวลาวันนี้ → ดูเมื่อวาน
-        candidate = today_scheduled - timedelta(days=1)
+    if not db.schedule_exists(owner_id, "email_summary", cron_expr):
+        db.add_schedule(owner_id, "email_summary", cron_expr)
+        log.info(f"Seeded morning briefing schedule for owner at {MORNING_BRIEFING_TIME}")
     else:
-        # ผ่านเวลาวันนี้แล้ว → ดูวันนี้
-        candidate = today_scheduled
+        log.info("Morning briefing schedule already exists in DB — skip seed")
 
-    # ตรวจว่าเกิดภายใน 12 ชั่วโมงที่ผ่านมา
-    cutoff = now - timedelta(hours=12)
-    if candidate < cutoff:
-        log.info("[Catchup] morning_briefing: last scheduled time too old — skip")
+
+def _load_custom_schedules():
+    """Load all active schedules from DB → register as APScheduler jobs"""
+    custom_schedules = db.get_active_schedules()
+    loaded = 0
+    for sched in custom_schedules:
+        try:
+            user = db.get_user_by_chat_id(sched["user_id"])
+            if not user:
+                continue
+
+            # Skip "once" schedules ที่ผ่านไปแล้ว
+            cron_expr = sched["cron_expr"]
+            if cron_expr.startswith("once:"):
+                dt_str = cron_expr[5:]
+                tz = ZoneInfo(TIMEZONE)
+                try:
+                    run_date = datetime.strptime(dt_str, "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+                    if run_date <= datetime.now(tz):
+                        db.remove_schedule(sched["id"], sched["user_id"])
+                        log.info(f"Auto-deactivated expired once schedule id={sched['id']}")
+                        continue
+                except ValueError:
+                    log.warning(f"Invalid once schedule format: {cron_expr}")
+                    continue
+
+            job_id = f"custom_{sched['id']}"
+            scheduler.add_job(
+                _run_tool_for_user,
+                trigger=_make_trigger(cron_expr),
+                args=[sched["user_id"], user["telegram_chat_id"],
+                      sched["tool_name"], sched.get("args", "")],
+                kwargs={"job_id": job_id, "schedule_id": sched["id"]},
+                id=job_id,
+                replace_existing=True,
+                name=f"Custom: {sched['tool_name']} for {sched['user_id']}",
+            )
+            loaded += 1
+        except Exception as e:
+            log.error(f"Failed to load schedule {sched['id']}: {e}")
+    return loaded
+
+
+def reload_custom_schedules():
+    """Remove all custom_* jobs → reload from DB — เรียกจาก schedule tool หลัง add/remove"""
+    if not scheduler.running:
+        log.warning("Scheduler not running — skip reload")
         return
 
-    # ตรวจว่ารันไปแล้วหรือยัง
-    last_run = db.get_last_job_run("morning_briefing")
-    if last_run:
-        last_scheduled_at = datetime.fromisoformat(last_run["scheduled_at"])
-        if last_scheduled_at.date() >= candidate.date():
-            log.info(f"[Catchup] morning_briefing already ran today ({last_run['scheduled_at'][:16]}) — skip")
-            return
+    # Remove existing custom jobs
+    for job in scheduler.get_jobs():
+        if job.id.startswith("custom_"):
+            scheduler.remove_job(job.id)
 
-    log.warning(f"[Catchup] morning_briefing missed at {candidate.strftime('%Y-%m-%d %H:%M')} — running now")
-    scheduled_at_str = candidate.isoformat()
-    _run_tool_for_user(
-        str(OWNER_TELEGRAM_CHAT_ID),
-        str(OWNER_TELEGRAM_CHAT_ID),
-        "email_summary",
-        job_id="morning_briefing",
-        scheduled_at=scheduled_at_str,
-    )
+    loaded = _load_custom_schedules()
+    log.info(f"Reloaded {loaded} custom schedules")
 
+
+# === Catchup: ตรวจ missed jobs ===
+
+def check_missed_jobs():
+    """ตรวจทุก active schedule ว่ามี job ที่ miss ใน 12 ชม. ที่ผ่านมาหรือไม่ → catchup"""
+    tz = ZoneInfo(TIMEZONE)
+    now = datetime.now(tz)
+    cutoff = now - timedelta(hours=12)
+
+    schedules = db.get_active_schedules()
+    for sched in schedules:
+        try:
+            cron_expr = sched["cron_expr"]
+
+            # Skip "once" schedules — ไม่ต้อง catchup
+            if cron_expr.startswith("once:"):
+                continue
+
+            # Parse cron เพื่อหาเวลาที่ควรรัน
+            parts = cron_expr.split()
+            if len(parts) < 5:
+                continue
+
+            sched_minute, sched_hour = int(parts[0]), int(parts[1])
+            dom, _month, dow = parts[2], parts[3], parts[4]
+
+            # คำนวณว่าวันนี้ควรรันตอนไหน
+            today_scheduled = now.replace(
+                hour=sched_hour, minute=sched_minute, second=0, microsecond=0
+            )
+
+            # ตรวจว่าวันนี้ตรงกับ cron pattern หรือไม่
+            today_weekday = now.weekday()  # Monday=0
+            # Convert Python weekday (Mon=0) to cron weekday (Sun=0)
+            cron_weekday = (today_weekday + 1) % 7
+
+            if dow != "*":
+                # Check day-of-week: "1-5", "1", etc.
+                if "-" in dow:
+                    low, high = map(int, dow.split("-"))
+                    if not (low <= cron_weekday <= high):
+                        continue
+                elif "," in dow:
+                    if cron_weekday not in map(int, dow.split(",")):
+                        continue
+                elif cron_weekday != int(dow):
+                    continue
+
+            if dom != "*" and now.day != int(dom):
+                continue
+
+            # ตรวจว่าเวลาผ่านไปแล้วและอยู่ในช่วง cutoff
+            if today_scheduled > now:
+                continue  # ยังไม่ถึงเวลา
+            if today_scheduled < cutoff:
+                continue  # เก่าเกิน 12 ชม.
+
+            # ตรวจว่ารันไปแล้วหรือยัง
+            job_id = f"custom_{sched['id']}"
+            last_run = db.get_last_job_run(job_id)
+            if last_run:
+                last_at = datetime.fromisoformat(last_run["scheduled_at"])
+                if last_at.date() >= today_scheduled.date():
+                    continue  # รันวันนี้แล้ว
+
+            # ยังไม่ได้รัน → catchup
+            user = db.get_user_by_chat_id(sched["user_id"])
+            if not user:
+                continue
+
+            log.warning(
+                f"[Catchup] Schedule {sched['id']} ({sched['tool_name']}) "
+                f"missed at {today_scheduled.strftime('%H:%M')} — running now"
+            )
+            _run_tool_for_user(
+                sched["user_id"],
+                user["telegram_chat_id"],
+                sched["tool_name"],
+                sched.get("args", ""),
+                job_id=job_id,
+                scheduled_at=today_scheduled.isoformat(),
+                schedule_id=sched["id"],
+            )
+
+        except Exception as e:
+            log.error(f"[Catchup] Failed for schedule {sched['id']}: {e}")
+
+
+# === Init / Reload / Stop ===
 
 def init_scheduler():
-    """เริ่ม scheduler + ลง default jobs"""
+    """เริ่ม scheduler + seed defaults + load schedules"""
 
-    # Catchup: ตรวจ missed jobs ก่อน start scheduler
+    # Seed morning briefing ถ้ายังไม่มี
+    _seed_default_schedules()
+
+    # Catchup missed jobs ก่อน start
     try:
         check_missed_jobs()
     except Exception as e:
         log.error(f"[Catchup] check_missed_jobs failed: {e}\n{traceback.format_exc()}")
-
-    # Morning briefing (email summary สำหรับ owner)
-    hour, minute = MORNING_BRIEFING_TIME.split(":")
-    from core.config import OWNER_TELEGRAM_CHAT_ID
-
-    scheduler.add_job(
-        _morning_briefing_job,
-        trigger=CronTrigger(hour=int(hour), minute=int(minute), timezone=TIMEZONE),
-        id="morning_briefing",
-        replace_existing=True,
-        name="Morning Email Briefing",
-    )
 
     # Daily cleanup (03:00)
     scheduler.add_job(
@@ -220,25 +353,17 @@ def init_scheduler():
         name="Daily Cleanup",
     )
 
-    # Load per-user schedules from DB
-    custom_schedules = db.get_active_schedules()
-    for sched in custom_schedules:
-        try:
-            user = db.get_user_by_chat_id(sched["user_id"])
-            if not user:
-                continue
+    # Heartbeat (ทุก 30 นาที — ช่วย detect ถ้า thread ตาย)
+    scheduler.add_job(
+        _heartbeat_job,
+        trigger=IntervalTrigger(minutes=30),
+        id="heartbeat",
+        replace_existing=True,
+        name="Scheduler Heartbeat",
+    )
 
-            scheduler.add_job(
-                _run_tool_for_user,
-                trigger=CronTrigger.from_crontab(sched["cron_expr"], timezone=TIMEZONE),
-                args=[sched["user_id"], user["telegram_chat_id"],
-                      sched["tool_name"], sched.get("args", "")],
-                id=f"custom_{sched['id']}",
-                replace_existing=True,
-                name=f"Custom: {sched['tool_name']} for {sched['user_id']}",
-            )
-        except Exception as e:
-            log.error(f"Failed to load schedule {sched['id']}: {e}")
+    # Load per-user schedules from DB (includes seeded morning briefing)
+    loaded = _load_custom_schedules()
 
     scheduler.add_listener(
         _apscheduler_listener,
@@ -246,9 +371,42 @@ def init_scheduler():
     )
     scheduler.start()
     jobs = scheduler.get_jobs()
-    log.info(f"Scheduler started with {len(jobs)} jobs")
+    log.info(f"Scheduler started with {len(jobs)} jobs ({loaded} custom)")
     for job in jobs:
         log.info(f"  → {job.id}: next run at {job.next_run_time}")
+
+
+def is_scheduler_alive() -> bool:
+    """ตรวจว่า scheduler thread ยังทำงานอยู่ไหม"""
+    if not scheduler.running:
+        return False
+    # BackgroundScheduler ใช้ _thread — ถ้า thread ตายไป scheduler.running ยังเป็น True
+    thread = getattr(scheduler, '_thread', None)
+    if thread is None:
+        return False
+    return thread.is_alive()
+
+
+def ensure_scheduler_alive():
+    """Watchdog: ตรวจและ restart scheduler ถ้า thread ตาย — เรียกจาก polling/webhook"""
+    if is_scheduler_alive():
+        return
+
+    log.error("[Watchdog] Scheduler thread is DEAD! Restarting...")
+
+    # Shutdown เก่า (ถ้ายังค้าง)
+    try:
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+    except Exception:
+        pass
+
+    # Re-init scheduler
+    try:
+        init_scheduler()
+        log.info("[Watchdog] Scheduler restarted successfully")
+    except Exception as e:
+        log.error(f"[Watchdog] Failed to restart scheduler: {e}\n{traceback.format_exc()}")
 
 
 def stop_scheduler():

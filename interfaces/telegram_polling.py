@@ -38,9 +38,17 @@ def start_polling():
     requests.post(f"{API_BASE}/deleteWebhook")
 
     offset = None
+    _watchdog_counter = 0
 
     while True:
         try:
+            # Watchdog: ตรวจ scheduler ทุก ~5 รอบ polling (~2.5 นาที)
+            _watchdog_counter += 1
+            if _watchdog_counter >= 5:
+                _watchdog_counter = 0
+                from scheduler import ensure_scheduler_alive
+                ensure_scheduler_alive()
+
             params = {"timeout": 30, "allowed_updates": ["message"]}
             if offset:
                 params["offset"] = offset
