@@ -68,6 +68,24 @@ TIMEZONE = _optional("TIMEZONE", "Asia/Bangkok")
 MORNING_BRIEFING_TIME = _optional("MORNING_BRIEFING_TIME", "07:00")
 MORNING_BRIEFING_TOOL = _optional("MORNING_BRIEFING_TOOL", "email_summary")
 
+# === Timeouts ===
+DISPATCH_TIMEOUT = int(_optional("DISPATCH_TIMEOUT", "120"))
+TOOL_EXEC_TIMEOUT = int(_optional("TOOL_EXEC_TIMEOUT", "120"))
+
+# === Scheduler tuning ===
+MISSED_JOB_WINDOW_HOURS = int(_optional("MISSED_JOB_WINDOW_HOURS", "12"))
+HEARTBEAT_INTERVAL_MINUTES = int(_optional("HEARTBEAT_INTERVAL_MINUTES", "30"))
+
+# === Cleanup retention (days) ===
+TOOL_LOG_RETENTION_DAYS = int(_optional("TOOL_LOG_RETENTION_DAYS", "90"))
+EMAIL_LOG_RETENTION_DAYS = int(_optional("EMAIL_LOG_RETENTION_DAYS", "90"))
+PENDING_MSG_RETENTION_DAYS = int(_optional("PENDING_MSG_RETENTION_DAYS", "7"))
+JOB_RUN_RETENTION_DAYS = int(_optional("JOB_RUN_RETENTION_DAYS", "30"))
+
+# === Polling ===
+POLLING_TIMEOUT = int(_optional("POLLING_TIMEOUT", "30"))
+POLLING_REQUEST_TIMEOUT = int(_optional("POLLING_REQUEST_TIMEOUT", "35"))
+
 # === Paths ===
 CREDENTIALS_DIR = BASE_DIR / "credentials"
 CREDENTIALS_DIR.mkdir(exist_ok=True)

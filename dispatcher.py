@@ -11,6 +11,7 @@ from core.user_manager import get_preference, set_preference, is_owner
 from core.concurrency import user_rate_limiter, request_dedup
 from core import db
 from tools.registry import registry
+from core.config import DISPATCH_TIMEOUT
 from interfaces.telegram_common import parse_command
 from core.logger import get_logger
 
@@ -244,11 +245,13 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
         save_user_message(user_id, text)
 
         try:
-            result = await asyncio.wait_for(dispatch(user_id, user, text), timeout=120)
+            result = await asyncio.wait_for(dispatch(user_id, user, text), timeout=DISPATCH_TIMEOUT)
         except asyncio.TimeoutError:
             log.error(f"dispatch timeout for user {user_id}")
+            timeout_msg = "⏱ หมดเวลา — กรุณาลองใหม่"
+            save_assistant_message(user_id, timeout_msg)
             request_dedup.remove(user_id, text)  # ให้ retry ได้
-            send_message(chat_id, "⏱ หมดเวลา — กรุณาลองใหม่")
+            send_message(chat_id, timeout_msg)
             return
 
         if isinstance(result, tuple):

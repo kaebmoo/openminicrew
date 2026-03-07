@@ -7,7 +7,6 @@
 
 import asyncio
 import traceback
-import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -16,7 +15,13 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
-from core.config import TIMEZONE, MORNING_BRIEFING_TIME, MORNING_BRIEFING_TOOL, CHAT_HISTORY_RETENTION_DAYS
+from core.config import (
+    TIMEZONE, MORNING_BRIEFING_TIME, MORNING_BRIEFING_TOOL,
+    CHAT_HISTORY_RETENTION_DAYS, TOOL_EXEC_TIMEOUT,
+    MISSED_JOB_WINDOW_HOURS, HEARTBEAT_INTERVAL_MINUTES,
+    TOOL_LOG_RETENTION_DAYS, EMAIL_LOG_RETENTION_DAYS,
+    PENDING_MSG_RETENTION_DAYS, JOB_RUN_RETENTION_DAYS,
+)
 from core import db
 from core.logger import get_logger
 from interfaces.telegram_common import send_message
@@ -89,7 +94,7 @@ def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: s
         asyncio.set_event_loop(loop)
         try:
             result = loop.run_until_complete(
-                asyncio.wait_for(tool.execute(user_id, args), timeout=120)
+                asyncio.wait_for(tool.execute(user_id, args), timeout=TOOL_EXEC_TIMEOUT)
             )
         finally:
             loop.close()
@@ -98,27 +103,17 @@ def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: s
         db.log_tool_usage(user_id, tool_name, status="failed", error_message=str(e))
         result = f"[Scheduled] {tool_name} ล้มเหลว: {e}"
 
-    # Step 2: ส่ง Telegram — retry with exponential backoff
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            send_message(chat_id, result)
-            _last_run_info["last_run"] = tool_name
-            log.info(f"Scheduled {tool_name} sent to {chat_id} (attempt {attempt + 1})")
-            return True  # สำเร็จ → จบ
-        except Exception as e:
-            wait_seconds = 60 * (2 ** attempt)  # 1m → 2m → 4m → 8m → 16m
-            log.warning(
-                f"Scheduled send failed (attempt {attempt + 1}/{max_retries}): {e} "
-                f"— retry in {wait_seconds}s"
-            )
-            if attempt < max_retries - 1:
-                time.sleep(wait_seconds)
-
-    # Step 3: retry หมด → เก็บไว้ใน pending_messages
-    log.error(f"All {max_retries} send attempts failed for {chat_id}. Saving to pending.")
-    db.save_pending_message(chat_id, result, source=f"scheduled:{tool_name}")
-    return False
+    # Step 2: ส่ง Telegram — send_message มี tenacity retry 3 ครั้ง (1-5s backoff) อยู่แล้ว
+    # ถ้ายังส่งไม่ได้ → save pending ทันที (ไม่ block scheduler thread)
+    try:
+        send_message(chat_id, result)
+        _last_run_info["last_run"] = tool_name
+        log.info(f"Scheduled {tool_name} sent to {chat_id}")
+        return True
+    except Exception as e:
+        log.warning(f"Scheduled send failed for {chat_id}: {e} — saving to pending")
+        db.save_pending_message(chat_id, result, source=f"scheduled:{tool_name}")
+        return False
 
 
 def flush_pending(chat_id: str):
@@ -140,6 +135,17 @@ def flush_pending(chat_id: str):
 
 # === System jobs ===
 
+def _flush_all_pending():
+    """Periodic: ส่ง pending messages ทุก user — เผื่อ user ไม่ได้ interact"""
+    try:
+        users = db.get_all_users()
+        for u in users:
+            if u["is_active"]:
+                flush_pending(str(u["telegram_chat_id"]))
+    except Exception as e:
+        log.warning(f"Periodic flush_pending failed: {e}")
+
+
 def _heartbeat_job():
     """Heartbeat: log ว่า scheduler thread ยัง alive"""
     log.info("[Heartbeat] Scheduler is alive")
@@ -149,10 +155,10 @@ def _cleanup_job():
     """Daily cleanup: chat history + old logs + old emails + old pending + old job_runs"""
     try:
         db.cleanup_old_chats(CHAT_HISTORY_RETENTION_DAYS)
-        db.cleanup_old_logs(90)
-        db.cleanup_old_emails(90)
-        db.cleanup_old_pending(7)
-        db.cleanup_old_job_runs(30)
+        db.cleanup_old_logs(TOOL_LOG_RETENTION_DAYS)
+        db.cleanup_old_emails(EMAIL_LOG_RETENTION_DAYS)
+        db.cleanup_old_pending(PENDING_MSG_RETENTION_DAYS)
+        db.cleanup_old_job_runs(JOB_RUN_RETENTION_DAYS)
         _last_run_info["last_run"] = "cleanup"
         log.info("Cleanup completed")
     except Exception as e:
@@ -273,7 +279,7 @@ def check_missed_jobs():
     """ตรวจทุก active schedule ว่ามี job ที่ miss ใน 12 ชม. ที่ผ่านมาหรือไม่ → catchup"""
     tz = ZoneInfo(TIMEZONE)
     now = datetime.now(tz)
-    cutoff = now - timedelta(hours=12)
+    cutoff = now - timedelta(hours=MISSED_JOB_WINDOW_HOURS)
 
     schedules = db.get_active_schedules()
     for sched in schedules:
@@ -356,17 +362,19 @@ def check_missed_jobs():
 
 # === Init / Reload / Stop ===
 
+def _safe_check_missed_jobs():
+    """Wrapper สำหรับ one-shot catchup — จับ exception ไม่ให้ crash scheduler"""
+    try:
+        check_missed_jobs()
+    except Exception as e:
+        log.error(f"[Catchup] check_missed_jobs failed: {e}\n{traceback.format_exc()}")
+
+
 def init_scheduler():
     """เริ่ม scheduler + seed defaults + load schedules"""
 
     # Seed morning briefing ถ้ายังไม่มี
     _seed_default_schedules()
-
-    # Catchup missed jobs ก่อน start
-    try:
-        check_missed_jobs()
-    except Exception as e:
-        log.error(f"[Catchup] check_missed_jobs failed: {e}\n{traceback.format_exc()}")
 
     # Daily cleanup (03:00)
     scheduler.add_job(
@@ -377,13 +385,22 @@ def init_scheduler():
         name="Daily Cleanup",
     )
 
-    # Heartbeat (ทุก 30 นาที — ช่วย detect ถ้า thread ตาย)
+    # Heartbeat (ช่วย detect ถ้า thread ตาย)
     scheduler.add_job(
         _heartbeat_job,
-        trigger=IntervalTrigger(minutes=30),
+        trigger=IntervalTrigger(minutes=HEARTBEAT_INTERVAL_MINUTES),
         id="heartbeat",
         replace_existing=True,
         name="Scheduler Heartbeat",
+    )
+
+    # Periodic flush pending messages (ทุก 5 นาที)
+    scheduler.add_job(
+        _flush_all_pending,
+        trigger=IntervalTrigger(minutes=5),
+        id="flush_pending",
+        replace_existing=True,
+        name="Flush Pending Messages",
     )
 
     # Load per-user schedules from DB (includes seeded morning briefing)
@@ -394,6 +411,18 @@ def init_scheduler():
         EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED,
     )
     scheduler.start()
+
+    # Catchup missed jobs — รัน background 10s หลัง start (ไม่ block startup)
+    scheduler.add_job(
+        _safe_check_missed_jobs,
+        trigger=DateTrigger(
+            run_date=datetime.now(ZoneInfo(TIMEZONE)) + timedelta(seconds=10),
+        ),
+        id="catchup_missed",
+        replace_existing=True,
+        name="Catchup Missed Jobs (one-shot)",
+    )
+
     jobs = scheduler.get_jobs()
     log.info(f"Scheduler started with {len(jobs)} jobs ({loaded} custom)")
     for job in jobs:

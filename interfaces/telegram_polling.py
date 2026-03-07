@@ -1,9 +1,10 @@
 """Telegram Long Polling Mode — ดึง update จาก Telegram API แบบ loop"""
 
 import asyncio
+import threading
 import requests
 
-from core.config import TELEGRAM_BOT_TOKEN
+from core.config import TELEGRAM_BOT_TOKEN, POLLING_TIMEOUT, POLLING_REQUEST_TIMEOUT
 from core.user_manager import get_user
 from core.logger import get_logger
 
@@ -49,11 +50,11 @@ def start_polling():
                 from scheduler import ensure_scheduler_alive
                 ensure_scheduler_alive()
 
-            params = {"timeout": 30, "allowed_updates": ["message"]}
+            params = {"timeout": POLLING_TIMEOUT, "allowed_updates": ["message"]}
             if offset:
                 params["offset"] = offset
 
-            resp = requests.get(f"{API_BASE}/getUpdates", params=params, timeout=35)
+            resp = requests.get(f"{API_BASE}/getUpdates", params=params, timeout=POLLING_REQUEST_TIMEOUT)
 
             if not resp.ok:
                 log.warning(f"getUpdates failed: {resp.status_code}")
@@ -66,7 +67,9 @@ def start_polling():
             for update in updates:
                 offset = update["update_id"] + 1
                 log.info(f"Received update_id: {update['update_id']}")
-                _handle_update(update)
+                threading.Thread(
+                    target=_handle_update, args=(update,), daemon=True
+                ).start()
 
         except KeyboardInterrupt:
             log.info("Polling stopped by user")
