@@ -93,7 +93,11 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
-DB_FILE = DATA_DIR / "openminicrew.db"
+DB_FILE_ENV = _optional("DB_PATH", "")
+if DB_FILE_ENV:
+    DB_FILE = Path(DB_FILE_ENV)
+else:
+    DB_FILE = DATA_DIR / "openminicrew.db"
 GMAIL_CREDENTIALS_FILE = BASE_DIR / "credentials.json"  # OAuth client secret
 
 # === Work Email (IMAP) ===
