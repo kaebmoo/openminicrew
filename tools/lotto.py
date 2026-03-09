@@ -62,6 +62,24 @@ class LottoTool(BaseTool):
 
         first = tokens[0].lower()
 
+        # --- month mode ---
+        if first in ("month", "เดือน"):
+            result["mode"] = "month"
+            if len(tokens) >= 2 and re.match(r"^\d{6}$", tokens[1]):
+                result["date_id"] = tokens[1]  # MMYYYY
+            return result
+        
+        # --- check month mode ---
+        if first in ("check_month", "ตรวจเดือน"):
+            result["mode"] = "check_month"
+            remaining = tokens[1:]
+            for t in remaining:
+                if re.match(r"^\d{6}$", t) and result["date_id"] is None:
+                    result["date_id"] = t
+                elif re.match(r"^\d{2,6}$", t) and result["number"] is None:
+                    result["number"] = t
+            return result
+
         # --- list mode ---
         if first in ("list", "งวด", "รายการ"):
             result["mode"] = "list"
@@ -84,17 +102,21 @@ class LottoTool(BaseTool):
         # --- positional args (no mode keyword) ---
         # Collect 8-digit tokens as date_id candidates, others as number candidates
         date_candidates = [t for t in tokens if re.match(r"^\d{8}$", t)]
-        num_candidates  = [t for t in tokens if re.match(r"^\d{2,6}$", t)]
+        month_candidates = [t for t in tokens if re.match(r"^\d{6}$", t)]
+        num_candidates  = [t for t in tokens if re.match(r"^\d{2,6}$", t) and t not in month_candidates]
 
         if date_candidates:
             result["date_id"] = date_candidates[0]
+        elif month_candidates:
+            result["mode"] = "month"
+            result["date_id"] = month_candidates[0]
 
         if num_candidates:
-            result["mode"] = "check"
+            result["mode"] = "check" if not month_candidates else "check_month"
             result["number"] = num_candidates[0]
 
         # Pure date only → stay in summary mode
-        if result["date_id"] and not num_candidates:
+        if result["date_id"] and not num_candidates and result["mode"] not in ("month", "check_month"):
             result["mode"] = "summary"
 
         return result
@@ -312,6 +334,9 @@ class LottoTool(BaseTool):
     # Execute
     # ------------------------------------------------------------------
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        if not args and "args" in kwargs:
+            args = str(kwargs["args"])
+            
         parsed = self._parse_args(args)
 
         try:
@@ -320,7 +345,7 @@ class LottoTool(BaseTool):
                 return self._format_draw_list(page=parsed.get("page", 1))
 
             # Validate check number format
-            if parsed["mode"] == "check":
+            if parsed["mode"] in ("check", "check_month"):
                 num = parsed["number"]
                 if not num or not re.match(r"^\d{2,6}$", num):
                     return (
@@ -329,6 +354,60 @@ class LottoTool(BaseTool):
                         "   /lotto check <เลข 3 หลัก>  — ตรวจเลขหน้า/ท้าย 3 ตัว\n"
                         "   /lotto check <เลข 2 หลัก>  — ตรวจเลขท้าย 2 ตัว"
                     )
+
+            # Handle multi-draw month modes
+            if parsed["mode"] in ("month", "check_month"):
+                target_mmyyyy = parsed["date_id"]
+                if not target_mmyyyy or len(target_mmyyyy) != 6:
+                    return "⚠️ กรุณาระบุเดือนและปีให้ถูกต้อง เช่น 022569 (MMYYYY)"
+                
+                # Search up to 3 pages to find all draws in the requested month
+                matched_ids = []
+                for p in range(1, 4):
+                    draws = self._fetch_draw_list(page=p)
+                    if not draws:
+                        break
+                    
+                    found_in_page = False
+                    for d in draws:
+                        did = d.get("id", "")
+                        if len(did) == 8 and did.endswith(target_mmyyyy):
+                            matched_ids.append(did)
+                            found_in_page = True
+                    
+                    # If we found matches on a previous page but none on this page, we've passed the month
+                    if not found_in_page and matched_ids:
+                        break
+
+                if not matched_ids:
+                    return f"❌ ไม่พบผลสลากในเดือน {target_mmyyyy[:2]}/{target_mmyyyy[2:]}"
+                
+                # Sort dates correctly (oldest first or newest first. API usually returns newest first, so we keep that order)
+                results = []
+                for did in matched_ids:
+                    data = self._fetch_lotto(did)
+                    if data:
+                        if parsed["mode"] == "check_month":
+                            res = self._format_check_result(parsed["number"], data)
+                            # Only include if we won or if we want to show all. We'll show all.
+                            results.append(res)
+                        else:
+                            results.append(self._format_summary(data))
+                
+                if not results:
+                     return self._fallback_links()
+                     
+                final_result = "\n----------------------------------------\n\n".join(results)
+                
+                # Log usage
+                db.log_tool_usage(
+                    user_id=user_id,
+                    tool_name=self.name,
+                    input_summary=f"{parsed['mode']} {target_mmyyyy}",
+                    output_summary=final_result[:200],
+                    status="success",
+                )
+                return final_result
 
             # Fetch data
             data = self._fetch_lotto(parsed["date_id"])
@@ -387,7 +466,8 @@ class LottoTool(BaseTool):
                 "1 พ.ค. เลื่อนเป็น 2 พ.ค. (02052568) — "
                 "ห้ามเดาวันที่เอง ถ้าไม่แน่ใจให้ใช้ 'list' ดูรายการหวยที่มี "
                 "หรือส่ง args เป็น '' เพื่อดูหวยงวดล่าสุด "
-                "ไม่สามารถทำนายผลล่วงหน้าได้"
+                "ไม่สามารถทำนายผลล่วงหน้าได้ (หมายเหตุ: ปี พ.ศ. เช่น 2567, 2568, 2569 ไม่ใช่ปีในอนาคต เพราะ พ.ศ. มากกว่า ค.ศ. 543 ปี) "
+                "ถ้าผู้ใช้ถามหาผลสลากทั้งเดือน ให้ใช้คำสั่ง month ตามด้วยเดือนปี (MMYYYY) เช่น 'month 022569' เพื่อดึงผลของทุกงวดในเดือนนั้น"
             ),
             "parameters": {
                 "type": "object",
@@ -396,10 +476,12 @@ class LottoTool(BaseTool):
                         "type": "string",
                         "description": (
                             "คำสั่ง เช่น: '' (ตรวจหวยงวดล่าสุด), "
-                "'list' (รายการงวดที่มี), "
-                "'check 820866' (ตรวจเลขงวดล่าสุด), "
+                            "'list' (รายการงวดที่มี), "
+                            "'check 820866' (ตรวจเลขงวดล่าสุด), "
                             "'02012569' (ดูงวดที่ระบุ — ต้องเป็น DDMMYYYY ที่มีจริง), "
-                            "'check 820866 02012569' (ตรวจเลขงวดที่ระบุ)"
+                            "'check 820866 02012569' (ตรวจเลขงวดที่ระบุ), "
+                            "'month 022569' (ดูผลสลากทุกงวดในเดือนกุมภาพันธ์), "
+                            "'check_month 820866 022569' (ตรวจเลข 820866 ในทุกงวดของเดือนกุมภาพันธ์)"
                         ),
                     }
                 },

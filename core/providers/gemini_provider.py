@@ -33,14 +33,13 @@ class GeminiProvider(BaseLLMProvider):
     def get_model(self, tier: str = "cheap") -> str:
         return GEMINI_MODEL_MID if tier == "mid" else GEMINI_MODEL_CHEAP
 
-    def convert_tool_spec(self, spec: dict) -> genai_types.Tool:
+    def convert_tool_spec(self, spec: dict) -> genai_types.FunctionDeclaration:
         """Convert generic tool spec → Gemini function_declarations format"""
-        func_decl = genai_types.FunctionDeclaration(
+        return genai_types.FunctionDeclaration(
             name=spec["name"],
             description=spec["description"],
             parameters=spec.get("parameters"),
         )
-        return genai_types.Tool(function_declarations=[func_decl])
 
     @retry(
         stop=stop_after_attempt(3),
@@ -73,7 +72,10 @@ class GeminiProvider(BaseLLMProvider):
         if system:
             config_kwargs["system_instruction"] = system
         if tools:
-            config_kwargs["tools"] = [self.convert_tool_spec(t) for t in tools]
+            # Wrap all declarations in a single Tool
+            config_kwargs["tools"] = [
+                genai_types.Tool(function_declarations=[self.convert_tool_spec(t) for t in tools])
+            ]
 
         config = genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
