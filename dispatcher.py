@@ -6,12 +6,16 @@
 
 import asyncio
 from core.llm import llm_router
-from core.memory import save_user_message, save_assistant_message, get_context
+from core.memory import (
+    save_user_message, save_assistant_message, get_context,
+    ensure_conversation, start_new_conversation,
+)
 from core.user_manager import get_preference, set_preference, is_owner
 from core.concurrency import user_rate_limiter, request_dedup
 from core import db
 from tools.registry import registry
 from core.config import DISPATCH_TIMEOUT
+MAX_RETRIES = 3  # จำนวนรอบ retry สูงสุดเมื่อ tool fail หรือ LLM เลือก tool ผิด
 from interfaces.telegram_common import parse_command
 from core.logger import get_logger
 
@@ -103,6 +107,26 @@ async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None
             "_หลัง authorize แล้ว bot จะแจ้งให้ทราบอัตโนมัติ_"
         ), None, None, 0
 
+    # ---- /new — เริ่มสนทนาใหม่ ----
+    if command == "/new":
+        conv_id = start_new_conversation(user_id)
+        return f"🆕 เริ่มสนทนาใหม่แล้ว (ID: `{conv_id}`)", None, None, 0
+
+    # ---- /history — ดูประวัติสนทนา ----
+    if command == "/history":
+        conversations = db.list_conversations(user_id, limit=10)
+        if not conversations:
+            return "📭 ยังไม่มีประวัติสนทนา", None, None, 0
+
+        lines = ["📋 *ประวัติสนทนาล่าสุด:*\n"]
+        for i, conv in enumerate(conversations, 1):
+            title = conv["title"] or "ไม่มีชื่อ"
+            count = conv["message_count"]
+            time = conv["updated_at"][:16] if conv["updated_at"] else "—"
+            lines.append(f"{i}. {title} ({count} ข้อความ, {time})")
+
+        return "\n".join(lines), None, None, 0
+
     # ---- Direct command → tool (ไม่เสีย LLM token) ----
     tool = registry.get_by_command(command) if command else None
     if tool:
@@ -116,89 +140,29 @@ async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None
             return f"เกิดข้อผิดพลาด: {e}\nกรุณาลองใหม่", tool.name, None, 0
 
     # ---- ข้อความอิสระ → LLM Router ----
+    conv_id = ensure_conversation(user_id)
     provider = get_preference(user, "default_llm")
-    context = get_context(user_id)
+    context = get_context(user_id, conversation_id=conv_id)
     context.append({"role": "user", "content": text})
 
     tool_specs = registry.get_all_specs()
 
-    try:
-        # Step 1: ถาม LLM ว่าจะเรียก tool ไหน หรือตอบเอง
-        resp = await llm_router.chat(
-            messages=context,
-            provider=provider,
-            tier="cheap",
-            system=SYSTEM_PROMPT,
-            tools=tool_specs if tool_specs else None,
-        )
+    # LLM Router พร้อม self-correction: retry ได้ถ้า tool fail หรือ LLM เลือก tool ผิด
+    response_text, tool_used, llm_model, token_used = await _dispatch_with_retry(
+        user_id=user_id,
+        user=user,
+        text=text,
+        context=context,
+        provider=provider,
+        tool_specs=tool_specs,
+    )
 
-        # Log LLM decision
-        if resp["tool_call"]:
-            log.info(f"LLM → tool_call: {resp['tool_call']['name']}({resp['tool_call'].get('args', {})})")
-        else:
-            log.info(f"LLM → text response ({len(resp.get('content',''))} chars)")
+    # ถ้า retry loop return None → fallback error message
+    if not response_text:
+        log.warning(f"Retry loop returned empty for: {text[:80]}")
+        return "ไม่สามารถประมวลผลได้ กรุณาลองใหม่", tool_used, llm_model, token_used
 
-        # Step 2: ถ้า LLM เลือก tool → เรียก tool แล้วส่งผลกลับให้ LLM สรุป
-        if resp["tool_call"]:
-            tool_name = resp["tool_call"]["name"]
-            tool_args = resp["tool_call"].get("args", {})
-            selected_tool = registry.get_tool(tool_name)
-
-            if selected_tool:
-                log.info(f"LLM selected tool: {tool_name}")
-                try:
-                    tool_result = await selected_tool.execute(user_id, **tool_args)
-
-                    # direct_output=True → ส่งผลลัพธ์ตรงๆ (ไม่ผ่าน LLM ซ้ำ)
-                    if selected_tool.direct_output:
-                        return (
-                            tool_result,
-                            tool_name,
-                            resp["model"],
-                            resp["token_used"],
-                        )
-
-                    # direct_output=False → ส่งผลลัพธ์ให้ LLM สรุปเป็นภาษาธรรมชาติ
-                    summary_messages = context + [
-                        {"role": "assistant", "content": f"[เรียก {tool_name}]"},
-                        {"role": "user", "content": (
-                            f"ผลลัพธ์จาก {tool_name}:\n{tool_result}\n\n"
-                            "ช่วยสรุปให้ user เข้าใจง่าย "
-                            "ถ้ามี URL หรือลิงก์ ให้เก็บไว้ครบทุกอัน อย่าตัดออก"
-                        )},
-                    ]
-
-                    summary = await llm_router.chat(
-                        messages=summary_messages,
-                        provider=provider,
-                        tier="cheap",
-                        system=SYSTEM_PROMPT,
-                    )
-
-                    total_tokens = resp["token_used"] + summary["token_used"]
-                    return (
-                        summary["content"],
-                        tool_name,
-                        summary["model"],
-                        total_tokens,
-                    )
-
-                except Exception as e:
-                    log.error(f"Tool {tool_name} execution failed: {e}")
-                    db.log_tool_usage(user_id, tool_name, status="failed",
-                                      error_message=str(e))
-                    return f"เรียก {tool_name} ไม่สำเร็จ: {e}", tool_name, resp["model"], resp["token_used"]
-            else:
-                log.warning(f"LLM selected unknown tool: {tool_name}")
-
-        # Step 3: ไม่ได้เรียก tool → ใช้ text response ตรง
-        if not resp["content"]:
-            log.warning(f"LLM returned empty content (no tool call) for: {text[:80]}")
-        return resp["content"], None, resp["model"], resp["token_used"]
-
-    except Exception as e:
-        log.error(f"LLM dispatch failed: {e}")
-        return f"เกิดข้อผิดพลาดในการประมวลผล: {e}\nกรุณาลองใหม่", None, None, 0
+    return response_text, tool_used, llm_model, token_used
 
 
 def _handle_model_command(user_id: str, args: str) -> str:
@@ -222,6 +186,148 @@ def _handle_model_command(user_id: str, args: str) -> str:
     return f"✅ เปลี่ยน LLM เป็น {args} เรียบร้อย"
 
 
+async def _dispatch_with_retry(
+    user_id: str,
+    user: dict,
+    text: str,
+    context: list[dict],
+    provider: str,
+    tool_specs: list[dict],
+) -> tuple[str, str | None, str | None, int]:
+    """
+    LLM Router พร้อม self-correction:
+    ถ้า LLM เลือก tool ผิดชื่อ หรือ tool execute error → ส่ง feedback กลับให้ LLM คิดใหม่
+
+    กรณีปกติ (tool สำเร็จครั้งแรก) ทำงานเหมือนเดิมทุกประการ:
+    - direct_output=True → return ทันที (1 LLM call)
+    - direct_output=False → LLM สรุป (2 LLM calls)
+
+    Returns: (response_text, tool_used, llm_model, total_token_used)
+    - response_text = None เมื่อหมดรอบ/LLM ตอบว่าง/LLM พัง
+    """
+    messages = list(context)  # copy เพื่อไม่แก้ต้นฉบับ
+    total_tokens = 0
+    last_model = None
+    last_tool_used = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        log.info(f"[dispatch] attempt {attempt}/{MAX_RETRIES}")
+
+        # ---- เรียก LLM ----
+        try:
+            resp = await llm_router.chat(
+                messages=messages,
+                provider=provider,
+                tier="cheap",
+                system=SYSTEM_PROMPT,
+                tools=tool_specs if tool_specs else None,
+            )
+        except Exception as e:
+            # LLM API พัง (หลัง provider retry หมดแล้ว) → หยุดทันที
+            log.error(f"[dispatch] LLM API failed at attempt {attempt}: {e}")
+            break
+
+        total_tokens += resp.get("token_used", 0)
+        last_model = resp.get("model")
+
+        # ---- Case A: LLM ไม่เรียก tool → return text response ----
+        if not resp.get("tool_call"):
+            content = resp.get("content", "")
+            if content:
+                log.info(f"[dispatch] text response at attempt {attempt} ({len(content)} chars)")
+                return content, last_tool_used, last_model, total_tokens
+            # LLM ตอบว่าง → break
+            log.warning(f"[dispatch] empty response at attempt {attempt}")
+            break
+
+        # ---- Case B: LLM เรียก tool ----
+        tool_name = resp["tool_call"]["name"]
+        tool_args = resp["tool_call"].get("args", {})
+        log.info(f"[dispatch] attempt {attempt}: tool_call={tool_name}({tool_args})")
+
+        selected_tool = registry.get_tool(tool_name)
+
+        # ---- Case B1: Tool ไม่มีจริง → แจ้ง LLM ให้เลือกใหม่ ----
+        if not selected_tool:
+            available = [t.name for t in registry.get_all()]
+            log.warning(f"[dispatch] unknown tool '{tool_name}', available: {available}")
+
+            if attempt >= MAX_RETRIES:
+                break
+
+            messages.append({"role": "assistant", "content": f"[เรียก {tool_name}]"})
+            messages.append({"role": "user", "content": (
+                f"ไม่มี tool ชื่อ '{tool_name}'\n"
+                f"tool ที่มีจริง: {', '.join(available)}\n"
+                f"กรุณาเลือก tool ที่ถูกต้อง หรือตอบ user โดยตรง"
+            )})
+            continue
+
+        # ---- Case B2: Tool มีจริง → execute ----
+        last_tool_used = tool_name
+
+        try:
+            tool_result = await selected_tool.execute(user_id, **tool_args)
+        except Exception as e:
+            log.error(f"[dispatch] tool {tool_name} error at attempt {attempt}: {e}")
+            db.log_tool_usage(
+                user_id, tool_name,
+                input_summary=str(tool_args)[:200],
+                status="failed",
+                error_message=str(e),
+            )
+
+            if attempt >= MAX_RETRIES:
+                break
+
+            messages.append({"role": "assistant", "content": f"[เรียก {tool_name}({tool_args}) → error]"})
+            messages.append({"role": "user", "content": (
+                f"tool '{tool_name}' ทำงานไม่สำเร็จ: {str(e)}\n"
+                f"กรุณาลองวิธีอื่น ใช้ tool อื่น หรือแจ้ง user ว่าเกิดปัญหาอะไร"
+            )})
+            continue
+
+        # ---- Case B3: Tool สำเร็จ ----
+        log.info(f"[dispatch] tool {tool_name} success (direct_output={selected_tool.direct_output})")
+
+        # direct_output=True → return ผลลัพธ์ตรงๆ ไม่ผ่าน LLM (ประหยัด token)
+        if selected_tool.direct_output:
+            return tool_result, tool_name, last_model, total_tokens
+
+        # direct_output=False → ส่งผลลัพธ์ให้ LLM สรุปเป็นภาษาธรรมชาติ
+        summary_messages = messages + [
+            {"role": "assistant", "content": f"[เรียก {tool_name}]"},
+            {"role": "user", "content": (
+                f"ผลลัพธ์จาก {tool_name}:\n{tool_result}\n\n"
+                "ช่วยสรุปให้ user เข้าใจง่าย "
+                "ถ้ามี URL หรือลิงก์ ให้เก็บไว้ครบทุกอัน อย่าตัดออก"
+            )},
+        ]
+
+        try:
+            summary = await llm_router.chat(
+                messages=summary_messages,
+                provider=provider,
+                tier="cheap",
+                system=SYSTEM_PROMPT,
+            )
+            total_tokens += summary.get("token_used", 0)
+            return (
+                summary.get("content", tool_result),
+                tool_name,
+                summary.get("model", last_model),
+                total_tokens,
+            )
+        except Exception as e:
+            # สรุปไม่ได้ → return ผล tool ดิบ (ดีกว่าไม่ return อะไร)
+            log.error(f"[dispatch] summary failed: {e}, returning raw tool result")
+            return tool_result, tool_name, last_model, total_tokens
+
+    # ---- หลุดออกจาก loop ----
+    log.warning(f"[dispatch] retry loop ended without response (tokens used: {total_tokens})")
+    return None, last_tool_used, last_model, total_tokens
+
+
 async def process_message(user_id: str, user: dict, chat_id: str | int, text: str):
     """
     Full pipeline: dedup → rate limit → dispatch + save memory + send Telegram
@@ -243,14 +349,24 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
         return
 
     with TypingIndicator(chat_id):
-        save_user_message(user_id, text)
+        # จัดการ conversation
+        conv_id = ensure_conversation(user_id)
+
+        save_user_message(user_id, text, conversation_id=conv_id)
+
+        # Auto-set title จากข้อความแรกของ user (ถ้ายังไม่มี title)
+        existing_title = db.get_conversation_title(conv_id)
+        if not existing_title:
+            db.update_conversation(conv_id, title=text[:50])
+        else:
+            db.update_conversation(conv_id)
 
         try:
             result = await asyncio.wait_for(dispatch(user_id, user, text), timeout=DISPATCH_TIMEOUT)
         except asyncio.TimeoutError:
             log.error(f"dispatch timeout for user {user_id}")
             timeout_msg = "⏱ หมดเวลา — กรุณาลองใหม่"
-            save_assistant_message(user_id, timeout_msg)
+            save_assistant_message(user_id, timeout_msg, conversation_id=conv_id)
             request_dedup.remove(user_id, text)  # ให้ retry ได้
             send_message(chat_id, timeout_msg)
             return
@@ -269,6 +385,7 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
             user_id, response_text,
             tool_used=tool_used, llm_model=llm_model,
             token_used=token_used,
+            conversation_id=conv_id,
         )
 
     # ส่งกลับ Telegram (หลัง typing หยุด)

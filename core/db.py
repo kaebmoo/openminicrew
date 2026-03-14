@@ -35,12 +35,27 @@ CREATE TABLE IF NOT EXISTS chat_history (
     tool_used         TEXT,
     llm_model         TEXT,
     token_used        INTEGER,
+    conversation_id   TEXT,
     created_at        TEXT,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_user_time
     ON chat_history(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    title           TEXT,
+    created_at      TEXT DEFAULT (datetime('now')),
+    updated_at      TEXT DEFAULT (datetime('now')),
+    is_active       INTEGER DEFAULT 1,
+    message_count   INTEGER DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conv_user_time
+    ON conversations(user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS processed_emails (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,9 +149,21 @@ def get_conn() -> sqlite3.Connection:
 
 
 def init_db():
-    """สร้างตารางทั้งหมด"""
+    """สร้างตารางทั้งหมด + migration สำหรับ column ใหม่"""
     with get_conn() as conn:
         conn.executescript(_CREATE_TABLES)
+
+    # Migration: เพิ่ม conversation_id column ถ้ายังไม่มี (DB เดิมก่อนมี feature นี้)
+    try:
+        get_conn().execute("ALTER TABLE chat_history ADD COLUMN conversation_id TEXT")
+        log.info("Migration: added conversation_id column to chat_history")
+    except Exception:
+        pass  # column exists already
+
+    # สร้าง index หลัง migration เพื่อให้มั่นใจว่า column มีแล้ว
+    with get_conn() as conn:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversation ON chat_history(conversation_id, created_at DESC)")
+
     log.info("Database initialized")
 
 
@@ -206,25 +233,125 @@ def update_user_preference(user_id: str, key: str, value: str):
         )
 
 
+# === Conversations ===
+
+def create_conversation(user_id: str, title: str = None) -> str:
+    """สร้าง conversation ใหม่ return conversation_id"""
+    import uuid
+    conv_id = str(uuid.uuid4())[:8]  # short ID เพียงพอสำหรับ Telegram
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO conversations (id, user_id, title) VALUES (?, ?, ?)",
+            (conv_id, user_id, title)
+        )
+    return conv_id
+
+
+def get_active_conversation(user_id: str) -> str | None:
+    """ดึง conversation ล่าสุดที่ active ของ user"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM conversations WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1",
+            (user_id,)
+        ).fetchone()
+        return row[0] if row else None
+
+
+def update_conversation(conv_id: str, title: str = None):
+    """อัปเดต updated_at (และ title ถ้าส่งมา)"""
+    with get_conn() as conn:
+        if title:
+            conn.execute(
+                "UPDATE conversations SET updated_at = datetime('now'), title = ?, message_count = message_count + 1 WHERE id = ?",
+                (title, conv_id)
+            )
+        else:
+            conn.execute(
+                "UPDATE conversations SET updated_at = datetime('now'), message_count = message_count + 1 WHERE id = ?",
+                (conv_id,)
+            )
+
+
+def end_conversation(conv_id: str):
+    """ปิด conversation (ใช้เมื่อ user สั่ง /new)"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE conversations SET is_active = 0 WHERE id = ?",
+            (conv_id,)
+        )
+
+
+def get_conversation_history(conv_id: str, limit: int = 20) -> list:
+    """ดึง messages ของ conversation เฉพาะ"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT role, content, tool_used, created_at FROM chat_history WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?",
+            (conv_id, limit)
+        ).fetchall()
+        return [{"role": r[0], "content": r[1], "tool_used": r[2], "created_at": r[3]} for r in reversed(rows)]
+
+
+def list_conversations(user_id: str, limit: int = 10) -> list:
+    """ดึงรายการ conversations ของ user"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, title, updated_at, message_count FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+            (user_id, limit)
+        ).fetchall()
+        return [{"id": r[0], "title": r[1], "updated_at": r[2], "message_count": r[3]} for r in rows]
+
+
+def get_conversation_title(conv_id: str) -> str | None:
+    """ดึง title ของ conversation"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT title FROM conversations WHERE id = ?",
+            (conv_id,)
+        ).fetchone()
+        return row[0] if row else None
+
+
+def get_last_message_time(conv_id: str):
+    """ดึงเวลา message ล่าสุดของ conversation"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT created_at FROM chat_history WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1",
+            (conv_id,)
+        ).fetchone()
+        if row:
+            return datetime.fromisoformat(row[0])
+        return None
+
+
 # === Chat history (Memory) ===
 
 def save_chat(user_id: str, role: str, content: str,
-              tool_used: str = None, llm_model: str = None, token_used: int = None):
+              tool_used: str = None, llm_model: str = None, token_used: int = None,
+              conversation_id: str = None):
     with get_conn() as conn:
         conn.execute("""
-            INSERT INTO chat_history (user_id, role, content, tool_used, llm_model, token_used, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO chat_history (user_id, role, content, tool_used, llm_model, token_used, conversation_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (user_id, role, content, tool_used, llm_model, token_used,
-              datetime.now().isoformat()))
+              conversation_id, datetime.now().isoformat()))
 
 
-def get_chat_context(user_id: str, limit: int = 10) -> list[dict]:
+def get_chat_context(user_id: str, limit: int = 10, conversation_id: str = None) -> list[dict]:
     with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT role, content, tool_used FROM chat_history
-            WHERE user_id = ?
-            ORDER BY created_at DESC LIMIT ?
-        """, (user_id, limit)).fetchall()
+        if conversation_id:
+            # ใช้ conversation_id filter — ได้เฉพาะ context ของ conversation นั้น
+            rows = conn.execute("""
+                SELECT role, content, tool_used FROM chat_history
+                WHERE user_id = ? AND conversation_id = ?
+                ORDER BY created_at DESC LIMIT ?
+            """, (user_id, conversation_id, limit)).fetchall()
+        else:
+            # fallback: ดึงจาก user ทั้งหมด (backward compatible)
+            rows = conn.execute("""
+                SELECT role, content, tool_used FROM chat_history
+                WHERE user_id = ?
+                ORDER BY created_at DESC LIMIT ?
+            """, (user_id, limit)).fetchall()
         return [dict(r) for r in reversed(rows)]
 
 
