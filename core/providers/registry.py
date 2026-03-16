@@ -32,7 +32,7 @@ class ProviderRegistry:
                         self._register(instance)
 
             except Exception as e:
-                log.error(f"Failed to load provider module '{module_name}': {e}")
+                log.error(f"Failed to load provider module '{module_name}': {e}", exc_info=True)
 
         configured = [n for n, p in self.providers.items() if p.is_configured()]
         log.info(

@@ -64,5 +64,5 @@ def _is_conversation_idle(conv_id: str) -> bool:
     """ตรวจว่า conversation idle เกิน threshold หรือไม่"""
     last_time = db.get_last_message_time(conv_id)
     if not last_time:
-        return False
+        return True  # conversation ใหม่ที่ยังไม่มี message ถือว่า idle
     return (datetime.now() - last_time) > timedelta(minutes=CONVERSATION_IDLE_MINUTES)

@@ -33,7 +33,7 @@ class ToolRegistry:
                         self._register(instance)
 
             except Exception as e:
-                log.error(f"Failed to load tool module '{module_name}': {e}")
+                log.error(f"Failed to load tool module '{module_name}': {e}", exc_info=True)
 
         log.info(f"Discovered {len(self.tools)} tools: {list(self.tools.keys())}")
 

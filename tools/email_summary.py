@@ -113,7 +113,7 @@ class EmailSummaryTool(BaseTool):
             return "❌ ยังไม่ได้เชื่อมต่อ Gmail\nกรุณารัน: python main.py --auth-gmail"
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             service = build("gmail", "v1", credentials=creds)
 
             # 2. ดึงเมลตามช่วงเวลา + search query
@@ -235,7 +235,7 @@ class EmailSummaryTool(BaseTool):
             return f"📬 สรุปอีเมล {len(emails_data)} ฉบับ ({display_label}):\n\n{resp['content']}"
 
         except Exception as e:
-            log.error(f"Email summary failed for {user_id}: {e}")
+            log.error(f"Email summary failed for {user_id}: {e}", exc_info=True)
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,

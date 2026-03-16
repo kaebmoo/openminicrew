@@ -38,3 +38,4 @@ Thumbs.db
 htmlcov/
 .coverage
 /plan
+AUDIT.md

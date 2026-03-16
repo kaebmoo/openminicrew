@@ -164,6 +164,23 @@ def init_db():
     with get_conn() as conn:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversation ON chat_history(conversation_id, created_at DESC)")
 
+    # Migration: เพิ่ม UNIQUE index บน job_runs(job_id, scheduled_at) ป้องกัน duplicate catchup
+    try:
+        with get_conn() as conn:
+            # ลบ duplicate rows ก่อน (เก็บ row ที่มี rowid ต่ำสุดไว้)
+            conn.execute("""
+                DELETE FROM job_runs
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM job_runs GROUP BY job_id, scheduled_at
+                )
+            """)
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_runs_unique "
+                "ON job_runs(job_id, scheduled_at)"
+            )
+    except Exception:
+        pass  # index exists already or table empty
+
     log.info("Database initialized")
 
 
@@ -592,7 +609,7 @@ def log_job_run(job_id: str, scheduled_at: str, status: str = "success"):
     """บันทึกว่า scheduled job รันแล้ว"""
     with get_conn() as conn:
         conn.execute("""
-            INSERT INTO job_runs (job_id, scheduled_at, ran_at, status)
+            INSERT OR IGNORE INTO job_runs (job_id, scheduled_at, ran_at, status)
             VALUES (?, ?, ?, ?)
         """, (job_id, scheduled_at, datetime.now().isoformat(), status))
 

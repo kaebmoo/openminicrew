@@ -135,7 +135,7 @@ async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None
             result = await tool.execute(user_id, args)
             return result, tool.name, None, 0
         except Exception as e:
-            log.error(f"Tool {tool.name} failed: {e}")
+            log.error(f"Tool {tool.name} failed: {e}", exc_info=True)
             db.log_tool_usage(user_id, tool.name, status="failed", error_message=str(e))
             return f"เกิดข้อผิดพลาด: {e}\nกรุณาลองใหม่", tool.name, None, 0
 
@@ -224,7 +224,7 @@ async def _dispatch_with_retry(
             )
         except Exception as e:
             # LLM API พัง (หลัง provider retry หมดแล้ว) → หยุดทันที
-            log.error(f"[dispatch] LLM API failed at attempt {attempt}: {e}")
+            log.error(f"[dispatch] LLM API failed at attempt {attempt}: {e}", exc_info=True)
             break
 
         total_tokens += resp.get("token_used", 0)
@@ -269,7 +269,7 @@ async def _dispatch_with_retry(
         try:
             tool_result = await selected_tool.execute(user_id, **tool_args)
         except Exception as e:
-            log.error(f"[dispatch] tool {tool_name} error at attempt {attempt}: {e}")
+            log.error(f"[dispatch] tool {tool_name} error at attempt {attempt}: {e}", exc_info=True)
             db.log_tool_usage(
                 user_id, tool_name,
                 input_summary=str(tool_args)[:200],

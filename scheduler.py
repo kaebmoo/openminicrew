@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import threading
 import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -46,6 +47,7 @@ scheduler = BackgroundScheduler(
     job_defaults={"misfire_grace_time": 3600, "coalesce": True},
 )
 _last_run_info = {"last_run": None}
+_last_run_lock = threading.Lock()
 
 
 # === Tool execution for scheduled jobs ===
@@ -90,14 +92,9 @@ def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: s
 
     # Step 1: รัน tool เพื่อได้ผลลัพธ์
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                asyncio.wait_for(tool.execute(user_id, args), timeout=TOOL_EXEC_TIMEOUT)
-            )
-        finally:
-            loop.close()
+        result = asyncio.run(
+            asyncio.wait_for(tool.execute(user_id, args), timeout=TOOL_EXEC_TIMEOUT)
+        )
     except Exception as e:
         log.error(f"Scheduled {tool_name} failed for {user_id}: {e}\n{traceback.format_exc()}")
         db.log_tool_usage(user_id, tool_name, status="failed", error_message=str(e))
@@ -107,7 +104,8 @@ def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: s
     # ถ้ายังส่งไม่ได้ → save pending ทันที (ไม่ block scheduler thread)
     try:
         send_message(chat_id, result)
-        _last_run_info["last_run"] = tool_name
+        with _last_run_lock:
+            _last_run_info["last_run"] = tool_name
         log.info(f"Scheduled {tool_name} sent to {chat_id}")
         return True
     except Exception as e:
@@ -159,10 +157,11 @@ def _cleanup_job():
         db.cleanup_old_emails(EMAIL_LOG_RETENTION_DAYS)
         db.cleanup_old_pending(PENDING_MSG_RETENTION_DAYS)
         db.cleanup_old_job_runs(JOB_RUN_RETENTION_DAYS)
-        _last_run_info["last_run"] = "cleanup"
+        with _last_run_lock:
+            _last_run_info["last_run"] = "cleanup"
         log.info("Cleanup completed")
     except Exception as e:
-        log.error(f"Cleanup failed: {e}")
+        log.error(f"Cleanup failed: {e}", exc_info=True)
 
 
 # === Schedule helpers ===
@@ -254,7 +253,7 @@ def _load_custom_schedules():
             )
             loaded += 1
         except Exception as e:
-            log.error(f"Failed to load schedule {sched['id']}: {e}")
+            log.error(f"Failed to load schedule {sched['id']}: {e}", exc_info=True)
     return loaded
 
 
@@ -357,7 +356,7 @@ def check_missed_jobs():
             )
 
         except Exception as e:
-            log.error(f"[Catchup] Failed for schedule {sched['id']}: {e}")
+            log.error(f"[Catchup] Failed for schedule {sched['id']}: {e}", exc_info=True)
 
 
 # === Init / Reload / Stop ===
