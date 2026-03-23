@@ -236,9 +236,20 @@ async def _dispatch_with_retry(
             if content:
                 log.info(f"[dispatch] text response at attempt {attempt} ({len(content)} chars)")
                 return content, last_tool_used, last_model, total_tokens
-            # LLM ตอบว่าง → break
+            # LLM ตอบว่าง → ให้ feedback แล้ว retry แทนการล้มทันที
             log.warning(f"[dispatch] empty response at attempt {attempt}")
-            break
+            if attempt >= MAX_RETRIES:
+                break
+
+            messages.append({"role": "assistant", "content": ""})
+            messages.append({"role": "user", "content": (
+                "เมื่อกี้คุณตอบกลับมาเป็นค่าว่าง ซึ่งผู้ใช้จะไม่ได้รับประโยชน์ใดๆ\n"
+                "กรุณาตอบใหม่โดยทำอย่างใดอย่างหนึ่ง:\n"
+                "1. ถ้าควรใช้ tool ให้เรียก tool ที่เหมาะสมทันที\n"
+                "2. ถ้าไม่ต้องใช้ tool ให้ตอบข้อความสั้นๆ ที่เป็นประโยชน์โดยตรง\n"
+                "ห้ามตอบว่าง"
+            )})
+            continue
 
         # ---- Case B: LLM เรียก tool ----
         tool_name = resp["tool_call"]["name"]

@@ -246,6 +246,50 @@ async def test_text_only():
 
 
 @pytest.mark.asyncio
+async def test_empty_response_retries_then_calls_tool():
+    """LLM ตอบว่างรอบแรก → retry → เรียก tool สำเร็จ"""
+
+    mock_tool = MagicMock()
+    mock_tool.name = "news_summary"
+    mock_tool.direct_output = True
+    mock_tool.execute = AsyncMock(return_value="📰 ข่าววันนี้")
+
+    with patch("dispatcher.llm_router.chat", new_callable=AsyncMock) as mock_chat, \
+         patch("dispatcher.registry.get_tool", return_value=mock_tool):
+
+        mock_chat.side_effect = [
+            {
+                "content": "",
+                "tool_call": None,
+                "model": "claude-haiku",
+                "token_used": 90,
+            },
+            {
+                "content": "",
+                "tool_call": {"name": "news_summary", "args": {}},
+                "model": "claude-haiku",
+                "token_used": 100,
+            },
+        ]
+
+        from dispatcher import _dispatch_with_retry
+
+        result = await _dispatch_with_retry(
+            user_id="test",
+            user={"telegram_chat_id": "123"},
+            text="สรุปข่าวให้ด้วย",
+            context=[{"role": "user", "content": "สรุปข่าวให้ด้วย"}],
+            provider="claude",
+            tool_specs=[],
+        )
+
+        assert result[0] == "📰 ข่าววันนี้"
+        assert result[1] == "news_summary"
+        assert mock_chat.call_count == 2
+        assert result[3] == 190
+
+
+@pytest.mark.asyncio
 async def test_llm_api_error():
     """LLM API พัง → break ทันที → return None"""
 

@@ -1,6 +1,7 @@
 """Telegram Long Polling Mode — ดึง update จาก Telegram API แบบ loop"""
 
 import asyncio
+import concurrent.futures
 import threading
 import requests
 
@@ -13,30 +14,98 @@ log = get_logger(__name__)
 API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 
+class _PollingAsyncRuntime:
+    def __init__(self):
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.thread: threading.Thread | None = None
+        self.lock = threading.Lock()
+
+    def _run_loop(self, loop: asyncio.AbstractEventLoop):
+        """รัน event loop กลางสำหรับงาน async ใน polling mode"""
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    def ensure_loop(self) -> asyncio.AbstractEventLoop:
+        """คืน event loop กลางตัวเดิม หรือสร้างใหม่ถ้ายังไม่มี/ถูกปิดไปแล้ว"""
+        with self.lock:
+            if self.loop and not self.loop.is_closed() and self.thread and self.thread.is_alive():
+                return self.loop
+
+            loop = asyncio.new_event_loop()
+            thread = threading.Thread(
+                target=self._run_loop,
+                args=(loop,),
+                daemon=True,
+                name="telegram-polling-async-loop",
+            )
+            thread.start()
+
+            self.loop = loop
+            self.thread = thread
+            log.info("Started shared async event loop for polling mode")
+            return loop
+
+    def stop(self):
+        """หยุด event loop กลางตอนปิด polling"""
+        with self.lock:
+            if self.loop and not self.loop.is_closed():
+                self.loop.call_soon_threadsafe(self.loop.stop)
+            if self.thread and self.thread.is_alive():
+                self.thread.join(timeout=2)
+            if self.loop and not self.loop.is_closed():
+                self.loop.close()
+
+            self.loop = None
+            self.thread = None
+
+
+_async_runtime = _PollingAsyncRuntime()
+
+
+def _is_expected_dispatch_failure(exc: BaseException) -> bool:
+    """ข้อผิดพลาดที่มักเกิดตอน loop กำลังปิด ไม่ต้องพ่น stack trace ยาว"""
+    return isinstance(exc, (asyncio.CancelledError, concurrent.futures.CancelledError, TimeoutError)) or (
+        isinstance(exc, RuntimeError) and "event loop is closed" in str(exc).lower()
+    )
+
+
+def ensure_shared_async_loop() -> asyncio.AbstractEventLoop:
+    """Public helper สำหรับใช้ loop กลางของ polling mode"""
+    return _async_runtime.ensure_loop()
+
+
+def stop_shared_async_loop():
+    """Public helper สำหรับหยุด loop กลางของ polling mode"""
+    _async_runtime.stop()
+
+
+def handle_update(update: dict):
+    """Public wrapper สำหรับประมวลผล update หนึ่งรายการ"""
+    _handle_update(update)
+
+
 def start_polling():
     """Start long polling loop — blocking"""
     log.info("Starting Telegram bot in POLLING mode...")
+    ensure_shared_async_loop()
 
     # ตรวจก่อนว่ามี webhook ตั้งอยู่ไหม — ถ้ามี แสดงว่า server production กำลังใช้งาน
     try:
         info = requests.get(f"{API_BASE}/getWebhookInfo", timeout=5).json()
         active_url = info.get("result", {}).get("url", "")
         if active_url:
-            log.error("=" * 60)
-            log.error(f"ABORT: Webhook กำลังใช้งานอยู่ที่: {active_url}")
-            log.error("การรัน polling จะ deleteWebhook และทำให้ server หยุดรับ update!")
-            log.error("ถ้าต้องการรัน polling ทดสอบ: ใช้ Bot Token แยกต่างหาก")
-            log.error("ถ้าต้องการ override: ตั้ง POLLING_FORCE=true ใน .env")
-            log.error("=" * 60)
+            log.error("ABORT polling: active webhook detected at %s", active_url)
+            log.error("Polling would deleteWebhook and stop the webhook receiver")
+            log.error("Use a separate bot token for polling tests or set POLLING_FORCE=true to override")
             import sys, os
             if os.getenv("POLLING_FORCE", "").lower() != "true":
                 sys.exit(1)
-            log.warning("POLLING_FORCE=true — ลบ webhook และเริ่ม polling (server จะหยุดรับ update)")
+            log.warning("POLLING_FORCE=true enabled, deleting webhook and continuing in polling mode")
     except Exception as e:
-        log.warning(f"ไม่สามารถตรวจสอบ webhook info: {e} — ดำเนินการต่อ")
+        log.warning("Unable to inspect webhook info, continuing in polling mode: %s", e)
 
     # ลบ webhook ก่อน polling
-    requests.post(f"{API_BASE}/deleteWebhook")
+    requests.post(f"{API_BASE}/deleteWebhook", timeout=10)
 
     offset = None
     _watchdog_counter = 0
@@ -57,7 +126,7 @@ def start_polling():
             resp = requests.get(f"{API_BASE}/getUpdates", params=params, timeout=POLLING_REQUEST_TIMEOUT)
 
             if not resp.ok:
-                log.warning(f"getUpdates failed: {resp.status_code}")
+                log.warning("getUpdates failed with status %s", resp.status_code)
                 import time as _time
                 _time.sleep(5)
                 continue
@@ -66,18 +135,19 @@ def start_polling():
 
             for update in updates:
                 offset = update["update_id"] + 1
-                log.info(f"Received update_id: {update['update_id']}")
+                log.info("Received update_id: %s", update["update_id"])
                 threading.Thread(
                     target=_handle_update, args=(update,), daemon=True
                 ).start()
 
         except KeyboardInterrupt:
             log.info("Polling stopped by user")
+            stop_shared_async_loop()
             break
         except requests.exceptions.ReadTimeout:
             continue  # normal long-poll timeout, retry immediately
         except Exception as e:
-            log.error(f"Polling error: {e}")
+            log.error("Polling error: %s", e)
             import time
             time.sleep(5)
 
@@ -86,16 +156,16 @@ def _handle_update(update: dict):
     """ประมวลผล update — เรียก dispatcher"""
     message = update.get("message")
     if not message:
-        log.debug(f"Update has no 'message' field: {list(update.keys())}")
+        log.debug("Update has no message field: keys=%s", list(update.keys()))
         return
 
     chat_id = message["chat"]["id"]
-    log.info(f"Incoming message from chat_id: {chat_id}")
+    log.info("Incoming message from chat_id: %s", chat_id)
 
     # Auth check
     user = get_user(chat_id)
     if not user:
-        log.warning(f"Unauthorized chat_id: {chat_id}")
+        log.warning("Unauthorized chat_id: %s", chat_id)
         return
 
     user_id = user["user_id"]
@@ -110,20 +180,24 @@ def _handle_update(update: dict):
 
     text = message.get("text", "").strip()
     if not text:
-        log.info(f"Empty text from chat_id: {chat_id} (message keys: {list(message.keys())})")
+        log.info("Empty text from chat_id: %s (message keys: %s)", chat_id, list(message.keys()))
         return
 
-    log.info(f"Processing text from {user_id}: {text[:80]}")
+    log.info("Processing text from %s: %s", user_id, text[:80])
 
     # Run async dispatcher in sync context
     from dispatcher import process_message
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    loop = _async_runtime.ensure_loop()
+    future = asyncio.run_coroutine_threadsafe(
+        process_message(user_id, user, chat_id, text),
+        loop,
+    )
     try:
-        loop.run_until_complete(process_message(user_id, user, chat_id, text))
+        future.result()
     except Exception as e:
-        log.error(f"process_message failed for {user_id}: {e}", exc_info=True)
+        if _is_expected_dispatch_failure(e):
+            log.warning("process_message interrupted for %s: %s", user_id, e)
+        else:
+            log.exception("process_message failed for %s: %s", user_id, e)
     finally:
-        loop.close()
-        log.info(f"Finished processing for {user_id}")
+        log.info("Finished processing for %s", user_id)
