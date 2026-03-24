@@ -5,6 +5,8 @@
 """
 
 import asyncio
+from datetime import date as _date_cls
+from core.api_keys import get_supported_services, list_user_keys, remove_api_key, set_api_key
 from core.llm import llm_router
 from core.memory import (
     save_user_message, save_assistant_message, get_context,
@@ -21,24 +23,36 @@ from core.logger import get_logger
 
 log = get_logger(__name__)
 
-SYSTEM_PROMPT = (
-    "คุณเป็นผู้ช่วยส่วนตัว ชื่อ OpenMiniCrew ตอบเป็นภาษาไทย กระชับ ได้ใจความ "
-    "ถ้า user ต้องการทำงานที่ตรงกับ tool ที่มี ให้เรียกใช้ tool นั้น "
-    "ถ้าไม่ตรงกับ tool ไหน ให้ตอบคำถามทั่วไปตามความรู้ของคุณ "
-    "สำหรับคำถามเกี่ยวกับการจัดการผู้ใช้ เช่น ดูรายชื่อ user, เพิ่ม/ลบ user "
-    "ให้แนะนำให้ใช้คำสั่งโดยตรง: /listusers, /adduser <chat_id> [ชื่อ], /removeuser <chat_id> "
-    "สำคัญมาก: เมื่อ user ขอข้อมูลจาก tool (อีเมล, แผนที่, ข่าว, อัตราแลกเปลี่ยน, ผลสลากกินแบ่ง หรือ หวย ฯลฯ) "
-    "ให้เรียก tool ทันทีเสมอ ห้ามถามกลับหรือขอข้อมูลเพิ่ม — tool ทุกตัวมีค่าเริ่มต้นจัดการเองได้ และอย่าเดาชื่อ Tool เด็ดขาด ให้ใช้เฉพาะ Tool ที่มีในรายการเท่านั้น (เช่น เรื่องหวยสลากประจำเป็น lotto ไม่ใช่ lottery) "
-    "ถ้า user ไม่ระบุรายละเอียด ให้เรียก tool โดยไม่ส่ง parameter (tool จะใช้ค่าเริ่มต้น) "
-    "อย่าตอบจากประวัติการสนทนาเก่าหรือความรู้ของตัวเอง เพราะข้อมูลอาจล้าสมัยหรือผิดพลาด "
-    "โดยเฉพาะ exchange_rate: ให้ส่ง date ตามที่ผู้ใช้ระบุเสมอ tool จัดการวันหยุดเอง "
-    "หมายเหตุ: ปีที่ผู้ใช้ระบุเวลาถามมักจะเป็นปี พ.ศ. ของไทย (Buddhist Era) ซึ่งจะมากกว่า ค.ศ. (CE) 543 ปี (เช่น ปี 2026 คือ พ.ศ. 2569) ให้พิจารณาว่าปี พ.ศ. ที่สมเหตุสมผล ไม่ใช่ปีในอนาคตเสมอ"
-)
+def _build_system_prompt() -> str:
+    """สร้าง system prompt พร้อมวันที่ปัจจุบัน — เรียกทุกครั้งเพื่อให้ date ไม่ stale"""
+    today = _date_cls.today()
+    return (
+        f"วันที่ปัจจุบันคือ {today.isoformat()} "
+        f"(ค.ศ. {today.year} / พ.ศ. {today.year + 543}) "
+        "เมื่อผู้ใช้ระบุวันที่โดยไม่ระบุปี ให้ใช้ปีปัจจุบันเป็นค่าเริ่มต้นเสมอ "
+        "คุณเป็นผู้ช่วยส่วนตัว ชื่อ OpenMiniCrew ตอบเป็นภาษาไทย กระชับ ได้ใจความ "
+        "ถ้า user ต้องการทำงานที่ตรงกับ tool ที่มี ให้เรียกใช้ tool นั้น "
+        "ถ้าไม่ตรงกับ tool ไหน ให้ตอบคำถามทั่วไปตามความรู้ของคุณ "
+        "สำหรับคำถามเกี่ยวกับการจัดการผู้ใช้ เช่น ดูรายชื่อ user, เพิ่ม/ลบ user "
+        "ให้แนะนำให้ใช้คำสั่งโดยตรง: /listusers, /adduser <chat_id> [ชื่อ], /removeuser <chat_id> "
+        "สำคัญมาก: เมื่อ user ขอข้อมูลจาก tool (อีเมล, แผนที่, ข่าว, อัตราแลกเปลี่ยน, ผลสลากกินแบ่ง หรือ หวย ฯลฯ) "
+        "ให้เรียก tool ทันทีเสมอ ห้ามถามกลับหรือขอข้อมูลเพิ่ม — tool ทุกตัวมีค่าเริ่มต้นจัดการเองได้ และอย่าเดาชื่อ Tool เด็ดขาด ให้ใช้เฉพาะ Tool ที่มีในรายการเท่านั้น (เช่น เรื่องหวยสลากประจำเป็น lotto ไม่ใช่ lottery) "
+        "ถ้า user ไม่ระบุรายละเอียด ให้เรียก tool โดยไม่ส่ง parameter (tool จะใช้ค่าเริ่มต้น) "
+        "อย่าตอบจากประวัติการสนทนาเก่าหรือความรู้ของตัวเอง เพราะข้อมูลอาจล้าสมัยหรือผิดพลาด "
+        "โดยเฉพาะ exchange_rate: ให้ส่ง date ตามที่ผู้ใช้ระบุเสมอ tool จัดการวันหยุดเอง "
+        "หมายเหตุ: ปีที่ผู้ใช้ระบุเวลาถามมักจะเป็นปี พ.ศ. ของไทย (Buddhist Era) ซึ่งจะมากกว่า ค.ศ. (CE) 543 ปี "
+        f"(เช่น ปี {today.year} คือ พ.ศ. {today.year + 543}) "
+        "ให้พิจารณาว่าปี พ.ศ. ที่สมเหตุสมผล ไม่ใช่ปีในอนาคตเสมอ"
+    )
 
 
-async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None, str | None, int]:
+async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = None, message_id: int = None) -> tuple[str, str | None, str | None, int]:
     """
     ตัดสินใจ route message → return ข้อความที่จะส่งกลับ user
+
+    Args:
+        chat_id: สำหรับลบข้อความ sensitive (เช่น /setkey)
+        message_id: message_id ของข้อความ user (สำหรับ deleteMessage)
 
     Returns:
         (response_text, tool_used, llm_model, token_used)
@@ -49,9 +63,62 @@ async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None
     if command == "/help":
         return registry.get_help_text(), None, None, 0
 
+    # ---- /start ----
+    if command == "/start":
+        display_name = user.get("display_name") or "ผู้ใช้ใหม่"
+        welcome = (
+            f"✅ ลงทะเบียนเรียบร้อยแล้ว {display_name}\n\n"
+            "ผมเป็นผู้ช่วยส่วนตัวของคุณ\n\n"
+            "ตั้งค่าเพิ่มเติมได้ทันที:\n"
+            "• /setname ชื่อที่ต้องการ\n"
+            "• /setphone 08XXXXXXXX\n"
+            "• /setid <เลขบัตรประชาชน 13 หลัก>\n"
+            "• /authgmail\n"
+            "• /setkey tmd <key>\n\n"
+            "พร้อมใช้งานแล้ว พิมพ์ /help หรือถามงานที่ต้องการได้เลย"
+        )
+        return welcome, None, None, 0
+
+    # ---- /setname ----
+    if command == "/setname":
+        display_name = args.strip()
+        if not display_name:
+            return "❌ ใช้: /setname <ชื่อ>", None, None, 0
+        db.update_user_profile(user_id, display_name=display_name)
+        return f"✅ ตั้งชื่อเป็น {display_name} แล้ว", None, None, 0
+
+    # ---- /setphone ----
+    if command == "/setphone":
+        phone_number = args.strip()
+        if not phone_number:
+            return "❌ ใช้: /setphone <เบอร์โทร>", None, None, 0
+        normalized_phone = phone_number.replace(" ", "").replace("-", "")
+        db.update_user_profile(user_id, phone_number=normalized_phone)
+        return f"✅ บันทึกเบอร์โทรแล้ว: {normalized_phone}", None, None, 0
+
+    # ---- /setid ----
+    if command == "/setid":
+        raw_id = args.strip()
+        if not raw_id:
+            return "❌ ใช้: /setid <เลขบัตรประชาชน 13 หลัก>", None, None, 0
+        from tools.promptpay import _validate_national_id
+        try:
+            cleaned = _validate_national_id(raw_id)
+        except ValueError as e:
+            return f"❌ เลขบัตรไม่ถูกต้อง: {e}", None, None, 0
+        db.update_user_profile(user_id, national_id=cleaned)
+        masked = "X" * 9 + cleaned[-4:]
+
+        # ลบข้อความ user ที่มีเลขบัตรประชาชน เพื่อความปลอดภัย
+        if chat_id and message_id:
+            from interfaces.telegram_common import delete_message_safe
+            delete_message_safe(chat_id, message_id)
+
+        return f"✅ บันทึกเลขบัตรประชาชนแล้ว: {masked}", None, None, 0
+
     # ---- /model ----
     if command == "/model":
-        return _handle_model_command(user_id, args), None, None, 0
+        return _handle_model_command(user_id, user, args), None, None, 0
 
     # ---- /adduser — owner only ----
     if command == "/adduser":
@@ -87,6 +154,52 @@ async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None
             status = "✅" if u["is_active"] else "❌"
             lines.append(f"{status} {u['display_name']} — `{u['telegram_chat_id']}` ({u['role']})")
         return "\n".join(lines), None, None, 0
+
+    # ---- /setkey ----
+    if command == "/setkey":
+        parts = args.strip().split(None, 1)
+        if len(parts) < 2:
+            services = ", ".join(get_supported_services())
+            return (
+                "❌ ใช้: /setkey <service> <value>\n"
+                f"services ที่รองรับ: {services}"
+            ), None, None, 0
+
+        service, value = parts[0].strip().lower(), parts[1].strip()
+        if not value:
+            return "❌ ค่า key ว่างไม่ได้", None, None, 0
+
+        set_api_key(user_id, service, value)
+
+        # ลบข้อความ user ที่มี API key เพื่อความปลอดภัย
+        if chat_id and message_id:
+            from interfaces.telegram_common import delete_message_safe
+            delete_message_safe(chat_id, message_id)
+
+        return f"✅ บันทึก key สำหรับ `{service}` แล้ว", None, None, 0
+
+    # ---- /mykeys ----
+    if command == "/mykeys":
+        keys = list_user_keys(user_id)
+        if not keys:
+            return "🔑 ยังไม่มี key ที่บันทึกไว้", None, None, 0
+
+        lines = ["🔑 *API keys ของคุณ*\n"]
+        for item in keys:
+            updated = (item.get("updated_at") or "")[:16] or "-"
+            lines.append(f"• `{item['service']}` (updated: {updated})")
+        return "\n".join(lines), None, None, 0
+
+    # ---- /removekey ----
+    if command == "/removekey":
+        service = args.strip().lower()
+        if not service:
+            return "❌ ใช้: /removekey <service>", None, None, 0
+
+        deleted = remove_api_key(user_id, service)
+        if not deleted:
+            return f"ℹ️ ไม่พบ key สำหรับ `{service}`", None, None, 0
+        return f"✅ ลบ key สำหรับ `{service}` แล้ว", None, None, 0
 
     # ---- /authgmail — authorize Gmail สำหรับ user นี้ ----
     if command == "/authgmail":
@@ -127,6 +240,19 @@ async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None
 
         return "\n".join(lines), None, None, 0
 
+    # ---- Photo message → route ไป expense tool อัตโนมัติ ----
+    if text.startswith("__photo:"):
+        expense_tool = registry.get_tool("expense")
+        if expense_tool:
+            log.info("Photo message → routing to expense tool")
+            try:
+                result = await expense_tool.execute(user_id, text)
+                return result, "expense", None, 0
+            except Exception as e:
+                log.error(f"Expense photo failed: {e}", exc_info=True)
+                return f"❌ ไม่สามารถประมวลผลรูปได้: {e}", "expense", None, 0
+        return "❌ ระบบบันทึกรายจ่ายยังไม่พร้อม", None, None, 0
+
     # ---- Direct command → tool (ไม่เสีย LLM token) ----
     tool = registry.get_by_command(command) if command else None
     if tool:
@@ -165,22 +291,24 @@ async def dispatch(user_id: str, user: dict, text: str) -> tuple[str, str | None
     return response_text, tool_used, llm_model, token_used
 
 
-def _handle_model_command(user_id: str, args: str) -> str:
+def _handle_model_command(user_id: str, user: dict, args: str) -> str:
     from core.llm import llm_router
 
-    available = llm_router.get_available_providers()
+    available = llm_router.get_available_providers(user_id=user_id)
     args = args.strip().lower()
 
     if not args:
         # แสดงรายการ providers ที่ใช้ได้
+        current = get_preference(user, "default_llm") or "claude"
         lines = ["🧠 LLM ที่ใช้ได้:\n"]
         for name in available:
-            lines.append(f"  ✅ {name}")
+            marker = "👉" if name == current else "  "
+            lines.append(f"  {marker} ✅ {name}")
         lines.append(f"\nใช้: /model [ชื่อ] เช่น /model {available[0]}" if available else "\n❌ ไม่มี LLM ที่ตั้งค่าไว้")
         return "\n".join(lines)
 
     if args not in available:
-        return f"❌ ใช้ {args} ไม่ได้ — ยังไม่ได้ตั้งค่า API key\n✅ ใช้ได้: {', '.join(available)}"
+        return f"❌ ใช้ {args} ไม่ได้ — ยังไม่ได้ตั้งค่า API key\nลอง: /setkey {args} <key>\n✅ ใช้ได้: {', '.join(available)}"
 
     set_preference(user_id, "default_llm", args)
     return f"✅ เปลี่ยน LLM เป็น {args} เรียบร้อย"
@@ -205,6 +333,7 @@ async def _dispatch_with_retry(
     Returns: (response_text, tool_used, llm_model, total_token_used)
     - response_text = None เมื่อหมดรอบ/LLM ตอบว่าง/LLM พัง
     """
+    system_prompt = _build_system_prompt()
     messages = list(context)  # copy เพื่อไม่แก้ต้นฉบับ
     total_tokens = 0
     last_model = None
@@ -219,8 +348,9 @@ async def _dispatch_with_retry(
                 messages=messages,
                 provider=provider,
                 tier="cheap",
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 tools=tool_specs if tool_specs else None,
+                user_id=user_id,
             )
         except Exception as e:
             # LLM API พัง (หลัง provider retry หมดแล้ว) → หยุดทันที
@@ -320,7 +450,8 @@ async def _dispatch_with_retry(
                 messages=summary_messages,
                 provider=provider,
                 tier="cheap",
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
+                user_id=user_id,
             )
             total_tokens += summary.get("token_used", 0)
             return (
@@ -339,12 +470,13 @@ async def _dispatch_with_retry(
     return None, last_tool_used, last_model, total_tokens
 
 
-async def process_message(user_id: str, user: dict, chat_id: str | int, text: str):
+async def process_message(user_id: str, user: dict, chat_id: str | int, text: str, message_id: int = None):
     """
     Full pipeline: dedup → rate limit → dispatch + save memory + send Telegram
     เรียกจากทั้ง polling และ webhook
     """
-    from interfaces.telegram_common import send_message, TypingIndicator
+    from interfaces.telegram_common import send_message, send_tool_response, TypingIndicator
+    from tools.response import MediaResponse
 
     log.info(f"[process_message] user={user_id}, chat={chat_id}, text={text[:80]}")
 
@@ -373,7 +505,7 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
             db.update_conversation(conv_id)
 
         try:
-            result = await asyncio.wait_for(dispatch(user_id, user, text), timeout=DISPATCH_TIMEOUT)
+            result = await asyncio.wait_for(dispatch(user_id, user, text, chat_id=chat_id, message_id=message_id), timeout=DISPATCH_TIMEOUT)
         except asyncio.TimeoutError:
             log.error(f"dispatch timeout for user {user_id}")
             timeout_msg = "⏱ หมดเวลา — กรุณาลองใหม่"
@@ -387,13 +519,15 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
         else:
             response_text, tool_used, llm_model, token_used = result, None, None, 0
 
+        memory_text = response_text.text if isinstance(response_text, MediaResponse) else response_text
+
         # ถ้า dispatch ส่ง error กลับมา → clear dedup ให้ user retry ได้ทันที
-        if response_text and ("ไม่สำเร็จ" in response_text or "ข้อผิดพลาด" in response_text):
+        if isinstance(memory_text, str) and memory_text and ("ไม่สำเร็จ" in memory_text or "ข้อผิดพลาด" in memory_text):
             request_dedup.remove(user_id, text)
 
         # บันทึก memory
         save_assistant_message(
-            user_id, response_text,
+            user_id, memory_text,
             tool_used=tool_used, llm_model=llm_model,
             token_used=token_used,
             conversation_id=conv_id,
@@ -403,7 +537,7 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
     if not response_text:
         log.warning(f"Empty response for user {user_id}, text={text[:50]}")
         response_text = "ไม่สามารถประมวลผลได้ กรุณาลองใหม่"
-    send_message(chat_id, response_text)
+    send_tool_response(chat_id, response_text)
 
     # ส่งข้อความค้าง (เช่น morning briefing ที่ส่งไม่ได้ตอนเน็ตหลุด)
     try:

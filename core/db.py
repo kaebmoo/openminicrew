@@ -18,8 +18,11 @@ CREATE TABLE IF NOT EXISTS users (
     user_id           TEXT PRIMARY KEY,
     telegram_chat_id  TEXT UNIQUE NOT NULL,
     display_name      TEXT,
+    phone_number      TEXT,
+    status            TEXT DEFAULT 'active',
     role              TEXT DEFAULT 'user',
     default_llm       TEXT DEFAULT 'claude',
+    smart_inbox_mode  TEXT DEFAULT 'confirm',
     timezone          TEXT DEFAULT 'Asia/Bangkok',
     gmail_authorized  INTEGER DEFAULT 0,
     is_active         INTEGER DEFAULT 1,
@@ -108,6 +111,56 @@ CREATE TABLE IF NOT EXISTS oauth_states (
     expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS user_api_keys (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    service     TEXT NOT NULL,
+    api_key     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    UNIQUE(user_id, service),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      TEXT NOT NULL,
+    text         TEXT NOT NULL,
+    remind_at    TEXT NOT NULL,
+    status       TEXT DEFAULT 'pending',
+    schedule_id  INTEGER,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS todos (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    notes        TEXT DEFAULT '',
+    priority     TEXT DEFAULT 'medium',
+    status       TEXT DEFAULT 'open',
+    due_at       TEXT,
+    source_type  TEXT DEFAULT '',
+    source_ref   TEXT DEFAULT '',
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS expenses (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT NOT NULL,
+    amount        REAL NOT NULL,
+    currency      TEXT DEFAULT 'THB',
+    category      TEXT DEFAULT 'ทั่วไป',
+    note          TEXT DEFAULT '',
+    expense_date  TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
 CREATE TABLE IF NOT EXISTS pending_messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id     TEXT NOT NULL,
@@ -160,6 +213,30 @@ def init_db():
     except Exception:
         pass  # column exists already
 
+    try:
+        get_conn().execute("ALTER TABLE users ADD COLUMN phone_number TEXT")
+        log.info("Migration: added phone_number column to users")
+    except Exception:
+        pass
+
+    try:
+        get_conn().execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'")
+        log.info("Migration: added status column to users")
+    except Exception:
+        pass
+
+    try:
+        get_conn().execute("ALTER TABLE users ADD COLUMN smart_inbox_mode TEXT DEFAULT 'confirm'")
+        log.info("Migration: added smart_inbox_mode column to users")
+    except Exception:
+        pass
+
+    try:
+        get_conn().execute("ALTER TABLE users ADD COLUMN national_id TEXT")
+        log.info("Migration: added national_id column to users")
+    except Exception:
+        pass
+
     # สร้าง index หลัง migration เพื่อให้มั่นใจว่า column มีแล้ว
     with get_conn() as conn:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversation ON chat_history(conversation_id, created_at DESC)")
@@ -181,7 +258,29 @@ def init_db():
     except Exception:
         pass  # index exists already or table empty
 
+    # Migration: rename tool email_summary → gmail_summary ใน 3 ตาราง
+    _rename_tool("email_summary", "gmail_summary")
+
     log.info("Database initialized")
+
+
+def _rename_tool(old_name: str, new_name: str):
+    """Rename tool name in tool_logs, schedules, chat_history"""
+    try:
+        with get_conn() as conn:
+            for table, col in [
+                ("tool_logs", "tool_name"),
+                ("schedules", "tool_name"),
+                ("chat_history", "tool_used"),
+            ]:
+                cur = conn.execute(
+                    f"UPDATE {table} SET {col} = ? WHERE {col} = ?",
+                    (new_name, old_name),
+                )
+                if cur.rowcount:
+                    log.info(f"Migration: renamed '{old_name}' → '{new_name}' in {table} ({cur.rowcount} rows)")
+    except Exception as e:
+        log.warning(f"Migration rename tool failed: {e}")
 
 
 def check_health() -> dict:
@@ -199,8 +298,17 @@ def check_health() -> dict:
 def get_user_by_chat_id(chat_id: str) -> dict | None:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM users WHERE telegram_chat_id = ? AND is_active = 1",
+            "SELECT * FROM users WHERE telegram_chat_id = ? AND is_active = 1 AND status = 'active'",
             (str(chat_id),)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_user_by_id(user_id: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE user_id = ? AND is_active = 1",
+            (str(user_id),),
         ).fetchone()
         return dict(row) if row else None
 
@@ -218,6 +326,8 @@ def upsert_user(user_id: str, chat_id: str, display_name: str, role: str = "user
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 display_name=excluded.display_name,
+                is_active=1,
+                status='active',
                 updated_at=?
         """, (user_id, str(chat_id), display_name, role,
               default_llm, timezone, now, now, now))
@@ -234,13 +344,13 @@ def get_all_users() -> list[dict]:
 def deactivate_user(chat_id: str):
     with get_conn() as conn:
         conn.execute(
-            "UPDATE users SET is_active = 0, updated_at = ? WHERE telegram_chat_id = ?",
+            "UPDATE users SET is_active = 0, status = 'deleted', updated_at = ? WHERE telegram_chat_id = ?",
             (datetime.now().isoformat(), str(chat_id))
         )
 
 
 def update_user_preference(user_id: str, key: str, value: str):
-    allowed = {"default_llm", "timezone"}
+    allowed = {"default_llm", "timezone", "smart_inbox_mode"}
     if key not in allowed:
         return
     with get_conn() as conn:
@@ -248,6 +358,219 @@ def update_user_preference(user_id: str, key: str, value: str):
             f"UPDATE users SET {key} = ?, updated_at = ? WHERE user_id = ?",
             (value, datetime.now().isoformat(), user_id)
         )
+
+
+def update_user_profile(user_id: str, display_name: str | None = None,
+                        phone_number: str | None = None, national_id: str | None = None):
+    fields = []
+    values = []
+
+    if display_name is not None:
+        fields.append("display_name = ?")
+        values.append(display_name)
+    if phone_number is not None:
+        fields.append("phone_number = ?")
+        values.append(phone_number)
+    if national_id is not None:
+        fields.append("national_id = ?")
+        values.append(national_id)
+
+    if not fields:
+        return
+
+    fields.append("updated_at = ?")
+    values.append(datetime.now().isoformat())
+    values.append(str(user_id))
+
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE users SET {', '.join(fields)} WHERE user_id = ?",
+            values,
+        )
+
+
+def update_user_status(user_id: str, status: str):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET status = ?, is_active = ?, updated_at = ? WHERE user_id = ?",
+            (status, 1 if status == 'active' else 0, datetime.now().isoformat(), str(user_id)),
+        )
+
+
+def upsert_user_api_key(user_id: str, service: str, api_key: str):
+    now = datetime.now().isoformat()
+    normalized_service = service.strip().lower()
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO user_api_keys (user_id, service, api_key, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, service) DO UPDATE SET
+                api_key=excluded.api_key,
+                updated_at=excluded.updated_at
+        """, (str(user_id), normalized_service, api_key, now, now))
+
+
+def get_user_api_key(user_id: str, service: str) -> str | None:
+    normalized_service = service.strip().lower()
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT api_key FROM user_api_keys WHERE user_id = ? AND service = ?",
+            (str(user_id), normalized_service),
+        ).fetchone()
+        return row["api_key"] if row else None
+
+
+def get_user_api_keys(user_id: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT service, created_at, updated_at FROM user_api_keys WHERE user_id = ? ORDER BY service",
+            (str(user_id),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_user_api_key(user_id: str, service: str) -> bool:
+    normalized_service = service.strip().lower()
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "DELETE FROM user_api_keys WHERE user_id = ? AND service = ?",
+            (str(user_id), normalized_service),
+        )
+        return cursor.rowcount > 0
+
+
+def add_reminder(user_id: str, text: str, remind_at: str, schedule_id: int | None = None) -> int:
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO reminders (user_id, text, remind_at, schedule_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(user_id), text, remind_at, schedule_id, now, now),
+        )
+        return cursor.lastrowid
+
+
+def update_reminder_schedule(reminder_id: int, schedule_id: int):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE reminders SET schedule_id = ?, updated_at = ? WHERE id = ?",
+            (schedule_id, datetime.now().isoformat(), reminder_id),
+        )
+
+
+def get_reminder(reminder_id: int, user_id: str | None = None) -> dict | None:
+    query = "SELECT * FROM reminders WHERE id = ?"
+    params: list = [reminder_id]
+    if user_id is not None:
+        query += " AND user_id = ?"
+        params.append(str(user_id))
+    with get_conn() as conn:
+        row = conn.execute(query, params).fetchone()
+        return dict(row) if row else None
+
+
+def list_user_reminders(user_id: str, include_done: bool = False) -> list[dict]:
+    query = "SELECT * FROM reminders WHERE user_id = ?"
+    if not include_done:
+        query += " AND status = 'pending'"
+    query += " ORDER BY remind_at"
+    with get_conn() as conn:
+        rows = conn.execute(query, (str(user_id),)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_reminder_sent(reminder_id: int):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE reminders SET status = 'sent', updated_at = ? WHERE id = ?",
+            (datetime.now().isoformat(), reminder_id),
+        )
+
+
+def remove_reminder(reminder_id: int, user_id: str) -> bool:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE reminders SET status = 'cancelled', updated_at = ? WHERE id = ? AND user_id = ? AND status = 'pending'",
+            (datetime.now().isoformat(), reminder_id, str(user_id)),
+        )
+        return cursor.rowcount > 0
+
+
+def add_todo(user_id: str, title: str, notes: str = "", priority: str = "medium", due_at: str = "", source_type: str = "", source_ref: str = "") -> int:
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO todos (user_id, title, notes, priority, due_at, source_type, source_ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(user_id), title, notes, priority, due_at or None, source_type, source_ref, now, now),
+        )
+        return cursor.lastrowid
+
+
+def list_todos(user_id: str, status: str | None = None) -> list[dict]:
+    query = "SELECT * FROM todos WHERE user_id = ?"
+    params: list = [str(user_id)]
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    query += " ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, COALESCE(due_at, '9999-12-31T23:59:59'), id DESC"
+    with get_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_todo(todo_id: int, user_id: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM todos WHERE id = ? AND user_id = ?",
+            (todo_id, str(user_id)),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def update_todo_status(todo_id: int, user_id: str, status: str) -> bool:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE todos SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (status, datetime.now().isoformat(), todo_id, str(user_id)),
+        )
+        return cursor.rowcount > 0
+
+
+def remove_todo(todo_id: int, user_id: str) -> bool:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "DELETE FROM todos WHERE id = ? AND user_id = ?",
+            (todo_id, str(user_id)),
+        )
+        return cursor.rowcount > 0
+
+
+def add_expense(user_id: str, amount: float, category: str, note: str = "", expense_date: str = "", currency: str = "THB") -> int:
+    date_value = expense_date or datetime.now().date().isoformat()
+    created_at = datetime.now().isoformat()
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO expenses (user_id, amount, currency, category, note, expense_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (str(user_id), amount, currency, category, note, date_value, created_at),
+        )
+        return cursor.lastrowid
+
+
+def list_expenses(user_id: str, limit: int = 20) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM expenses WHERE user_id = ? ORDER BY expense_date DESC, id DESC LIMIT ?",
+            (str(user_id), limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def summarize_expenses(user_id: str, start_date: str, end_date: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT category, SUM(amount) AS total, COUNT(*) AS count FROM expenses WHERE user_id = ? AND expense_date BETWEEN ? AND ? GROUP BY category ORDER BY total DESC",
+            (str(user_id), start_date, end_date),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # === Conversations ===

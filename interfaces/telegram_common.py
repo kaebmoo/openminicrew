@@ -7,11 +7,11 @@
 """
 
 import json
+import io
 import re
 import time
 import threading
 import requests
-from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from core.config import TELEGRAM_BOT_TOKEN
@@ -156,6 +156,76 @@ def send_message(chat_id: str | int, text: str, parse_mode: str = "auto"):
         _send_chunks(chat_id, text, parse_mode)
 
 
+def send_photo(chat_id: str | int, image: bytes, caption: str = "") -> bool:
+    """ส่งรูปภาพไป Telegram"""
+    _limiter.wait()
+    files = {"photo": ("image.png", io.BytesIO(image), "image/png")}
+    data = {"chat_id": str(chat_id)}
+    if caption:
+        data["caption"] = caption
+        data["parse_mode"] = "HTML" if "<" in caption and ">" in caption else "Markdown"
+
+    try:
+        resp = requests.post(f"{API_BASE}/sendPhoto", data=data, files=files, timeout=20)
+        if not resp.ok:
+            log.warning("Telegram sendPhoto failed: %s %s", resp.status_code, resp.text)
+            return False
+        return True
+    except Exception as e:
+        log.error("Telegram sendPhoto error: %s", e)
+        return False
+
+
+def send_document(chat_id: str | int, file_bytes: bytes, file_name: str, caption: str = "") -> bool:
+    """ส่งไฟล์ไป Telegram"""
+    _limiter.wait()
+    files = {"document": (file_name or "file.bin", io.BytesIO(file_bytes))}
+    data = {"chat_id": str(chat_id)}
+    if caption:
+        data["caption"] = caption
+        data["parse_mode"] = "HTML" if "<" in caption and ">" in caption else "Markdown"
+
+    try:
+        resp = requests.post(f"{API_BASE}/sendDocument", data=data, files=files, timeout=20)
+        if not resp.ok:
+            log.warning("Telegram sendDocument failed: %s %s", resp.status_code, resp.text)
+            return False
+        return True
+    except Exception as e:
+        log.error("Telegram sendDocument error: %s", e)
+        return False
+
+
+def send_tool_response(chat_id: str | int, response) -> bool:
+    """ส่งผลลัพธ์จาก tool แบบข้อความหรือ media โดยไม่ให้ tool รู้จัก Telegram"""
+    from tools.response import MediaResponse
+
+    if isinstance(response, MediaResponse):
+        success = True
+        caption = response.image_caption or response.text
+
+        if response.image:
+            success = send_photo(chat_id, response.image, caption=caption) and success
+            if response.file_bytes:
+                file_caption = response.text if not response.image else ""
+                success = send_document(chat_id, response.file_bytes, response.file_name or "attachment.bin", caption=file_caption) and success
+            elif response.text and response.image_caption:
+                send_message(chat_id, response.text)
+            return success
+
+        if response.file_bytes:
+            return send_document(chat_id, response.file_bytes, response.file_name or "attachment.bin", caption=response.text)
+
+        if response.text:
+            send_message(chat_id, response.text)
+            return True
+
+        return False
+
+    send_message(chat_id, str(response) if response is not None else "")
+    return True
+
+
 def _send_chunks(chat_id: str | int, text: str, parse_mode: str | None) -> bool:
     """ส่งข้อความเป็น chunks — return True ถ้าสำเร็จทั้งหมด"""
     chunks = _split_message(text)
@@ -174,6 +244,33 @@ def _send_chunks(chat_id: str | int, text: str, parse_mode: str | None) -> bool:
             log.error(f"Telegram send error: {e}")
             return False
     return True
+
+
+def delete_message(chat_id: str | int, message_id: int) -> bool:
+    """ลบข้อความจาก Telegram chat — ใช้สำหรับลบข้อความที่มี sensitive data เช่น API key"""
+    try:
+        resp = requests.post(
+            f"{API_BASE}/deleteMessage",
+            json={"chat_id": chat_id, "message_id": message_id},
+            timeout=10,
+        )
+        if not resp.ok:
+            log.warning("Telegram deleteMessage failed: %s %s", resp.status_code, resp.text)
+            return False
+        return True
+    except Exception as e:
+        log.error("Telegram deleteMessage error: %s", e)
+        return False
+
+
+def delete_message_safe(chat_id: str | int, message_id: int):
+    """ลบข้อความ — ถ้าลบไม่ได้ ส่งข้อความเตือน user ให้ลบเอง"""
+    if not delete_message(chat_id, message_id):
+        send_message(
+            chat_id,
+            "⚠️ ไม่สามารถลบข้อความที่มี API key ได้อัตโนมัติ\n"
+            "กรุณาลบข้อความที่มี key ด้วยตัวเอง เพื่อความปลอดภัย"
+        )
 
 
 def send_typing(chat_id: str | int):
@@ -240,6 +337,30 @@ def _split_message(text: str) -> list[str]:
         text = text[cut:].lstrip()
 
     return chunks
+
+
+def download_telegram_photo(file_id: str) -> bytes | None:
+    """ดาวน์โหลดรูปจาก Telegram ด้วย file_id → return bytes หรือ None ถ้าล้มเหลว"""
+    try:
+        # Step 1: getFile → ได้ file_path
+        resp = requests.get(f"{API_BASE}/getFile", params={"file_id": file_id}, timeout=10)
+        if not resp.ok:
+            log.warning("Telegram getFile failed: %s", resp.text)
+            return None
+        file_path = resp.json().get("result", {}).get("file_path")
+        if not file_path:
+            return None
+
+        # Step 2: download file
+        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+        dl_resp = requests.get(file_url, timeout=30)
+        if dl_resp.ok:
+            return dl_resp.content
+        log.warning("Telegram file download failed: %s", dl_resp.status_code)
+        return None
+    except Exception as e:
+        log.error("Telegram download_photo error: %s", e)
+        return None
 
 
 def parse_command(text: str) -> tuple[str, str]:

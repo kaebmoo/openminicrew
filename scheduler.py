@@ -25,7 +25,7 @@ from core.config import (
 )
 from core import db
 from core.logger import get_logger
-from interfaces.telegram_common import send_message
+from interfaces.telegram_common import send_message, send_tool_response
 
 log = get_logger(__name__)
 
@@ -103,14 +103,16 @@ def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: s
     # Step 2: ส่ง Telegram — send_message มี tenacity retry 3 ครั้ง (1-5s backoff) อยู่แล้ว
     # ถ้ายังส่งไม่ได้ → save pending ทันที (ไม่ block scheduler thread)
     try:
-        send_message(chat_id, result)
+        send_tool_response(chat_id, result)
         with _last_run_lock:
             _last_run_info["last_run"] = tool_name
         log.info(f"Scheduled {tool_name} sent to {chat_id}")
         return True
     except Exception as e:
         log.warning(f"Scheduled send failed for {chat_id}: {e} — saving to pending")
-        db.save_pending_message(chat_id, result, source=f"scheduled:{tool_name}")
+        fallback_text = getattr(result, "text", result)
+        if fallback_text:
+            db.save_pending_message(chat_id, fallback_text, source=f"scheduled:{tool_name}")
         return False
 
 

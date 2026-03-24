@@ -2,34 +2,41 @@
 
 > 🇬🇧 [English version](docs/en/README.md)
 
-ผู้ช่วยส่วนตัว AI สั่งงานผ่าน Telegram รองรับ Claude + Gemini
-เพิ่ม tool ได้ง่าย รองรับหลาย Telegram account ด้วย API keys ชุดเดียวกัน
+ผู้ช่วยส่วนตัว AI ผ่าน Telegram สำหรับงานประจำวันและงาน automation ขนาดเล็ก
+รองรับ Claude, Gemini และ Matcha พร้อมระบบ tools แบบ plug-and-play
 
 ## คุณสมบัติ
 
-- สั่งงานผ่าน Telegram ได้ทั้ง /command และพิมพ์อิสระ
-- เลือก LLM ได้ (Claude / Gemini / เพิ่ม provider ได้ง่าย) เปลี่ยนได้ระหว่างใช้งาน
-- เพิ่ม tool ใหม่ = สร้างไฟล์เดียว ไม่ต้องแก้ core
-- เพิ่ม LLM provider ใหม่ = สร้างไฟล์ใน `core/providers/` (Provider Registry)
-- Telegram Bot รองรับทั้ง long polling และ webhook
-- จำบริบทสนทนาได้ (chat memory)
-- ตั้ง cron job สรุปเมลทุกเช้าอัตโนมัติ
-- สรุปอีเมลอัจฉริยะ — จัดกลุ่ม จัดลำดับความสำคัญ ค้นหาเรื่องที่สนใจได้
-- Multi-user — เพิ่ม/ลบ user ผ่าน Telegram ได้ทันที
-- Production ready — retry, error handling, rate limit, health check
+- ใช้งานผ่าน Telegram ได้ทั้ง /command และข้อความอิสระ
+- รองรับ LLM หลายตัว: Claude, Gemini, Matcha และสลับ model ต่อ user ได้
+- รองรับ per-user API key ผ่าน `/setkey` และใช้ shared key จาก `.env` ได้ใน service ที่อนุญาต
+- รองรับ self-registration ผ่าน `/start` และ onboarding ในแชต
+- รองรับ Gmail และ Google Calendar แบบ per-user authorization
+- รองรับ media response เช่น QR และ PromptPay QR
+- รองรับการส่งรูปบิลหรือสลิปเพื่อบันทึกรายจ่ายอัตโนมัติ
+- เพิ่ม tool ใหม่ได้ด้วยการสร้างไฟล์เดียวใน `tools/`
+- รองรับทั้ง long polling และ webhook
+- มี memory, scheduler, retry, rate limiting, health check และ usage log พร้อมใช้งาน
+
+## เครื่องมือที่มีอยู่ตอนนี้
+
+ระบบมีเครื่องมือใช้งานจริงแล้วในหลายหมวด:
+
+- อีเมล: Gmail summary, Work Email (IMAP), Smart Inbox
+- สื่อ/QR: QR Code Generator, PromptPay QR
+- เครื่องมือทั่วไป: Unit Converter, Web Search
+- งานและนัดหมาย: Todo, Reminder, Google Calendar, Schedule
+- การเงิน: Expense Tracker, Exchange Rate
+- ข้อมูลและการเดินทาง: Places, Traffic, News, Lotto
+
+> ดูคำสั่งทั้งหมดในแชตได้ด้วย `/help`
 
 ## ติดตั้ง
 
 ```bash
-# 1. Clone / copy โปรเจกต์
 cd openminicrew
-
-# 2. ติดตั้ง dependencies
 pip install -r requirements.txt
-
-# 3. Copy .env
 cp .env.example .env
-# แก้ค่าใน .env ตามขั้นตอนด้านล่าง
 ```
 
 ## ตั้งค่า
@@ -39,197 +46,240 @@ cp .env.example .env
 1. คุยกับ [@BotFather](https://t.me/BotFather) บน Telegram
 2. ส่ง `/newbot` แล้วตั้งชื่อ
 3. ได้ Bot Token → ใส่ใน `TELEGRAM_BOT_TOKEN`
-4. คุยกับ [@userinfobot](https://t.me/userinfobot) เพื่อดู Chat ID ของตัวเอง
+4. คุยกับ [@userinfobot](https://t.me/userinfobot) เพื่อดู Chat ID ของ owner
 5. ใส่ Chat ID ใน `OWNER_TELEGRAM_CHAT_ID`
 
 ### 2. ตั้งค่า LLM
 
-**Claude:**
-1. สมัคร API key ที่ [console.anthropic.com](https://console.anthropic.com)
-2. ใส่ใน `ANTHROPIC_API_KEY`
+รองรับ 3 provider หลัก:
 
-**Gemini:**
-1. สมัคร API key ที่ [aistudio.google.com](https://aistudio.google.com)
-2. ใส่ใน `GEMINI_API_KEY`
+- Claude → `ANTHROPIC_API_KEY`
+- Gemini → `GEMINI_API_KEY`
+- Matcha → `MATCHA_API_KEY`
 
-> **หมายเหตุ:** ตั้ง `DEFAULT_LLM` ใน `.env` เป็น `claude` หรือ `gemini` ตาม API key ที่มี
+ตัวอย่างใน `.env`:
 
-### 3. ตั้งค่า Gmail (สำหรับ email summary tool)
+```bash
+DEFAULT_LLM=claude
+
+ANTHROPIC_API_KEY=
+GEMINI_API_KEY=
+
+MATCHA_API_KEY=
+MATCHA_BASE_URL=
+MATCHA_MODEL_CHEAP=
+MATCHA_MODEL_MID=
+```
+
+หมายเหตุ:
+
+- ถ้าตั้ง shared key ใน `.env` ทุก user ที่ได้รับอนุญาตจะใช้ได้
+- บาง provider รองรับ per-user key ผ่าน `/setkey` เช่น `anthropic`, `gemini`, `matcha`, `tavily`, `tmd`
+- ใช้ `/model` เพื่อดู provider ที่ user คนนั้นใช้ได้จริง
+
+### 3. ตั้งค่า Gmail และ Google Calendar
+
+Gmail และ Calendar ใช้ Google OAuth ชุดเดียวกันแบบ per-user
 
 1. ไปที่ [Google Cloud Console](https://console.cloud.google.com)
-2. สร้าง Project ใหม่ (หรือใช้ project ที่มีอยู่)
-3. เปิดใช้ Gmail API
-4. สร้าง OAuth 2.0 Client ID (เลือกประเภท **Desktop App**)
-5. ดาวน์โหลด `credentials.json` วางที่ root ของโปรเจกต์
+2. สร้าง Project ใหม่หรือใช้ project เดิม
+3. เปิด Gmail API และ Google Calendar API
+4. สร้าง OAuth 2.0 Client ID แบบ Desktop App
+5. ดาวน์โหลด `credentials.json` มาไว้ที่ root ของโปรเจกต์
 
-> **สำคัญ:** ตรวจสอบว่า download credentials.json มาจาก project ที่ถูกต้อง — ชื่อ project ที่ตั้งไว้ใน Google Cloud Console จะแสดงบนหน้า consent screen ตอน authorize
+ถ้าใช้ webhook mode:
 
-### 4. ตั้งค่า Work Email / IMAP (สำหรับ work_email tool)
+- ตั้ง `WEBHOOK_HOST` ให้เป็น public HTTPS URL
+- user แต่ละคนส่ง `/authgmail` เพื่อ authorize Gmail/Calendar ของตัวเอง
 
-สำหรับอีเมลองค์กรที่เชื่อมต่อผ่าน IMAP (เช่น Zimbra, Exchange, hMailServer)
-
-```bash
-# ใส่ใน .env
-WORK_IMAP_HOST=mail.company.co.th
-WORK_IMAP_PORT=993
-WORK_IMAP_USER=yourname@company.co.th
-WORK_IMAP_PASSWORD=yourpassword
-WORK_EMAIL_MAX_RESULTS=30        # optional, default 30
-WORK_EMAIL_ATTACHMENT_MAX_MB=5   # optional, default 5
-```
-
-> **หมายเหตุ:** ถ้าไม่ตั้งค่า IMAP คำสั่ง `/wm` จะแจ้ง error แต่ tool อื่นยังทำงานได้ตามปกติ
-
-### 5. ตั้งค่า API อื่น ๆ (สำหรับ Tool เพิ่มเติม)
-
-ระบบมี Tools ที่ใช้ API อื่นๆ ให้พร้อมใช้งานทันที:
-- **Bank of Thailand API** (`/fx` อัตราแลกเปลี่ยน): สมัคร [BOT API](https://api.bot.or.th/home) เพื่อขอ `BOT_API_EXCHANGE_TOKEN` และ `BOT_API_HOLIDAY_TOKEN` ฟรี แล้วใส่ระบบ `.env`
-- **Google Maps/Places API** (`/traffic`, `/places`): เปิดใช้งาน Directions API, Routes API, Places API (New) และ Geocoding API ใน Google Cloud ดูรายชื่อ APIs เต็มๆ ได้ใน [TOOLS_GUIDE.md](TOOLS_GUIDE.md)
-
-### 6. รัน
+ถ้าใช้ polling mode บนเครื่อง local:
 
 ```bash
-# รันปกติ — ระบบจะ auto-detect Gmail auth
-# ถ้ายังไม่เคย authorize จะเปิด browser ให้อัตโนมัติ
-python main.py
-
-# หรือ authorize Gmail แยก แล้วค่อยรัน
-python main.py --auth-gmail
-python main.py
-```
-
-```bash
-# Mode A: Long Polling (เหมาะทดสอบ / เครื่องที่บ้าน)
-BOT_MODE=polling python main.py
-
-# Mode B: Webhook (เหมาะ VPS / production)
-BOT_MODE=webhook python main.py
-```
-
-### Startup Flow
-
-```
-python main.py
-  │
-  ├── [1/6] Init database (SQLite + WAL)
-  ├── [2/6] Init owner user
-  ├── [3/6] Gmail auth check
-  │         ├── มี token → OK
-  │         └── ไม่มี token → เปิด browser ให้ authorize อัตโนมัติ
-  ├── [4/6] Discover tools
-  ├── [5/6] Start scheduler
-  └── [6/6] Start bot (polling / webhook)
-```
-
-## การใช้งาน
-
-### คำสั่งพื้นฐาน
-
-| คำสั่ง | คำอธิบาย |
-|---|---|
-| `/email` | สรุปอีเมลที่ยังไม่ได้อ่าน (วันนี้) |
-| `/wm` | สรุปอีเมลองค์กรทาง IMAP (วันนี้) |
-| `/traffic สยาม ไป สีลม` | เช็คเส้นทาง + สภาพจราจร |
-| `/places ร้านกาแฟแถวนี้` | ค้นหาสถานที่ใกล้เคียง |
-| `/news` | สรุปข่าวเด่นล่าสุดจาก RSS |
-| `/fx` | ตรวจสอบอัตราแลกเปลี่ยนเงินตรา |
-| `/lotto` | ตรวจสลากกินแบ่งรัฐบาลล่าสุด |
-| `/model` | แสดง LLM ที่ใช้ได้ |
-| `/model claude` | เปลี่ยนไปใช้ Claude |
-| `/model gemini` | เปลี่ยนไปใช้ Gemini |
-| `/help` | แสดงคำสั่งทั้งหมด |
-| พิมพ์อิสระ | AI จะเลือก tool หรือตอบเอง |
-
-### Email Summary — ตัวเลือกขั้นสูง
-
-| คำสั่ง | คำอธิบาย |
-|---|---|
-| `/email` | สรุปอีเมลวันนี้ (default) |
-| `/email today` | เหมือน `/email` |
-| `/email 3d` | สรุปอีเมลย้อนหลัง 3 วัน |
-| `/email 7d` | สรุปอีเมลย้อนหลัง 7 วัน |
-| `/email 30d` | สรุปอีเมลย้อนหลัง 30 วัน |
-| `/email force` | สรุปใหม่ทั้งหมด (แม้เคยสรุปแล้ว) |
-| `/email บัตรเครดิต` | ค้นหาเฉพาะเรื่องบัตรเครดิต |
-| `/email from:ktc.co.th` | ค้นหาจากผู้ส่ง KTC |
-| `/email from:grab.com 7d` | อีเมลจาก Grab ย้อนหลัง 7 วัน |
-| `/email force บัตรเครดิต 7d` | รวมทุก option ได้ |
-
-### Work Email (IMAP) — อีเมลองค์กร
-
-| คำสั่ง | คำอธิบาย |
-|---|---|
-| `/wm` | สรุปอีเมลองค์กรวันนี้ (ยังไม่เคยสรุป) |
-| `/wm 7d` | สรุปอีเมลองค์กรย้อนหลัง 7 วัน |
-| `/wm force 7d` | บังคับสรุปซ้ำทั้งหมด (แม้เคยสรุปแล้ว) |
-| `/wm subject:ประชุม` | ค้นหาเมลที่มีคำว่า "ประชุม" ใน subject |
-| `/wm from:hr@company.com` | ค้นหาจากผู้ส่ง |
-| `/wm folder:Sent` | ดึงเมลจาก folder อื่น (ไม่ใช่ INBOX) |
-| `/wm ใบแจ้งหนี้ 30d` | ค้นหาเมลที่มีคำว่า "ใบแจ้งหนี้" ย้อนหลัง 30 วัน |
-
-**รูปแบบผลสรุป:**
-- 📋 ภาพรวม — สรุปสั้นๆ ว่ามีอีเมลอะไรบ้าง
-- 🔴 ต้องดำเนินการ — อีเมลที่ต้องทำอะไร (ตรวจสอบธุรกรรม, ตอบกลับ ฯลฯ)
-- จัดกลุ่มตามประเภท — 💰 การเงิน, 💼 งาน, 📊 ลงทุน, 🛒 โปรโมชั่น ฯลฯ
-- 🎯 สรุปท้าย — สิ่งที่ควรให้ความสำคัญก่อน
-
-### Traffic — โหมดการเดินทาง
-
-| โหมด | ตัวอย่าง |
-|---|---|
-| 🚗 รถยนต์ (default) | `/traffic สยาม ไป สีลม` |
-| 🚶 เดินเท้า | "จากสยาม เดินเท้า ไป MBK" |
-| 🚌 ขนส่งสาธารณะ | "นั่งรถไฟฟ้าจากอโศกไปสยามใช้เวลาเท่าไหร่" |
-| 🏍 มอเตอร์ไซค์ | "มอเตอร์ไซค์จากบ้านไปออฟฟิศ" |
-
-พิมพ์อิสระ LLM จะเลือกโหมดให้อัตโนมัติตามบริบท
-
-## Multi-user Management
-
-ระบบรองรับหลาย Telegram account โดยใช้ API keys ชุดเดียวกัน owner เป็นคนอนุมัติ user ใหม่ผ่าน Telegram:
-
-| คำสั่ง | คำอธิบาย |
-|---|---|
-| `/adduser <chat_id> [ชื่อ]` | เพิ่ม user ใหม่ (owner only) |
-| `/removeuser <chat_id>` | ปิดการใช้งาน user (owner only) |
-| `/listusers` | ดูรายชื่อ users ทั้งหมด (owner only) |
-
-**ขั้นตอน:**
-1. user ใหม่ใช้ [@userinfobot](https://t.me/userinfobot) เพื่อดู chat_id ของตัวเอง
-2. บอก chat_id ให้ owner
-3. owner ส่ง `/adduser <chat_id> ชื่อ` → user สามารถใช้งาน bot ได้ทันที
-
-## Gmail Per-User
-
-แต่ละ user สามารถ authorize Gmail ของตัวเองได้ (ไม่ต้องใช้ Gmail ของ owner)
-
-**Webhook mode** (แนะนำสำหรับ production):
-```
-ส่ง /authgmail ใน Telegram → รับ link → เปิด browser → authorize
-```
-
-**Polling mode** (เครื่อง local):
-```bash
-# authorize Gmail สำหรับ user ที่ระบุ
 python main.py --auth-gmail <chat_id>
-
-# ดูรายชื่อ users ที่มี Gmail token แล้ว
 python main.py --list-gmail
-
-# ลบ Gmail token ของ user
 python main.py --revoke-gmail <chat_id>
 ```
 
-> **หมายเหตุ:** ถ้า user ไม่มี Gmail token ของตัวเอง ระบบจะ fallback ไปใช้ Gmail ของ owner อัตโนมัติ
+หมายเหตุ:
+
+- ตอนนี้ไม่มีการ fallback ไปใช้ Gmail token ของ owner ข้าม user แล้ว
+- ถ้า user ยังไม่ authorize, tool ที่ใช้ Gmail/Calendar จะขอให้เชื่อมต่อใหม่ด้วย `/authgmail`
+
+### 4. ตั้งค่า Work Email / IMAP
+
+Work Email ใช้ credential แบบ per-user ผ่าน `/setkey`
+
+service ที่เกี่ยวข้อง:
+
+- `work_imap_host`
+- `work_imap_user`
+- `work_imap_password`
+
+ตัวอย่างใน Telegram:
+
+```text
+/setkey work_imap_host mail.company.co.th
+/setkey work_imap_user yourname@company.co.th
+/setkey work_imap_password yourpassword
+```
+
+ค่าที่ตั้งผ่าน `.env` ยังมีเฉพาะพวก setting กลาง เช่น:
+
+```bash
+WORK_IMAP_PORT=993
+WORK_EMAIL_MAX_RESULTS=30
+WORK_EMAIL_ATTACHMENT_MAX_MB=5
+```
+
+### 5. ตั้งค่า API อื่น ๆ
+
+service ที่รองรับผ่าน `.env` หรือ `/setkey` ขึ้นกับประเภท service:
+
+- `anthropic`
+- `gemini`
+- `matcha`
+- `google_maps`
+- `tavily`
+- `tmd`
+
+service ที่เป็น private-only ต่อ user:
+
+- `gmail`
+- `calendar`
+- `work_imap_host`
+- `work_imap_user`
+- `work_imap_password`
+
+ตัวอย่าง:
+
+```text
+/setkey tmd <key>
+/setkey tavily <key>
+/setkey matcha <key>
+```
+
+### 6. รันระบบ
+
+```bash
+python main.py
+
+BOT_MODE=polling python main.py
+BOT_MODE=webhook python main.py
+```
+
+## เริ่มใช้งานครั้งแรก
+
+### ผู้ใช้ใหม่
+
+1. เปิดแชตกับบอท
+2. ส่ง `/start`
+3. ตั้งค่าเพิ่มเติมถ้าต้องการ:
+   - `/setname ชื่อที่ต้องการ`
+   - `/setphone 08XXXXXXXX`
+   - `/setid <เลขบัตรประชาชน 13 หลัก>`
+   - `/authgmail`
+   - `/setkey tmd <key>`
+
+### คำสั่งระบบที่ใช้บ่อย
+
+| คำสั่ง | คำอธิบาย |
+| --- | --- |
+| `/start` | ลงทะเบียนและแสดง onboarding |
+| `/help` | แสดงคำสั่งทั้งหมด |
+| `/model` | ดูหรือเปลี่ยน LLM ที่ใช้ได้ของ user |
+| `/setname` | ตั้งชื่อที่แสดง |
+| `/setphone` | บันทึกเบอร์โทร |
+| `/setid` | บันทึกเลขบัตรประชาชน 13 หลัก |
+| `/authgmail` | เชื่อมต่อ Gmail และ Calendar |
+| `/setkey <service> <value>` | บันทึก API key ของตัวเอง |
+| `/mykeys` | ดูรายการ key ที่บันทึกไว้ |
+| `/removekey <service>` | ลบ key ที่บันทึกไว้ |
+| `/new` | เริ่มบทสนทนาใหม่ |
+| `/history` | ดูประวัติสนทนา |
+
+## ตัวอย่างการใช้งาน
+
+### อีเมล
+
+| คำสั่ง | คำอธิบาย |
+| --- | --- |
+| `/email` | สรุปอีเมล Gmail วันนี้ |
+| `/email 7d` | สรุปอีเมลย้อนหลัง 7 วัน |
+| `/email force` | สรุปใหม่ทั้งหมด |
+| `/wm` | สรุปอีเมลองค์กรผ่าน IMAP |
+| `/wm subject:ประชุม 7d` | ค้นหาเมลงานย้อนหลัง |
+| `/inbox` | วิเคราะห์อีเมลล่าสุด หา action items |
+| `/inbox mode auto` | เปิดโหมดสร้าง todo อัตโนมัติจากอีเมล |
+
+### งานและนัดหมาย
+
+| คำสั่ง | คำอธิบาย |
+| --- | --- |
+| `/todo ซื้อของ` | เพิ่ม todo |
+| `/todo add ทำสไลด์ !high due:2026-03-30 18:00` | เพิ่ม todo พร้อม priority/due date |
+| `/todo list` | ดู todo |
+| `/todo done 1` | ปิดงาน |
+| `/remind 2026-03-30 09:00 ประชุมทีม` | ตั้งเตือนครั้งเดียว |
+| `/remind list` | ดู reminder |
+| `/calendar list` | ดูนัดหมายใน Google Calendar |
+| `/calendar add 2026-03-30 09:00 10:00 ประชุมทีม` | เพิ่มนัดหมาย |
+
+### การเงินและเครื่องมือทั่วไป
+
+| คำสั่ง | คำอธิบาย |
+| --- | --- |
+| `/expense 120 อาหาร ก๋วยเตี๋ยว` | บันทึกรายจ่าย |
+| `/expense list` | ดูรายจ่ายล่าสุด |
+| `/expense summary month` | สรุปรายจ่ายเดือนนี้ |
+| ส่งรูปบิลหรือสลิป | ให้ระบบอ่านรูปและบันทึกรายจ่ายอัตโนมัติ |
+| `/pay 120 0812345678` | สร้าง PromptPay QR จากเบอร์มือถือ |
+| `/pay 500 1234567890121` | สร้าง PromptPay QR จากเลขบัตรประชาชน |
+| `/qr https://example.com` | สร้าง QR Code |
+| `/convert 10 km to mi` | แปลงหน่วย |
+| `/search ราคาน้ำมันวันนี้` | ค้นหาข้อมูลเว็บ |
+| `/fx` | ตรวจอัตราแลกเปลี่ยน |
+
+### สถานที่ ข่าว และข้อมูลอื่น
+
+| คำสั่ง | คำอธิบาย |
+| --- | --- |
+| `/places ร้านกาแฟแถวนี้` | ค้นหาสถานที่จริงบนแผนที่ |
+| `/traffic สยาม ไป สีลม` | เช็คเส้นทางและสภาพจราจร |
+| `/news` | สรุปข่าวล่าสุด |
+| `/lotto` | ตรวจหวยล่าสุด |
+
+## หมายเหตุเรื่องรูปและไฟล์
+
+tool บางตัวส่งผลลัพธ์เป็น media ได้ เช่น:
+
+- `/qr` ส่งรูป QR Code
+- `/pay` ส่งรูป PromptPay QR
+- Expense รับรูปบิล/slip ที่ส่งเข้ามาทาง Telegram
+
+tool ไม่ต้องรู้จัก Telegram โดยตรง ระบบจะส่งผลลัพธ์ข้อความ รูป หรือไฟล์ผ่าน interface กลางให้อัตโนมัติ
+
+## การจัดการหลายผู้ใช้
+
+รองรับทั้ง 2 แบบ:
+
+- self-registration ผ่าน `/start`
+- owner จัดการผ่าน `/adduser`, `/removeuser`, `/listusers`
+
+คำสั่ง owner:
+
+| คำสั่ง | คำอธิบาย |
+| --- | --- |
+| `/adduser <chat_id> [ชื่อ]` | เพิ่มผู้ใช้ |
+| `/removeuser <chat_id>` | ปิดการใช้งานผู้ใช้ |
+| `/listusers` | ดูรายการผู้ใช้ทั้งหมด |
 
 ## เพิ่ม Tool ใหม่
 
-สร้างไฟล์ใน `tools/` — registry จะ auto-discover:
+สร้างไฟล์ใน `tools/` แล้ว registry จะ auto-discover ให้ทันที
 
 ```python
-# tools/my_tool.py
-
 from tools.base import BaseTool
+
 
 class MyTool(BaseTool):
     name = "my_tool"
@@ -237,232 +287,78 @@ class MyTool(BaseTool):
     commands = ["/mytool"]
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
-        # ทำงานหลัก
         return "ผลลัพธ์"
 
     def get_tool_spec(self) -> dict:
         return {
-            "name": "my_tool",
-            "description": "อธิบายว่า tool นี้ทำอะไร",
+            "name": self.name,
+            "description": self.description,
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "args": {"type": "string"}
+                },
                 "required": [],
             },
         }
 ```
 
-แค่นี้ใช้ได้ทั้ง `/mytool` command และพิมพ์อิสระ
-
 ## โครงสร้างโปรเจกต์
 
-```
+```text
 openminicrew/
-├── core/              Shared modules
-│   ├── config.py      โหลด .env + validate
-│   ├── llm.py         LLM Router (thin wrapper)
-│   ├── providers/     LLM Provider Registry
-│   │   ├── base.py    BaseLLMProvider abstract class
-│   │   ├── claude_provider.py
-│   │   ├── gemini_provider.py
-│   │   └── registry.py   Auto-discover providers
-│   ├── db.py          SQLite + WAL mode
-│   ├── memory.py      Chat context
-│   ├── security.py    Token management + Gmail credentials
-│   ├── gmail_oauth.py Gmail OAuth flow (per-user, webhook mode)
-│   ├── user_manager.py  User auth + multi-user management
-│   └── logger.py      Logging
-├── tools/             Tool system
-│   ├── base.py        BaseTool abstract class
-│   ├── registry.py    Auto-discover tools
-│   ├── email_summary.py  Email summary (time range + search + force)
-│   ├── work_email.py     Work Email via IMAP (สรุป + ค้นหา + อ่านไฟล์แนบ)
-│   ├── traffic.py     Traffic + route (Google Maps, multi-mode)
-│   ├── places.py      Nearby place search (Google Places API)
-│   ├── news_summary.py   News summary (RSS + LLM)
-│   ├── lotto.py       Lotto result checker
-│   └── exchange_rate.py  Currency exchange rate via BOT API
-├── interfaces/        Telegram interface
-│   ├── telegram_polling.py   Long polling
-│   ├── telegram_webhook.py   Webhook + FastAPI + Gmail OAuth callback
-│   └── telegram_common.py    Shared logic
-├── dispatcher.py      Command routing + LLM dispatch
-├── scheduler.py       Cron jobs (APScheduler)
-├── main.py            Entry point (Gmail CLI management)
-├── credentials.json   OAuth client secret (จาก Google Cloud)
-├── credentials/       Gmail tokens per user (auto-generated)
-└── data/              SQLite database
+├── core/
+│   ├── config.py
+│   ├── llm.py
+│   ├── api_keys.py
+│   ├── db.py
+│   ├── memory.py
+│   ├── security.py
+│   ├── gmail_oauth.py
+│   ├── user_manager.py
+│   └── providers/
+│       ├── claude_provider.py
+│       ├── gemini_provider.py
+│       ├── matcha_provider.py
+│       └── registry.py
+├── tools/
+│   ├── registry.py
+│   ├── response.py
+│   ├── gmail_summary.py
+│   ├── work_email.py
+│   ├── smart_inbox.py
+│   ├── qrcode_gen.py
+│   ├── promptpay.py
+│   ├── unit_converter.py
+│   ├── web_search.py
+│   ├── reminder.py
+│   ├── todo.py
+│   ├── calendar_tool.py
+│   ├── expense.py
+│   ├── places.py
+│   ├── traffic.py
+│   ├── news_summary.py
+│   ├── lotto.py
+│   └── exchange_rate.py
+├── interfaces/
+├── dispatcher.py
+├── scheduler.py
+├── main.py
+└── requirements.txt
 ```
 
-## Production Deployment (Webhook Mode)
+## Webhook / Production
 
-Webhook mode เหมาะสำหรับ VPS / server ที่มี public IP + HTTPS ต่างจาก polling ที่บอท *ดึง* update เข้ามา webhook คือ Telegram จะ *ส่ง* update มาหาบอทโดยตรง — latency ต่ำกว่า และไม่มี connection loop ให้ดูแล
-
-### Endpoints ที่มีให้
-
-| Method | Path | คำอธิบาย |
-|--------|------|-----------|
-| `POST` | `WEBHOOK_PATH` | รับ update จาก Telegram |
-| `GET` | `/health` | ตรวจสถานะ bot, DB, LLM, scheduler |
-| `GET` | `/gmail-callback` | OAuth callback หลัง authorize Gmail |
-
----
-
-### 1. กำหนด Webhook Path ที่ปลอดภัย
-
-> [!IMPORTANT]
-> **อย่าใช้ path ทั่วไปเช่น `/webhook` หรือ `/bot`** เพราะถูก scan ได้ง่าย ควรใส่ random token ต่อท้าย path เพื่อให้ยากต่อการเดา
-
-สร้าง token แบบสุ่ม:
+Webhook mode เหมาะกับ VPS หรือ production ที่มี HTTPS
 
 ```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-# ตัวอย่าง: g7Kx2mNpQ4rJ8sLvW1cF5hBd6yAeUiZt3oR9TkXnMwY0
-
-python3 -c "import secrets; print(secrets.token_urlsafe(24))"
-# ตัวอย่าง: qW3eR5tY7uI9oP2aS4dF6gH8jK  (สำหรับ secret token)
-```
-
----
-
-### 2. ตั้งค่า .env
-
-```bash
-# Bot mode
 BOT_MODE=webhook
+WEBHOOK_HOST=https://your-domain.com
+WEBHOOK_PORT=8443
+TELEGRAM_WEBHOOK_SECRET=random-secret-string
 
-# Domain และ port ที่บอท FastAPI ฟังอยู่ (ไม่ใช่ port ของ nginx)
-WEBHOOK_HOST=https://centraldigital.cattelecom.com
-WEBHOOK_PORT=8100
-
-# Secure path — ใส่ token ที่สุ่มได้จากขั้นตอนบน
-WEBHOOK_PATH=/webhook/g7Kx2mNpQ4rJ8sLvW1cF5hBd6yAeUiZt3oR9TkXnMwY0
-
-# Secret token — Telegram จะส่ง header X-Telegram-Bot-Api-Secret-Token: <value> มาทุก request
-TELEGRAM_WEBHOOK_SECRET=qW3eR5tY7uI9oP2aS4dF6gH8jK
-```
-
-> **หมายเหตุ:** `WEBHOOK_HOST` คือ URL ที่ Telegram จะเรียก (https ของ nginx) — บอทเองรันที่ port 8100 บน localhost
-
----
-
-### 3. เพิ่ม nginx location
-
-เพิ่ม location block ต่อไปนี้ใน `/etc/nginx/sites-enabled/default` ภายใน server block `listen 443 ssl`:
-
-```nginx
-# OpenMiniCrew Telegram Bot Webhook
-location /webhook/ {
-    proxy_pass http://127.0.0.1:8100;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-
-    # Forward Telegram secret token header
-    proxy_set_header X-Telegram-Bot-Api-Secret-Token $http_x_telegram_bot_api_secret_token;
-
-    proxy_read_timeout 30s;
-    proxy_connect_timeout 5s;
-}
-
-# Gmail OAuth callback
-location /gmail-callback {
-    proxy_pass http://127.0.0.1:8100;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-
-# Health check (ปิดไว้ถ้าไม่ต้องการให้เข้าถึงจากภายนอก)
-location /health {
-    proxy_pass http://127.0.0.1:8100;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    # allow 127.0.0.1;  # uncomment เพื่อจำกัดให้เข้าถึงได้เฉพาะ localhost
-    # deny all;
-}
-```
-
-Reload nginx:
-```bash
-sudo nginx -t && sudo systemctl reload nginx
-```
-
----
-
-### 4. รัน Bot
-
-```bash
-# ทดสอบก่อน
 python main.py
-
-# ดู log ว่า webhook set สำเร็จ
-# [INFO] scheduler: [Catchup] morning_briefing ...
-# [INFO] webhook set: https://centraldigital.cattelecom.com/webhook/g7Kx2...
-# [INFO] Starting Telegram bot in WEBHOOK mode on port 8100...
+curl https://your-domain.com/health
 ```
 
-ตรวจสอบ webhook:
-```bash
-# Health check
-curl https://centraldigital.cattelecom.com/health
-
-# ดูสถานะ webhook จาก Telegram โดยตรง
-curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"
-```
-
----
-
-### 5. รันเป็น systemd Service (แนะนำ)
-
-```bash
-sudo nano /etc/systemd/system/openminicrew.service
-```
-
-```ini
-[Unit]
-Description=OpenMiniCrew Telegram Bot
-After=network.target
-
-[Service]
-Type=simple
-User=seal
-WorkingDirectory=/home/seal/openminicrew
-ExecStart=/usr/bin/python3 main.py
-Restart=on-failure
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable openminicrew
-sudo systemctl start openminicrew
-
-# ดู log
-sudo journalctl -u openminicrew -f
-```
-
----
-
-### ความแตกต่าง Polling vs Webhook
-
-| | Polling | Webhook |
-|-|---------|---------|
-| เหมาะกับ | localhost / dev | VPS / production |
-| ต้องการ public HTTPS | ❌ | ✅ |
-| Latency | ~1-2 วินาที | ทันที |
-| Gmail OAuth callback | ใช้ CLI `--auth-gmail` | ใช้ `/authgmail` ใน Telegram |
-| ดูแลง่าย | ✅ | ต้องตั้ง nginx |
-
-**Webhook mode เพิ่มเติม:**
-- Gmail OAuth callback: `GET /gmail-callback` — รองรับ per-user Gmail authorization ผ่าน `/authgmail`
-- Health check: `GET /health` — แสดงสถานะ bot, DB, LLM, scheduler
+รายละเอียดเชิงลึกของ webhook, nginx, และ deployment ดูใน docs ที่เกี่ยวข้องได้ภายหลัง

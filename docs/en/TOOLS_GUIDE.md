@@ -917,7 +917,7 @@ class ResearchSummaryTool(BaseTool):
 
 **Tools using `preferred_tier = "mid"` currently:**
 
-- `email_summary` — Gmail summarization needs deep comprehension
+- `gmail_summary` — Gmail summarization needs deep comprehension
 - `work_email` — IMAP + attachment summarization needs deep comprehension
 
 ---
@@ -1078,10 +1078,10 @@ class MyTool(BaseTool):
 
 | Value | Use when | Examples |
 | --- | --- | --- |
-| `True` (default) | tool formats output nicely, or tool summarizes with LLM internally | traffic, places, lotto, email_summary, news_summary |
+| `True` (default) | tool formats output nicely, or tool summarizes with LLM internally | traffic, places, lotto, gmail_summary, news_summary |
 | `False` | you want the dispatcher to pass raw data to LLM for summarization | (no current tools use this — but the framework supports it) |
 
-> **Note:** Tools that call LLM internally (e.g. email_summary, news_summary)
+> **Note:** Tools that call LLM internally (e.g. gmail_summary, news_summary)
 > use `direct_output = True` because their output is already summarized — no need for the dispatcher to re-summarize.
 
 ### 7. `preferred_tier` — Choosing LLM Quality Level
@@ -1095,7 +1095,7 @@ class MyTool(BaseTool):
 | Tier | Models | Use when | Tools using it |
 | --- | --- | --- | --- |
 | `"cheap"` (default) | Haiku / Gemini Flash | General summarization, simple tasks | news_summary |
-| `"mid"` | Sonnet / Gemini Pro | Tasks requiring deep comprehension | email_summary, work_email |
+| `"mid"` | Sonnet / Gemini Pro | Tasks requiring deep comprehension | gmail_summary, work_email |
 
 Use in `execute()` via `self.preferred_tier`:
 
@@ -1141,7 +1141,7 @@ resp = await llm_router.chat(
 
 | Tool | Commands | API/Source | preferred_tier | Required API Keys |
 | --- | --- | --- | --- | --- |
-| **email_summary** — Gmail summary | `/email` | Gmail API (OAuth2) + LLM | mid | `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` |
+| **gmail_summary** — Gmail summary | `/email` | Gmail API (OAuth2) + LLM | mid | `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` |
 | **work_email** — Work email (IMAP) | `/wm`, `/workmail` | IMAP + LLM | mid | `WORK_IMAP_HOST`, `WORK_IMAP_PORT`, `WORK_IMAP_USER`, `WORK_IMAP_PASSWORD` |
 | **traffic** — Routes/traffic | `/traffic`, `/route` | Google Maps Directions + Routes API | cheap | `GOOGLE_MAPS_API_KEY` |
 | **places** — Place search | `/places`, `/nearby`, `/search` | Google Places API (New) | cheap | `GOOGLE_MAPS_API_KEY` |
@@ -1149,7 +1149,7 @@ resp = await llm_router.chat(
 | **news_summary** — News summary | `/news` | Google News RSS + LLM | cheap | None (RSS is free) |
 | **lotto** — Thai lottery results | `/lotto` | lotto.api.rayriffy.com | cheap | None (API is free) |
 
-> **Note:** All tools use `direct_output = True` (default) — tools that use LLM (email_summary, work_email, news_summary) handle summarization internally.
+> **Note:** All tools use `direct_output = True` (default) — tools that use LLM (gmail_summary, work_email, news_summary) handle summarization internally.
 
 ---
 
@@ -1171,7 +1171,7 @@ resp = await llm_router.chat(
 
 1. **Description matters a lot** — LLM uses the description to decide which tool to call when users type free text. If the description is unclear, LLM will pick the wrong tool.
 
-2. **Use LLM as a formatter** — Let your tool fetch raw data, then pass it to LLM for natural language summarization. The results will be much better than manual formatting (see email_summary, news_summary for this pattern).
+2. **Use LLM as a formatter** — Let your tool fetch raw data, then pass it to LLM for natural language summarization. The results will be much better than manual formatting (see gmail_summary, news_summary for this pattern).
 
 3. **Multiple commands are supported** — `commands = ["/weather", "/w"]` lets users type shorter commands.
 

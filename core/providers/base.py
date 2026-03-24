@@ -24,9 +24,13 @@ class BaseLLMProvider(ABC):
         tier: str = "cheap",
         system: str = "",
         tools: list[dict] | None = None,
+        user_id: str = None,
     ) -> dict:
         """
         Send messages to LLM and return response.
+
+        Args:
+            user_id: สำหรับ resolve per-user API key (optional)
 
         Returns:
             {
@@ -37,6 +41,10 @@ class BaseLLMProvider(ABC):
             }
         """
         ...
+
+    def is_available_for_user(self, user_id: str) -> bool:
+        """ตรวจว่า user นี้ใช้ provider นี้ได้ไหม (override ได้สำหรับ per-user key)"""
+        return self.is_configured()
 
     @abstractmethod
     def convert_tool_spec(self, spec: dict) -> Any:

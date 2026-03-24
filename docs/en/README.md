@@ -2,255 +2,360 @@
 
 > 🇹🇭 [อ่านเป็นภาษาไทย](../../README.md)
 
-A personal AI assistant you control through Telegram. Supports Claude + Gemini, with a plug-and-play tool system.
+OpenMiniCrew is a Telegram-first personal AI assistant framework for everyday automation.
+It supports Claude, Gemini, and Matcha, with a plug-and-play tool system and per-user credentials.
 
 ## Features
 
-- Control via Telegram — both `/commands` and free-text messages
-- Choose your LLM (Claude / Gemini / easily add more) switchable anytime
-- Add new tools by creating a single file — no core changes needed
-- Add new LLM providers by creating a file in `core/providers/` (Provider Registry)
-- Telegram Bot supports both long polling and webhook modes
-- Chat memory — maintains conversation context
-- Automated morning email briefing via cron
-- Smart email summaries — grouped by category, prioritized by importance, searchable
-- Multi-tenant ready — built to scale to multiple users without refactoring
-- Production ready — retry, error handling, rate limiting, health checks
+- Telegram-first UX: direct `/commands` and free-text requests
+- Multi-provider LLM routing: Claude, Gemini, Matcha
+- Per-user API key management via `/setkey`, plus shared env keys where allowed
+- Self-registration and onboarding via `/start`
+- Per-user Gmail and Google Calendar authorization
+- Media-capable tool responses such as QR images and PromptPay QR
+- Photo-to-expense capture from receipts or slips
+- Plug-and-play tool architecture: add one file in `tools/`
+- Long polling and webhook modes
+- Memory, scheduler, retries, rate limiting, health checks, and tool usage logging
+
+## Current Tool Surface
+
+Implemented tools are grouped broadly as:
+
+- Email: Gmail summary, Work Email (IMAP), Smart Inbox
+- Media: QR Code Generator, PromptPay QR
+- Utilities: Unit Converter, Web Search
+- Tasks: Todo, Reminder, Google Calendar, Schedule
+- Finance: Expense Tracker, Exchange Rate
+- Travel and info: Places, Traffic, News, Lotto
+
+Use `/help` in Telegram for the live command list.
 
 ## Installation
 
 ```bash
-# 1. Clone the project
 cd openminicrew
-
-# 2. Install dependencies
 pip install -r requirements.txt
-
-# 3. Copy environment file
 cp .env.example .env
-# Edit .env following the steps below
 ```
 
 ## Configuration
 
-### 1. Create a Telegram Bot
+### 1. Telegram Bot
 
-1. Talk to [@BotFather](https://t.me/BotFather) on Telegram
-2. Send `/newbot` and set a name
-3. Get the Bot Token → put it in `TELEGRAM_BOT_TOKEN`
-4. Talk to [@userinfobot](https://t.me/userinfobot) to get your Chat ID
-5. Put your Chat ID in `OWNER_TELEGRAM_CHAT_ID`
+1. Create a bot with [@BotFather](https://t.me/BotFather)
+2. Put the token in `TELEGRAM_BOT_TOKEN`
+3. Get the owner chat ID from [@userinfobot](https://t.me/userinfobot)
+4. Put it in `OWNER_TELEGRAM_CHAT_ID`
 
-### 2. Set Up LLM
+### 2. LLM Providers
 
-**Claude:**
-1. Get an API key at [console.anthropic.com](https://console.anthropic.com)
-2. Put it in `ANTHROPIC_API_KEY`
+Supported providers:
 
-**Gemini:**
-1. Get an API key at [aistudio.google.com](https://aistudio.google.com)
-2. Put it in `GEMINI_API_KEY`
+- Claude → `ANTHROPIC_API_KEY`
+- Gemini → `GEMINI_API_KEY`
+- Matcha → `MATCHA_API_KEY`
 
-> **Note:** Set `DEFAULT_LLM` in `.env` to `claude` or `gemini` depending on which API key you have.
-
-### 3. Set Up Gmail (for email summary tool)
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com)
-2. Create a new Project (or use an existing one)
-3. Enable the Gmail API
-4. Create an OAuth 2.0 Client ID (select **Desktop App** type)
-5. Download `credentials.json` and place it at the project root
-
-> **Important:** Make sure you download `credentials.json` from the correct project — the project name set in Google Cloud Console will be displayed on the consent screen during authorization.
-
-### 4. Set Up Work Email / IMAP (for work_email tool)
-
-For corporate emails connected via IMAP (e.g. Zimbra, Exchange, hMailServer)
+Example `.env` values:
 
 ```bash
-# Add to .env
-WORK_IMAP_HOST=mail.company.co.th
+DEFAULT_LLM=claude
+
+ANTHROPIC_API_KEY=
+GEMINI_API_KEY=
+
+MATCHA_API_KEY=
+MATCHA_BASE_URL=
+MATCHA_MODEL_CHEAP=
+MATCHA_MODEL_MID=
+```
+
+Notes:
+
+- Users can also bring their own key with `/setkey` for supported services such as `anthropic`, `gemini`, `matcha`, `tavily`, and `tmd`
+- Use `/model` to see which providers are actually available for the current user
+
+### 3. Gmail and Google Calendar
+
+Gmail and Calendar use the same per-user Google OAuth flow.
+
+1. Create a Google Cloud project
+2. Enable Gmail API and Google Calendar API
+3. Create a Desktop App OAuth client
+4. Place `credentials.json` at the project root
+
+Webhook mode:
+
+- Set `WEBHOOK_HOST` to a public HTTPS URL
+- Each user runs `/authgmail` in Telegram to authorize their own Gmail and Calendar
+
+Polling mode:
+
+```bash
+python main.py --auth-gmail <chat_id>
+python main.py --list-gmail
+python main.py --revoke-gmail <chat_id>
+```
+
+Important:
+
+- There is no cross-user fallback to the owner's Gmail token anymore
+- If a user is not authorized yet, Gmail and Calendar tools will ask them to connect with `/authgmail`
+
+### 4. Work Email / IMAP
+
+Work Email credentials are per-user and are set through `/setkey`.
+
+Required services:
+
+- `work_imap_host`
+- `work_imap_user`
+- `work_imap_password`
+
+Example:
+
+```text
+/setkey work_imap_host mail.company.co.th
+/setkey work_imap_user yourname@company.co.th
+/setkey work_imap_password yourpassword
+```
+
+Shared env settings still apply for common runtime configuration:
+
+```bash
 WORK_IMAP_PORT=993
-WORK_IMAP_USER=yourname@company.co.th
-WORK_IMAP_PASSWORD=yourpassword
-WORK_EMAIL_MAX_RESULTS=30        # optional, default 30
-WORK_EMAIL_ATTACHMENT_MAX_MB=5   # optional, default 5
+WORK_EMAIL_MAX_RESULTS=30
+WORK_EMAIL_ATTACHMENT_MAX_MB=5
 ```
 
-> **Note:** If IMAP is not configured, the `/wm` command will return an error but other tools will work normally.
+### 5. Other APIs
 
-### 5. Set Up Other APIs (for Additional Tools)
+Supported service names include:
 
-The system includes tools that utilize other APIs ready out-of-the-box:
-- **Bank of Thailand API** (`/fx` exchange rates): Sign up at [BOT API](https://api.bot.or.th/home) to request `BOT_API_EXCHANGE_TOKEN` and `BOT_API_HOLIDAY_TOKEN` for free, then add them to `.env`.
-- **Google Maps/Places API** (`/traffic`, `/places`): Enable Directions API, Routes API, Places API (New), and Geocoding API in Google Cloud Console. See the full list of APIs in [TOOLS_GUIDE.md](TOOLS_GUIDE.md).
+- `anthropic`
+- `gemini`
+- `matcha`
+- `google_maps`
+- `tavily`
+- `tmd`
 
-### 6. Run
+Private-only per-user services include:
 
-```bash
-# Normal run — auto-detects Gmail auth
-# If not yet authorized, will open browser automatically
-python main.py
+- `gmail`
+- `calendar`
+- `work_imap_host`
+- `work_imap_user`
+- `work_imap_password`
 
-# Or authorize Gmail separately
-python main.py --auth-gmail
-python main.py
+Example:
+
+```text
+/setkey tmd <key>
+/setkey tavily <key>
+/setkey matcha <key>
 ```
 
+## Running the Bot
+
 ```bash
-# Mode A: Long Polling (for development / home machine)
+python main.py
+
 BOT_MODE=polling python main.py
-
-# Mode B: Webhook (for VPS / production)
 BOT_MODE=webhook python main.py
 ```
 
-### Startup Flow
+## First-Time Usage
 
-```
-python main.py
-  │
-  ├── [1/6] Init database (SQLite + WAL)
-  ├── [2/6] Init owner user
-  ├── [3/6] Gmail auth check
-  │         ├── Token exists → OK
-  │         └── No token → Opens browser for authorization
-  ├── [4/6] Discover tools
-  ├── [5/6] Start scheduler
-  └── [6/6] Start bot (polling / webhook)
-```
+### New User Flow
 
-## Usage
+1. Open the bot chat
+2. Send `/start`
+3. Optionally continue with:
+   - `/setname <name>`
+   - `/setphone <phone>`
+   - `/setid <13-digit-thai-id>`
+   - `/authgmail`
+   - `/setkey tmd <key>`
 
-### Basic Commands
+### Common System Commands
 
 | Command | Description |
-|---|---|
-| `/email` | Summarize unread emails (today) |
-| `/wm` | Summarize corporate emails via IMAP (today) |
-| `/traffic สยาม ไป สีลม` | Check route + traffic conditions |
-| `/places ร้านกาแฟแถวนี้` | Search for nearby places |
-| `/news` | Summarize latest top news from RSS |
-| `/fx` | Check current currency exchange rates |
-| `/lotto` | Check latest government lottery results |
+| --- | --- |
+| `/start` | Register and show onboarding |
+| `/help` | Show the command list |
+| `/model` | View or switch the active LLM |
+| `/setname` | Update display name |
+| `/setphone` | Save phone number |
+| `/setid` | Save a Thai national ID |
+| `/authgmail` | Connect Gmail and Calendar |
+| `/setkey <service> <value>` | Save a personal API key |
+| `/mykeys` | List saved keys |
+| `/removekey <service>` | Remove a saved key |
+| `/new` | Start a new conversation |
+| `/history` | Show recent conversations |
 
-### Email Summary — Advanced Options
+## Usage Examples
+
+### Email
 
 | Command | Description |
-|---|---|
-| `/email` | Summarize today's emails (default) |
-| `/email today` | Same as `/email` |
-| `/email 3d` | Summarize emails from last 3 days |
-| `/email 7d` | Summarize emails from last 7 days |
-| `/email 30d` | Summarize emails from last 30 days |
-| `/email force` | Re-summarize all (even previously processed) |
-| `/email credit card` | Search for specific topic |
-| `/email from:ktc.co.th` | Search by sender |
-| `/email from:grab.com 7d` | Emails from Grab, last 7 days |
-| `/email force credit card 7d` | Combine all options |
+| --- | --- |
+| `/email` | Summarize Gmail for today |
+| `/email 7d` | Summarize the last 7 days |
+| `/email force` | Re-run a full summary |
+| `/wm` | Summarize work email through IMAP |
+| `/wm subject:meeting 7d` | Search work email |
+| `/inbox` | Extract action items from recent email |
+| `/inbox mode auto` | Auto-create todos from inbox findings |
 
-**Summary Format:**
-- 📋 Overview — Quick summary of all emails
-- 🔴 Action Required — Emails that need your attention (verify transactions, reply, etc.)
-- Grouped by Category — 💰 Finance, 💼 Work, 📊 Investment, 🛒 Promotions, etc.
-- 🎯 Priority Summary — What to focus on first
+### Tasks and Calendar
+
+| Command | Description |
+| --- | --- |
+| `/todo buy groceries` | Add a todo |
+| `/todo add finish slides !high due:2026-03-30 18:00` | Add a todo with priority and due date |
+| `/todo list` | List todos |
+| `/todo done 1` | Mark a todo as done |
+| `/remind 2026-03-30 09:00 team meeting` | Create a one-time reminder |
+| `/remind list` | List reminders |
+| `/calendar list` | List upcoming calendar events |
+| `/calendar add 2026-03-30 09:00 10:00 Team Meeting` | Create a calendar event |
+
+### Finance and Utilities
+
+| Command | Description |
+| --- | --- |
+| `/expense 120 food lunch` | Save an expense |
+| `/expense list` | Show recent expenses |
+| `/expense summary month` | Summarize monthly expenses |
+| Send a receipt or slip photo | Auto-extract and save an expense |
+| `/pay 120 0812345678` | Create a PromptPay QR from a Thai mobile number |
+| `/pay 500 1234567890121` | Create a PromptPay QR from a Thai national ID |
+| `/qr https://example.com` | Generate a QR code |
+| `/convert 10 km to mi` | Convert units |
+| `/search fuel price today` | Run a web search |
+| `/fx` | Check exchange rates |
+
+### Places, Traffic, and Info
+
+| Command | Description |
+| --- | --- |
+| `/places coffee near me` | Search real places on the map |
+| `/traffic Siam to Silom` | Check route and traffic |
+| `/news` | Summarize recent news |
+| `/lotto` | Check the latest Thai lottery result |
+
+## Media and Photo Workflows
+
+Some tools return media instead of plain text:
+
+- `/qr` returns a QR image
+- `/pay` returns a PromptPay QR image
+- Expense capture accepts receipt or slip photos sent through Telegram
+
+Tools remain platform-agnostic; Telegram-specific sending is handled by the interface layer.
+
+## Multi-User Management
+
+Two user flows are supported:
+
+- Self-registration via `/start`
+- Owner-managed access via `/adduser`, `/removeuser`, and `/listusers`
+
+Owner commands:
+
+| Command | Description |
+| --- | --- |
+| `/adduser <chat_id> [name]` | Add a user |
+| `/removeuser <chat_id>` | Deactivate a user |
+| `/listusers` | List all users |
 
 ## Adding New Tools
 
-Create a file in `tools/` — the registry will auto-discover it:
+Create one file in `tools/` and the registry will auto-discover it.
 
 ```python
-# tools/my_tool.py
-
 from tools.base import BaseTool
+
 
 class MyTool(BaseTool):
     name = "my_tool"
     description = "Describe what this tool does"
     commands = ["/mytool"]
 
-    async def execute(self, user_id: str, args: str = "") -> str:
-        # Main logic
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         return "Result"
 
     def get_tool_spec(self) -> dict:
         return {
-            "name": "my_tool",
-            "description": "Describe what this tool does",
+            "name": self.name,
+            "description": self.description,
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "args": {"type": "string"}
+                },
                 "required": [],
             },
         }
 ```
 
-That's it — works with both `/mytool` command and free-text messages.
-
-> 📖 See [TOOLS_GUIDE.md](TOOLS_GUIDE.md) for detailed examples including Weather, Google Maps Traffic, and News Summary tools.
-
 ## Project Structure
 
-```
+```text
 openminicrew/
-├── core/              Shared modules
-│   ├── config.py      Load .env + validation
-│   ├── llm.py         LLM Router (thin wrapper)
-│   ├── providers/     LLM Provider Registry
-│   │   ├── base.py    BaseLLMProvider abstract class
-│   │   ├── claude_provider.py
-│   │   ├── gemini_provider.py
-│   │   └── registry.py   Auto-discover providers
-│   ├── db.py          SQLite + WAL mode
-│   ├── memory.py      Chat context
-│   ├── security.py    Token management + Gmail OAuth
-│   ├── user_manager.py  User auth
-│   └── logger.py      Logging
-├── tools/             Tool system
-│   ├── base.py        BaseTool abstract class
-│   ├── registry.py    Auto-discover
-│   ├── email_summary.py  Email summary (time range + search + force)
-│   ├── work_email.py     Work Email via IMAP (Summarize + Search + Read Attachments)
-│   ├── traffic.py     Traffic + route (Google Maps, multi-mode)
-│   ├── places.py      Nearby place search (Google Places API)
-│   ├── news_summary.py   News summary (RSS + LLM)
-│   ├── lotto.py       Lotto result checker
-│   └── exchange_rate.py  Currency exchange rate via BOT API
-├── interfaces/        Telegram interface
-│   ├── telegram_polling.py   Long polling
-│   ├── telegram_webhook.py   Webhook + FastAPI
-│   └── telegram_common.py    Shared logic
-├── dispatcher.py      Command routing + LLM dispatch
-├── scheduler.py       Cron jobs (APScheduler)
-├── main.py            Entry point (auto Gmail auth)
-├── credentials.json   OAuth client secret (from Google Cloud)
-├── credentials/       Gmail tokens per user (auto-generated)
-└── data/              SQLite database
+├── core/
+│   ├── config.py
+│   ├── llm.py
+│   ├── api_keys.py
+│   ├── db.py
+│   ├── memory.py
+│   ├── security.py
+│   ├── gmail_oauth.py
+│   ├── user_manager.py
+│   └── providers/
+│       ├── claude_provider.py
+│       ├── gemini_provider.py
+│       ├── matcha_provider.py
+│       └── registry.py
+├── tools/
+│   ├── registry.py
+│   ├── response.py
+│   ├── gmail_summary.py
+│   ├── work_email.py
+│   ├── smart_inbox.py
+│   ├── qrcode_gen.py
+│   ├── promptpay.py
+│   ├── unit_converter.py
+│   ├── web_search.py
+│   ├── reminder.py
+│   ├── todo.py
+│   ├── calendar_tool.py
+│   ├── expense.py
+│   ├── places.py
+│   ├── traffic.py
+│   ├── news_summary.py
+│   ├── lotto.py
+│   └── exchange_rate.py
+├── interfaces/
+├── dispatcher.py
+├── scheduler.py
+├── main.py
+└── requirements.txt
 ```
 
-## Production Deployment (Webhook Mode)
+## Webhook / Production
+
+Webhook mode is intended for HTTPS-enabled production deployments.
 
 ```bash
-# Requires domain + HTTPS
-# Configure in .env:
 BOT_MODE=webhook
 WEBHOOK_HOST=https://your-domain.com
 WEBHOOK_PORT=8443
 TELEGRAM_WEBHOOK_SECRET=random-secret-string
 
-# Run
 python main.py
-
-# Health check
 curl https://your-domain.com/health
 ```
 
-## Future: Multi-user Expansion
-
-The architecture is already prepared. What needs to be added:
-1. `/start` command for new users
-2. `/approve` command for owner
-3. OAuth callback endpoint for per-user Gmail
-4. Admin commands (`/users`, `/usage`, `/disable`)
-
-What doesn't need to change: tools, dispatcher, LLM router, memory, DB schema, scheduler
+For deeper nginx and deployment details, use the dedicated docs later.

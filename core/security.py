@@ -10,7 +10,10 @@ from core.logger import get_logger
 
 log = get_logger(__name__)
 
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.events",
+]
 
 
 def get_gmail_token_path(user_id: str) -> Path:
@@ -22,17 +25,12 @@ def get_gmail_credentials(user_id: str) -> Credentials | None:
     ดึง Gmail credentials สำหรับ user
     - ถ้า token มีอยู่ + valid → ใช้เลย
     - ถ้า token expired → auto-refresh
-    - ถ้าไม่มี token → fallback ใช้ token ของ owner (ถ้ามี)
+    - ถ้าไม่มี token → return None (ห้าม fallback ข้าม user)
     """
-    from core.config import OWNER_TELEGRAM_CHAT_ID
-
     token_path = get_gmail_token_path(user_id)
 
     if not token_path.exists():
-        if user_id != OWNER_TELEGRAM_CHAT_ID:
-            log.debug(f"No Gmail token for user {user_id}, falling back to owner token")
-            return get_gmail_credentials(OWNER_TELEGRAM_CHAT_ID)
-        log.warning(f"No Gmail token for owner {user_id} — run authorize_gmail_interactive()")
+        log.warning(f"No Gmail token for user {user_id} — run authorize_gmail_interactive()")
         return None
 
     try:

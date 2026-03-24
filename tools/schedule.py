@@ -130,7 +130,7 @@ def _resolve_tool_name(query: str) -> str | None:
     if registry.get_tool(query_lower):
         return query_lower
 
-    # 2. Match on command (e.g. "/email" → email_summary)
+    # 2. Match on command (e.g. "/gmail" → gmail_summary)
     for tool in registry.get_all():
         if tool.name == "schedule":
             continue
@@ -171,7 +171,7 @@ async def _resolve_tool_via_llm(query: str) -> str | None:
                     f"ผู้ใช้ต้องการ schedule tool ที่เกี่ยวกับ: '{query}'\n"
                     f"เลือก tool ที่เหมาะสมจากรายการนี้:\n"
                     + "\n".join(f"- {t}" for t in tools_list) + "\n\n"
-                    "ตอบแค่ชื่อ tool เดียวเท่านั้น (เช่น email_summary) "
+                    "ตอบแค่ชื่อ tool เดียวเท่านั้น (เช่น gmail_summary) "
                     "ถ้าไม่มี tool ที่ตรงให้ตอบ NONE"
                 ),
             }],
@@ -237,11 +237,11 @@ class ScheduleTool(BaseTool):
         if sub == "add":
             return await self._parse_add(user_id, tokens[1:])
 
-        # Shorthand: /schedule 07:00 email_summary
+        # Shorthand: /schedule 07:00 gmail_summary
         if _TIME_RE.match(sub):
             return await self._parse_add(user_id, tokens)
 
-        # Shorthand: /schedule daily 07:00 email_summary
+        # Shorthand: /schedule daily 07:00 gmail_summary
         if sub in ("daily", "weekday", "weekly", "monthly", "once"):
             return await self._parse_add(user_id, tokens)
 
@@ -416,7 +416,7 @@ class ScheduleTool(BaseTool):
             header = "📋 Schedule ของคุณ"
 
         if not schedules:
-            return f"{header}: (ว่าง)\n\nเพิ่ม: /schedule add 07:00 email_summary"
+            return f"{header}: (ว่าง)\n\nเพิ่ม: /schedule add 07:00 gmail_summary"
 
         lines = [f"{header} ({len(schedules)} รายการ):\n"]
         for s in schedules:
@@ -499,7 +499,7 @@ class ScheduleTool(BaseTool):
                         "type": "string",
                         "description": (
                             "ชื่อ tool ที่จะ schedule (ใช้ชื่อภาษาอังกฤษ): "
-                            "email_summary (เช็คอีเมล/สรุปอีเมล), "
+                            "gmail_summary (เช็คอีเมล Gmail/สรุปอีเมล), "
                             "work_email (อีเมลงาน), "
                             "news_summary (ข่าว/สรุปข่าว), "
                             "exchange_rate (อัตราแลกเปลี่ยน/ค่าเงิน), "

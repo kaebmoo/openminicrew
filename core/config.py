@@ -37,6 +37,7 @@ OWNER_DISPLAY_NAME = _optional("OWNER_DISPLAY_NAME", "Owner")
 
 # === LLM ===
 DEFAULT_LLM = _optional("DEFAULT_LLM", "claude")
+FALLBACK_LLM = _optional("FALLBACK_LLM", "gemini")  # fallback เมื่อ provider หลัก auth fail
 ANTHROPIC_API_KEY = _optional("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY = _optional("GEMINI_API_KEY", "")
 
@@ -55,6 +56,17 @@ GMAIL_MAX_RESULTS = int(_optional("GMAIL_MAX_RESULTS", "30"))
 # === External APIs ===
 GOOGLE_MAPS_API_KEY = _optional("GOOGLE_MAPS_API_KEY", "")
 FOURSQUARE_API_KEY = _optional("FOURSQUARE_API_KEY", "")
+TMD_API_KEY = _optional("TMD_API_KEY", "")
+TAVILY_API_KEY = _optional("TAVILY_API_KEY", "")
+# Matcha: รองรับทั้งชื่อเก่า (MATCHA_AI_API_KEY, MATCHA_API_URL)
+# และชื่อใหม่ (MATCHA_API_KEY, MATCHA_BASE_URL)
+MATCHA_API_KEY = _optional("MATCHA_API_KEY", "") or _optional("MATCHA_AI_API_KEY", "")
+MATCHA_BASE_URL = _optional("MATCHA_BASE_URL", "") or _optional("MATCHA_API_URL", "")
+MATCHA_MODEL_CHEAP = _optional("MATCHA_MODEL_CHEAP", "")
+MATCHA_MODEL_MID = _optional("MATCHA_MODEL_MID", "")
+MATCHA_SSL_VERIFY = _optional("MATCHA_SSL_VERIFY", "true").lower() in ("true", "1", "yes")
+MATCHA_TIMEOUT = int(_optional("MATCHA_TIMEOUT", "60"))
+ENCRYPTION_KEY = _optional("ENCRYPTION_KEY", "")
 
 # === Memory ===
 MAX_CONTEXT_MESSAGES = int(_optional("MAX_CONTEXT_MESSAGES", "10"))
@@ -66,7 +78,7 @@ LOCATION_TTL_MINUTES = int(_optional("LOCATION_TTL_MINUTES", "60"))  # 0 = ไ�
 # === Schedule ===
 TIMEZONE = _optional("TIMEZONE", "Asia/Bangkok")
 MORNING_BRIEFING_TIME = _optional("MORNING_BRIEFING_TIME", "07:00")
-MORNING_BRIEFING_TOOL = _optional("MORNING_BRIEFING_TOOL", "email_summary")
+MORNING_BRIEFING_TOOL = _optional("MORNING_BRIEFING_TOOL", "gmail_summary")
 
 # === Timeouts ===
 DISPATCH_TIMEOUT = int(_optional("DISPATCH_TIMEOUT", "120"))

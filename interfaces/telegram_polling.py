@@ -6,8 +6,9 @@ import threading
 import requests
 
 from core.config import TELEGRAM_BOT_TOKEN, POLLING_TIMEOUT, POLLING_REQUEST_TIMEOUT
-from core.user_manager import get_user
+from core.user_manager import get_user, register_user
 from core.logger import get_logger
+from interfaces.telegram_common import parse_command, send_message
 
 log = get_logger(__name__)
 
@@ -160,25 +161,47 @@ def _handle_update(update: dict):
         return
 
     chat_id = message["chat"]["id"]
+    message_id = message.get("message_id")
     log.info("Incoming message from chat_id: %s", chat_id)
+
+    text = message.get("text", "").strip()
+    command, _args = parse_command(text)
 
     # Auth check
     user = get_user(chat_id)
     if not user:
-        log.warning("Unauthorized chat_id: %s", chat_id)
-        return
+        if command == "/start":
+            sender = message.get("from", {})
+            display_name = sender.get("first_name", "") or sender.get("username", "") or str(chat_id)
+            user = register_user(chat_id, display_name)
+            if str(chat_id) != str(user.get("telegram_chat_id")):
+                user = get_user(chat_id) or user
+            from core.config import OWNER_TELEGRAM_CHAT_ID
+            if str(chat_id) != str(OWNER_TELEGRAM_CHAT_ID):
+                send_message(OWNER_TELEGRAM_CHAT_ID, f"🔔 ผู้ใช้ใหม่ลงทะเบียนแล้ว: {display_name} (chat_id: {chat_id})")
+        else:
+            log.warning("Unauthorized chat_id: %s", chat_id)
+            send_message(chat_id, "สวัสดี! ยินดีต้อนรับสู่ OpenMiniCrew\nลงทะเบียนเพื่อเริ่มใช้งาน พิมพ์ /start")
+            return
 
     user_id = user["user_id"]
 
     # Handle location message
     location = message.get("location")
     if location:
-        from interfaces.telegram_common import save_user_location, send_message
+        from interfaces.telegram_common import save_user_location
         save_user_location(user_id, location["latitude"], location["longitude"])
         send_message(chat_id, "📍 ได้รับตำแหน่งแล้ว! ลองถามได้เลย เช่น \"ร้านกาแฟแถวนี้\" หรือ \"แถวนี้ ไป สยาม\"")
         return
 
-    text = message.get("text", "").strip()
+    # Handle photo messages (e.g. expense receipt)
+    photo_list = message.get("photo")
+    if photo_list and not text:
+        # Telegram ส่ง photo เป็น array (หลายขนาด) — ใช้ตัวใหญ่สุด
+        file_id = photo_list[-1]["file_id"]
+        caption = message.get("caption", "").strip()
+        text = f"__photo:{file_id}" + (f" {caption}" if caption else "")
+
     if not text:
         log.info("Empty text from chat_id: %s (message keys: %s)", chat_id, list(message.keys()))
         return
@@ -189,7 +212,7 @@ def _handle_update(update: dict):
     from dispatcher import process_message
     loop = _async_runtime.ensure_loop()
     future = asyncio.run_coroutine_threadsafe(
-        process_message(user_id, user, chat_id, text),
+        process_message(user_id, user, chat_id, text, message_id=message_id),
         loop,
     )
     try:

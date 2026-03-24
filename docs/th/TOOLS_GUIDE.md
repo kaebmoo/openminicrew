@@ -915,7 +915,7 @@ class ResearchSummaryTool(BaseTool):
 (ด้วยความที่ `direct_output=True` dispatcher ตัวหลักรอบนอกจึงไม่ต้องย่อสรุปข้อมูลซ้ำด้วยโมเดลถูก ทำให้ผลลัพธ์จากโมเดล Mid ถูกรักษาไว้เต็ม 100%)
 
 **Tools ที่ใช้ `preferred_tier = "mid"` ในปัจจุบัน:**
-- `email_summary` — สรุป Gmail ต้องความเข้าใจสูง
+- `gmail_summary` — สรุป Gmail ต้องความเข้าใจสูง
 - `work_email` — สรุป IMAP + ไฟล์แนบ ต้องความเข้าใจสูง
 
 ---
@@ -1077,10 +1077,10 @@ class MyTool(BaseTool):
 
 | ค่า | ใช้เมื่อ | ตัวอย่าง |
 |---|---|---|
-| `True` (default) | tool format output เองสวยแล้ว หรือ tool สรุปด้วย LLM เองภายใน | traffic, places, lotto, email_summary, news_summary |
+| `True` (default) | tool format output เองสวยแล้ว หรือ tool สรุปด้วย LLM เองภายใน | traffic, places, lotto, gmail_summary, news_summary |
 | `False` | อยากให้ dispatcher ส่งผลดิบให้ LLM สรุปเป็นภาษาธรรมชาติอีกที | (ไม่มี tool ปัจจุบันที่ใช้ — แต่ framework รองรับ) |
 
-> **หมายเหตุ:** tools ที่เรียก LLM เองภายใน (เช่น email_summary, news_summary)
+> **หมายเหตุ:** tools ที่เรียก LLM เองภายใน (เช่น gmail_summary, news_summary)
 > ใช้ `direct_output = True` เพราะ output สรุปแล้ว ไม่ต้องให้ dispatcher สรุปซ้ำ
 
 ### 7. `preferred_tier` — เลือกระดับ LLM
@@ -1094,7 +1094,7 @@ class MyTool(BaseTool):
 | Tier | โมเดล | ใช้เมื่อ | Tools ที่ใช้ |
 |---|---|---|---|
 | `"cheap"` (default) | Haiku / Gemini Flash | งานสรุปทั่วไป ไม่ซับซ้อน | news_summary |
-| `"mid"` | Sonnet / Gemini Pro | งานที่ต้องเข้าใจเนื้อหาลึก | email_summary, work_email |
+| `"mid"` | Sonnet / Gemini Pro | งานที่ต้องเข้าใจเนื้อหาลึก | gmail_summary, work_email |
 
 ใช้ใน `execute()` ผ่าน `self.preferred_tier`:
 
@@ -1140,7 +1140,7 @@ resp = await llm_router.chat(
 
 | Tool | Commands | API/Source | preferred_tier | API Keys ที่ต้องมี |
 |---|---|---|---|---|
-| **email_summary** — สรุป Gmail | `/email` | Gmail API (OAuth2) + LLM | mid | `ANTHROPIC_API_KEY` หรือ `GEMINI_API_KEY` |
+| **gmail_summary** — สรุป Gmail | `/email` | Gmail API (OAuth2) + LLM | mid | `ANTHROPIC_API_KEY` หรือ `GEMINI_API_KEY` |
 | **work_email** — สรุปอีเมลที่ทำงาน (IMAP) | `/wm`, `/workmail` | IMAP + LLM | mid | `WORK_IMAP_HOST`, `WORK_IMAP_PORT`, `WORK_IMAP_USER`, `WORK_IMAP_PASSWORD` |
 | **traffic** — เส้นทาง/จราจร | `/traffic`, `/route` | Google Maps Directions + Routes API | cheap | `GOOGLE_MAPS_API_KEY` |
 | **places** — ค้นหาสถานที่ | `/places`, `/nearby`, `/search` | Google Places API (New) | cheap | `GOOGLE_MAPS_API_KEY` |
@@ -1148,7 +1148,7 @@ resp = await llm_router.chat(
 | **news_summary** — สรุปข่าว | `/news` | Google News RSS + LLM | cheap | ไม่ต้อง (RSS ฟรี) |
 | **lotto** — ตรวจสลากกินแบ่ง | `/lotto` | lotto.api.rayriffy.com | cheap | ไม่ต้อง (API ฟรี) |
 
-> **หมายเหตุ:** ทุก tool ใช้ `direct_output = True` (default) — tools ที่ใช้ LLM (email_summary, work_email, news_summary) สรุปเองภายแล้ว
+> **หมายเหตุ:** ทุก tool ใช้ `direct_output = True` (default) — tools ที่ใช้ LLM (gmail_summary, work_email, news_summary) สรุปเองภายแล้ว
 
 ---
 
@@ -1170,7 +1170,7 @@ resp = await llm_router.chat(
 
 1. **description สำคัญมาก** — LLM ใช้ description ตัดสินใจว่าจะเรียก tool ไหนเมื่อ user พิมพ์อิสระ ถ้า description ไม่ชัด LLM จะเลือกผิด
 
-2. **ใช้ LLM เป็น formatter** — tool ดึงข้อมูลดิบมา แล้วส่งให้ LLM สรุปเป็นภาษาธรรมชาติ ผลลัพธ์จะดีกว่า format เองมาก (ดูตัวอย่างใน email_summary, news_summary)
+2. **ใช้ LLM เป็น formatter** — tool ดึงข้อมูลดิบมา แล้วส่งให้ LLM สรุปเป็นภาษาธรรมชาติ ผลลัพธ์จะดีกว่า format เองมาก (ดูตัวอย่างใน gmail_summary, news_summary)
 
 3. **ตั้ง command หลายตัวได้** — `commands = ["/weather", "/w"]` ให้ user พิมพ์สั้นๆ ได้
 

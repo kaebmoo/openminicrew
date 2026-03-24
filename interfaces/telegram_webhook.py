@@ -18,11 +18,11 @@ from core.config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET,
     WEBHOOK_HOST, WEBHOOK_PORT, WEBHOOK_PATH,
 )
-from core.user_manager import get_user
+from core.user_manager import get_user, register_user
 from core import db
 from core.llm import llm_router
 from core.logger import get_logger
-from interfaces.telegram_common import send_message
+from interfaces.telegram_common import parse_command, send_message
 
 log = get_logger(__name__)
 
@@ -140,12 +140,25 @@ async def _process_update(data: dict):
         return
 
     chat_id = message["chat"]["id"]
+    message_id = message.get("message_id")
+
+    text = message.get("text", "").strip()
+    command, _args = parse_command(text)
 
     # Auth check
     user = get_user(chat_id)
     if not user:
-        log.warning(f"Unauthorized chat_id: {chat_id}")
-        return
+        if command == "/start":
+            sender = message.get("from", {})
+            display_name = sender.get("first_name", "") or sender.get("username", "") or str(chat_id)
+            user = register_user(chat_id, display_name)
+            from core.config import OWNER_TELEGRAM_CHAT_ID
+            if str(chat_id) != str(OWNER_TELEGRAM_CHAT_ID):
+                send_message(OWNER_TELEGRAM_CHAT_ID, f"🔔 ผู้ใช้ใหม่ลงทะเบียนแล้ว: {display_name} (chat_id: {chat_id})")
+        else:
+            log.warning(f"Unauthorized chat_id: {chat_id}")
+            send_message(chat_id, "สวัสดี! ยินดีต้อนรับสู่ OpenMiniCrew\nลงทะเบียนเพื่อเริ่มใช้งาน พิมพ์ /start")
+            return
 
     user_id = user["user_id"]
 
@@ -157,13 +170,19 @@ async def _process_update(data: dict):
         send_message(chat_id, "📍 ได้รับตำแหน่งแล้ว! ลองถามได้เลย เช่น \"ร้านกาแฟแถวนี้\" หรือ \"แถวนี้ ไป สยาม\"")
         return
 
-    text = message.get("text", "").strip()
+    # Handle photo messages (e.g. expense receipt)
+    photo_list = message.get("photo")
+    if photo_list and not text:
+        file_id = photo_list[-1]["file_id"]
+        caption = message.get("caption", "").strip()
+        text = f"__photo:{file_id}" + (f" {caption}" if caption else "")
+
     if not text:
         return
 
     try:
         from dispatcher import process_message
-        await process_message(user_id, user, chat_id, text)
+        await process_message(user_id, user, chat_id, text, message_id=message_id)
 
     except Exception as e:
         log.error(f"Background task failed for user {user_id}: {e}")

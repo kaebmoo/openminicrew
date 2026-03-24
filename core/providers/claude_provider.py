@@ -60,6 +60,7 @@ class ClaudeProvider(BaseLLMProvider):
         tier: str = "cheap",
         system: str = "",
         tools: list[dict] | None = None,
+        user_id: str = None,
     ) -> dict:
         model = self.get_model(tier)
 

@@ -20,33 +20,42 @@ class ToolRegistry:
         """Scan tools/ directory หา class ที่ inherit BaseTool แล้ว register"""
         tools_dir = Path(__file__).parent
 
-        for finder, module_name, _ in pkgutil.iter_modules([str(tools_dir)]):
+        for _finder, module_name, _ in pkgutil.iter_modules([str(tools_dir)]):
             if module_name in ("base", "registry", "__init__"):
                 continue
 
             try:
                 module = importlib.import_module(f"tools.{module_name}")
 
-                for attr_name, attr in inspect.getmembers(module, inspect.isclass):
+                for _attr_name, attr in inspect.getmembers(module, inspect.isclass):
                     if issubclass(attr, BaseTool) and attr is not BaseTool:
                         instance = attr()
                         self._register(instance)
 
-            except Exception as e:
-                log.error(f"Failed to load tool module '{module_name}': {e}", exc_info=True)
+            except (ImportError, AttributeError, TypeError, ValueError) as e:
+                log.error("Failed to load tool module '%s': %s", module_name, e, exc_info=True)
 
-        log.info(f"Discovered {len(self.tools)} tools: {list(self.tools.keys())}")
+        log.info("Discovered %s tools: %s", len(self.tools), list(self.tools.keys()))
 
     def _register(self, tool: BaseTool):
         if not tool.name:
-            log.warning(f"Skipping tool with empty name: {type(tool)}")
+            log.warning("Skipping tool with empty name: %s", type(tool))
             return
 
         self.tools[tool.name] = tool
         for cmd in tool.commands:
+            existing = self.command_map.get(cmd)
+            if existing and existing.name != tool.name:
+                log.warning(
+                    "Skipping duplicate command %s for tool %s; already registered to %s",
+                    cmd,
+                    tool.name,
+                    existing.name,
+                )
+                continue
             self.command_map[cmd] = tool
 
-        log.info(f"Registered tool: {tool.name} (commands: {tool.commands})")
+        log.info("Registered tool: %s (commands: %s)", tool.name, tool.commands)
 
     def get_tool(self, name: str) -> BaseTool | None:
         return self.tools.get(name)
@@ -63,35 +72,49 @@ class ToolRegistry:
     def get_help_text(self) -> str:
         lines = ["🤖 *OpenMiniCrew — คำสั่งทั้งหมด*\n"]
 
-        # ---- Tool commands ----
-        lines.append("📧 *อีเมล*")
-        email_tool = self.tools.get("email_summary")
-        if email_tool:
-            lines.append("  /email — สรุปอีเมลวันนี้")
-            lines.append("  /email 3d — ย้อนหลัง 3 วัน")
-            lines.append("  /email 7d — ย้อนหลัง 7 วัน")
-            lines.append("  /email 30d — ย้อนหลัง 30 วัน")
-            lines.append("  /email force — สรุปใหม่ทั้งหมด")
-            lines.append("  /email บัตรเครดิต — ค้นหาเรื่องที่สนใจ")
-            lines.append("  /email from:ktc.co.th 7d — จากผู้ส่ง + ช่วงเวลา")
+        # ---- Tool commands (auto-generated from registry) ----
+        # จัดกลุ่มตาม category
+        email_tools = [t for t in self.tools.values() if t.name in ("gmail_summary", "work_email")]
+        media_tools = [t for t in self.tools.values() if t.name in ("qrcode_gen", "promptpay")]
+        util_tools = [t for t in self.tools.values() if t.name in ("unit_converter", "web_search")]
+        task_tools = [t for t in self.tools.values() if t.name in ("todo", "reminder", "calendar", "smart_inbox")]
+        finance_tools = [t for t in self.tools.values() if t.name in ("expense",)]
+        categorized_names = {t.name for group in [email_tools, media_tools, util_tools, task_tools, finance_tools] for t in group}
+        other_tools = [t for t in self.tools.values() if t.name not in categorized_names]
 
-        # ---- Other tools (auto-generated) ----
-        other_tools = [t for t in self.tools.values() if t.name != "email_summary"]
-        if other_tools:
-            lines.append("\n🔧 *เครื่องมืออื่นๆ*")
-            for tool in other_tools:
+        def _add_group(title: str, tools: list):
+            if not tools:
+                return
+            lines.append(f"\n{title}")
+            for tool in tools:
                 cmds = ", ".join(tool.commands)
                 lines.append(f"  {cmds} — {tool.description}")
 
+        _add_group("📧 *อีเมล*", email_tools)
+        _add_group("📸 *QR/สร้างภาพ*", media_tools)
+        _add_group("🔧 *เครื่องมือ*", util_tools)
+        _add_group("📋 *งานและนัดหมาย*", task_tools)
+        _add_group("💸 *การเงิน*", finance_tools)
+        _add_group("📦 *อื่นๆ*", other_tools)
+
         # ---- System commands ----
         lines.append("\n⚙️ *ระบบ*")
-        lines.append("  /model claude — เปลี่ยนเป็น Claude")
-        lines.append("  /model gemini — เปลี่ยนเป็น Gemini")
+        lines.append("  /start — ลงทะเบียนและดู onboarding")
+        lines.append("  /new — เริ่มสนทนาใหม่")
+        lines.append("  /history — ดูประวัติสนทนา")
+        lines.append("  /setname <ชื่อ> — ตั้งชื่อที่แสดง")
+        lines.append("  /setphone <เบอร์> — บันทึกเบอร์โทร")
+        lines.append("  /setid <เลขบัตร 13 หลัก> — บันทึกเลขบัตรประชาชน")
+        lines.append("  /authgmail — เชื่อมต่อ Gmail")
+        lines.append("  /model — ดู/เปลี่ยน LLM (claude, gemini, matcha)")
+        lines.append("  /setkey <service> <value> — บันทึก API key ของตัวเอง")
+        lines.append("  /mykeys — ดูรายการ key ของตัวเอง")
+        lines.append("  /removekey <service> — ลบ key ที่บันทึกไว้")
         lines.append("  /help — แสดงข้อความนี้")
 
         # ---- Tip ----
         lines.append("\n💡 *พิมพ์อิสระได้เลย* — AI จะเลือก tool ให้อัตโนมัติ")
-        lines.append("เช่น \"ช่วยสรุปอีเมลวันนี้\" หรือ \"อีเมลจาก Grab 7 วันล่าสุด\"")
+        lines.append("หรือถ่ายรูปบิล/slip ส่งมา → บันทึกรายจ่ายอัตโนมัติ")
 
         return "\n".join(lines)
 

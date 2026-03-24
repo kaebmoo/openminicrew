@@ -141,7 +141,7 @@ async def test_tool_error_llm_responds():
     """tool execute error → LLM ตอบ user แทน"""
 
     mock_tool = MagicMock()
-    mock_tool.name = "email_summary"
+    mock_tool.name = "gmail_summary"
     mock_tool.direct_output = True
     mock_tool.execute = AsyncMock(side_effect=Exception("Gmail not authorized"))
 
@@ -153,7 +153,7 @@ async def test_tool_error_llm_responds():
             # Attempt 1: เรียก tool
             {
                 "content": "",
-                "tool_call": {"name": "email_summary", "args": {}},
+                "tool_call": {"name": "gmail_summary", "args": {}},
                 "model": "claude-haiku",
                 "token_used": 100,
             },

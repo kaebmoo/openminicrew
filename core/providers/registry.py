@@ -51,23 +51,36 @@ class ProviderRegistry:
         """Get provider by name"""
         return self.providers.get(name)
 
-    def get_available(self) -> list[str]:
-        """Return list of configured provider names"""
+    def get_available(self, user_id: str = None) -> list[str]:
+        """Return list of provider names ที่ใช้ได้ (shared key หรือ per-user key)"""
+        if user_id:
+            return [name for name, p in self.providers.items() if p.is_available_for_user(user_id)]
         return [name for name, p in self.providers.items() if p.is_configured()]
 
-    def get_fallback(self, preferred: str) -> BaseLLMProvider | None:
+    def get_fallback(self, preferred: str, user_id: str = None) -> BaseLLMProvider | None:
         """
-        ถ้า preferred ไม่พร้อม → return ตัวแรกที่พร้อม
+        ถ้า preferred ไม่พร้อม → ลอง FALLBACK_LLM → ลอง provider อื่นที่พร้อม
         ถ้าไม่มีเลย → return None
         """
         # ลอง preferred ก่อน
         p = self.providers.get(preferred)
-        if p and p.is_configured():
-            return p
+        if p:
+            if user_id and p.is_available_for_user(user_id):
+                return p
+            elif p.is_configured():
+                return p
 
-        # fallback ไปตัวอื่น
+        # ลอง configured fallback ก่อน
+        from core.config import FALLBACK_LLM
+        if FALLBACK_LLM and FALLBACK_LLM != preferred:
+            fb = self.providers.get(FALLBACK_LLM)
+            if fb and fb.is_configured():
+                log.warning(f"Provider '{preferred}' not available, falling back to '{fb.name}'")
+                return fb
+
+        # fallback ไปตัวอื่นที่พร้อม
         for provider in self.providers.values():
-            if provider.is_configured():
+            if provider.name != preferred and provider.is_configured():
                 log.warning(f"Provider '{preferred}' not available, falling back to '{provider.name}'")
                 return provider
 

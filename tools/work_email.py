@@ -17,11 +17,9 @@ import hashlib
 # extractors will be lazily imported
 
 from tools.base import BaseTool
+from core.api_keys import get_api_key
 from core.config import (
-    WORK_IMAP_HOST,
     WORK_IMAP_PORT,
-    WORK_IMAP_USER,
-    WORK_IMAP_PASSWORD,
     WORK_EMAIL_MAX_RESULTS,
     WORK_EMAIL_ATTACHMENT_MAX_MB,
 )
@@ -107,17 +105,27 @@ class WorkEmailTool(BaseTool):
         parsed.search_text = " ".join(search_tokens)
         return parsed
 
-    def _connect_imap(self) -> imaplib.IMAP4_SSL:
+    def _resolve_imap_credentials(self, user_id: str) -> tuple[str, str, str] | None:
+        host = get_api_key(user_id, "work_imap_host")
+        username = get_api_key(user_id, "work_imap_user")
+        password = get_api_key(user_id, "work_imap_password")
+
+        if not host or not username or not password:
+            return None
+
+        return host, username, password
+
+    def _connect_imap(self, host: str, username: str, password: str) -> imaplib.IMAP4_SSL:
         try:
-            conn = imaplib.IMAP4_SSL(WORK_IMAP_HOST, WORK_IMAP_PORT)
+            conn = imaplib.IMAP4_SSL(host, WORK_IMAP_PORT)
         except ssl.SSLCertVerificationError:
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
-            conn = imaplib.IMAP4_SSL(WORK_IMAP_HOST, WORK_IMAP_PORT, ssl_context=ctx)
+            conn = imaplib.IMAP4_SSL(host, WORK_IMAP_PORT, ssl_context=ctx)
             log.warning("IMAP SSL: certificate verification disabled")
             
-        conn.login(WORK_IMAP_USER, WORK_IMAP_PASSWORD)
+        conn.login(username, password)
         return conn
 
     def _build_search_criteria(self, parsed: ParsedArgs) -> str:
@@ -340,12 +348,12 @@ class WorkEmailTool(BaseTool):
             
         return attachments
 
-    def _sync_fetch_all(self, user_id: str, parsed: ParsedArgs) -> tuple[list[EmailData], int]:
+    def _sync_fetch_all(self, user_id: str, parsed: ParsedArgs, imap_credentials: tuple[str, str, str]) -> tuple[list[EmailData], int]:
         skipped = 0
         emails_data = []
         conn = None
         try:
-            conn = self._connect_imap()
+            conn = self._connect_imap(*imap_credentials)
             
             # Select Folder
             folder = parsed.filters.get('folder', 'INBOX')
@@ -453,8 +461,12 @@ class WorkEmailTool(BaseTool):
         return emails_data, skipped
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
-        if not WORK_IMAP_HOST or not WORK_IMAP_USER or not WORK_IMAP_PASSWORD:
-            return "❌ ยังไม่ได้ตั้งค่า IMAP (ตั้งค่าใน .env) ขาดตัวแปร WORK_IMAP_HOST, USER, หรือ PASSWORD"
+        imap_credentials = self._resolve_imap_credentials(user_id)
+        if not imap_credentials:
+            return (
+                "❌ ยังไม่ได้ตั้งค่า IMAP สำหรับบัญชีของคุณ\n"
+                "กรุณาตั้งค่าด้วย /setkey work_imap_host <host>, /setkey work_imap_user <user>, และ /setkey work_imap_password <password>"
+            )
             
         parsed = self._parse_args(args)
         
@@ -469,7 +481,7 @@ class WorkEmailTool(BaseTool):
             
             # 1. Fetch emails (async wrapper)
             # await asyncio.wait_for is used to limit execution time
-            task = loop.run_in_executor(None, self._sync_fetch_all, user_id, parsed)
+            task = loop.run_in_executor(None, self._sync_fetch_all, user_id, parsed, imap_credentials)
             emails_data, skipped = await asyncio.wait_for(task, timeout=60.0)
             
             if not emails_data:

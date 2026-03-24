@@ -23,8 +23,8 @@ PRICE_LEVELS = {
 
 class PlacesTool(BaseTool):
     name = "places"
-    description = "ค้นหาสถานที่ใกล้เคียง เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล ร้านสะดวกซื้อ พร้อมข้อมูลรีวิว ระยะทาง และเวลาเปิด-ปิด"
-    commands = ["/places", "/nearby", "/search"]
+    description = "ค้นหาสถานที่จริงบนแผนที่ เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล ร้านสะดวกซื้อ พร้อมข้อมูลรีวิว ระยะทาง และเวลาเปิด-ปิด"
+    commands = ["/places", "/nearby"]
     direct_output = True
 
     # คำที่บ่งบอกว่าผู้ใช้หมายถึง "ตรงนี้" (ต้องใช้ GPS)
@@ -41,7 +41,7 @@ class PlacesTool(BaseTool):
         return {
             "name": self.name,
             "description": (
-                "ค้นหาสถานที่ใกล้เคียง เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล ATM "
+                "ค้นหาสถานที่จริงบนแผนที่ เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล ATM "
                 "ร้านสะดวกซื้อ พร้อมข้อมูลรีวิว คะแนน เวลาเปิด-ปิด "
                 "เช่น 'ร้านกาแฟแถวสยาม' หรือ 'coffee shop near MBK'"
             ),
@@ -141,14 +141,14 @@ class PlacesTool(BaseTool):
             log.error("Google Places API timeout")
             return "❌ Google Places ไม่ตอบสนอง ลองใหม่อีกครั้งครับ"
         except requests.exceptions.HTTPError as e:
-            log.error(f"Google Places API HTTP error: {e}")
+            log.error("Google Places API HTTP error: %s", e)
             if resp.status_code == 400:
                 return "❌ คำค้นหาไม่ถูกต้อง กรุณาลองใหม่"
             if resp.status_code == 403:
                 return "❌ API Key ไม่ถูกต้อง หรือยังไม่ได้เปิดใช้ Places API (New)"
             return f"❌ เกิดข้อผิดพลาดจาก Google Places: {resp.status_code}"
         except requests.exceptions.RequestException as e:
-            log.error(f"Google Places API request failed: {e}")
+            log.error("Google Places API request failed: %s", e)
             return "❌ เกิดข้อผิดพลาดในการเชื่อมต่อ Google Places"
 
         # 6. Handle empty results

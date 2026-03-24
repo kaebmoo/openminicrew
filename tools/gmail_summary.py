@@ -1,4 +1,4 @@
-"""Email Summary Tool — ดึงเมลจาก Gmail + สรุปด้วย LLM"""
+"""Gmail Summary Tool — ดึงเมลจาก Gmail + สรุปด้วย LLM"""
 
 import asyncio
 import base64
@@ -42,10 +42,10 @@ def _extract_text(payload: dict) -> str:
     return ""
 
 
-class EmailSummaryTool(BaseTool):
-    name = "email_summary"
+class GmailSummaryTool(BaseTool):
+    name = "gmail_summary"
     description = "สรุปอีเมลที่ยังไม่ได้อ่านจาก Gmail"
-    commands = ["/email"]
+    commands = ["/gmail", "/email"]
     preferred_tier = "mid"
 
     # Mapping ของ time range shortcuts
@@ -246,7 +246,7 @@ class EmailSummaryTool(BaseTool):
 
     def get_tool_spec(self) -> dict:
         return {
-            "name": "email_summary",
+            "name": "gmail_summary",
             "description": (
                 "สรุปอีเมลที่ยังไม่ได้อ่าน หรืออีเมลมาใหม่/ล่าสุด จาก Gmail ของผู้ใช้ "
                 "สามารถระบุช่วงเวลาได้ เช่น today, 3d, 7d, 30d "
