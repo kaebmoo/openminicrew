@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+from cryptography.fernet import Fernet, InvalidToken
+
 from core import db
 from core import config
+from core.logger import get_logger
 
-try:
-    from cryptography.fernet import Fernet, InvalidToken
-except ImportError:  # pragma: no cover - optional dependency at runtime
-    Fernet = None
-    InvalidToken = Exception
+log = get_logger(__name__)
 
 PRIVATE_ONLY_SERVICES = {
     "gmail",
@@ -28,11 +27,20 @@ ENV_KEY_MAP = {
     "tmd": "TMD_API_KEY",
 }
 
-_fernet = Fernet(config.ENCRYPTION_KEY.encode()) if (Fernet and config.ENCRYPTION_KEY) else None
-
 
 def normalize_service(service: str) -> str:
     return service.strip().lower()
+
+
+def _get_fernet() -> Fernet | None:
+    if not config.ENCRYPTION_KEY:
+        return None
+    return Fernet(config.ENCRYPTION_KEY.encode())
+
+
+def _require_encryption_key():
+    if not config.ENCRYPTION_KEY:
+        raise RuntimeError("ENCRYPTION_KEY is required for private key storage")
 
 
 def get_api_key(user_id: str, service: str) -> str | None:
@@ -40,6 +48,11 @@ def get_api_key(user_id: str, service: str) -> str | None:
 
     user_key = db.get_user_api_key(user_id, normalized_service)
     if user_key:
+        if not config.ENCRYPTION_KEY:
+            log.warning(
+                "ENCRYPTION_KEY not set while reading stored private key for service %s; returning raw stored value",
+                normalized_service,
+            )
         return _decrypt(user_key)
 
     if normalized_service in PRIVATE_ONLY_SERVICES:
@@ -53,6 +66,7 @@ def get_api_key(user_id: str, service: str) -> str | None:
 
 
 def set_api_key(user_id: str, service: str, api_key: str):
+    _require_encryption_key()
     db.upsert_user_api_key(user_id, normalize_service(service), _encrypt(api_key))
 
 
@@ -71,15 +85,17 @@ def get_supported_services() -> list[str]:
 
 
 def _encrypt(value: str) -> str:
-    if _fernet is None:
-        return value
-    return _fernet.encrypt(value.encode()).decode()
+    fernet = _get_fernet()
+    if fernet is None:
+        raise RuntimeError("ENCRYPTION_KEY is required for private key storage")
+    return fernet.encrypt(value.encode()).decode()
 
 
 def _decrypt(value: str) -> str:
-    if _fernet is None:
+    fernet = _get_fernet()
+    if fernet is None:
         return value
     try:
-        return _fernet.decrypt(value.encode()).decode()
+        return fernet.decrypt(value.encode()).decode()
     except InvalidToken:
         return value

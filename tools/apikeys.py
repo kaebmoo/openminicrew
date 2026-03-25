@@ -54,15 +54,18 @@ class ApiKeysTool(BaseTool):
         if not value:
             return "❌ ค่า key ว่างไม่ได้"
 
-        set_api_key(user_id, service, value)
+        try:
+            set_api_key(user_id, service, value)
+        except RuntimeError as err:
+            return f"❌ {err}"
 
         # ลบข้อความ user ที่มี API key เพื่อความปลอดภัย
         if chat_id and message_id:
             try:
                 from interfaces.telegram_common import delete_message_safe
                 delete_message_safe(chat_id, message_id)
-            except Exception as e:
-                log.warning(f"Failed to delete message: {e}")
+            except ImportError as err:
+                log.warning("Failed to import delete_message_safe: %s", err)
 
         return f"✅ บันทึก key สำหรับ `{service}` แล้ว"
 

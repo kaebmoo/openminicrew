@@ -414,8 +414,40 @@ async def _dispatch_with_retry(
             log.error(f"[dispatch] summary failed: {e}, returning raw tool result")
             return tool_result, tool_name, last_model, total_tokens
 
-    # ---- หลุดออกจาก loop ----
-    log.warning(f"[dispatch] retry loop ended without response (tokens used: {total_tokens})")
+    # ---- หลุดออกจาก loop → ลอง fallback 1 รอบด้วย tier "mid" ----
+    log.warning(f"[dispatch] retry loop ended without response (tokens used: {total_tokens}), trying mid tier fallback")
+    try:
+        fallback_resp = await llm_router.chat(
+            messages=messages[:2],  # ใช้แค่ context เดิม ไม่เอา retry feedback
+            provider=provider,
+            tier="mid",
+            system=system_prompt,
+            tools=tool_specs if tool_specs else None,
+            user_id=user_id,
+        )
+        total_tokens += fallback_resp.get("token_used", 0)
+        last_model = fallback_resp.get("model")
+
+        # ถ้า fallback ตอบ text → ใช้เลย
+        if not fallback_resp.get("tool_call"):
+            content = fallback_resp.get("content", "")
+            if content:
+                log.info(f"[dispatch] mid-tier fallback returned text ({len(content)} chars)")
+                return content, last_tool_used, last_model, total_tokens
+        else:
+            # fallback เรียก tool → execute
+            fb_tool_name = fallback_resp["tool_call"]["name"]
+            fb_tool_args = fallback_resp["tool_call"].get("args", {})
+            fb_tool = registry.get_tool(fb_tool_name)
+            if fb_tool:
+                fb_result = await fb_tool.execute(user_id, **fb_tool_args)
+                log.info(f"[dispatch] mid-tier fallback called {fb_tool_name} (direct_output={fb_tool.direct_output})")
+                if fb_tool.direct_output:
+                    return fb_result, fb_tool_name, last_model, total_tokens
+                return fb_result, fb_tool_name, last_model, total_tokens
+    except Exception as e:
+        log.error(f"[dispatch] mid-tier fallback failed: {e}")
+
     return None, last_tool_used, last_model, total_tokens
 
 

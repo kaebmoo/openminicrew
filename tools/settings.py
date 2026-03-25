@@ -33,7 +33,9 @@ class SettingsTool(BaseTool):
         if action == "setname":
             return self._setname(user_id, user, value)
         elif action == "setphone":
-            return self._setphone(user_id, user, value)
+            return self._setphone(user_id, user, value,
+                                  chat_id=kwargs.get("chat_id"),
+                                  message_id=kwargs.get("message_id"))
         elif action == "setid":
             return self._setid(user_id, user, value,
                                chat_id=kwargs.get("chat_id"),
@@ -54,14 +56,31 @@ class SettingsTool(BaseTool):
         return f"✅ ตั้งชื่อเป็น {value} แล้ว"
 
     # ---- setphone ----
-    def _setphone(self, user_id: str, user: dict, value: str) -> str:
+    def _setphone(self, user_id: str, user: dict, value: str, *,
+                  chat_id=None, message_id=None) -> str:
         if not value:
             current = user.get("phone_number")
             if current:
                 return f"เบอร์โทรปัจจุบัน: {current}\nเปลี่ยนเบอร์: /setphone <เบอร์ใหม่>"
             return "ยังไม่ได้บันทึกเบอร์โทร\nใช้: /setphone <เบอร์โทร>"
-        normalized = value.replace(" ", "").replace("-", "")
+
+        from tools.promptpay import _normalize_phone
+
+        try:
+            promptpay_phone = _normalize_phone(value)
+        except ValueError as err:
+            return f"❌ เบอร์โทรไม่ถูกต้อง: {err}"
+
+        normalized = "0" + promptpay_phone[4:]
         db.update_user_profile(user_id, phone_number=normalized)
+
+        if chat_id and message_id:
+            try:
+                from interfaces.telegram_common import delete_message_safe
+                delete_message_safe(chat_id, message_id)
+            except ImportError as err:
+                log.warning("Failed to import delete_message_safe: %s", err)
+
         return f"✅ บันทึกเบอร์โทรแล้ว: {normalized}"
 
     # ---- setid ----
@@ -88,8 +107,8 @@ class SettingsTool(BaseTool):
             try:
                 from interfaces.telegram_common import delete_message_safe
                 delete_message_safe(chat_id, message_id)
-            except Exception as e:
-                log.warning(f"Failed to delete message: {e}")
+            except ImportError as err:
+                log.warning("Failed to import delete_message_safe: %s", err)
 
         return f"✅ บันทึกเลขบัตรประชาชนแล้ว: {masked}"
 

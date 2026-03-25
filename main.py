@@ -21,7 +21,7 @@ import os
 import atexit
 from pathlib import Path
 
-from core.config import BOT_MODE, OWNER_TELEGRAM_CHAT_ID, CREDENTIALS_DIR
+from core.config import BOT_MODE, OWNER_TELEGRAM_CHAT_ID, CREDENTIALS_DIR, ENCRYPTION_KEY
 from core.db import init_db
 from core.user_manager import init_owner
 from core.logger import get_logger
@@ -89,6 +89,14 @@ def _ensure_gmail_auth():
     return False
 
 
+def _log_encryption_feature_status():
+    if ENCRYPTION_KEY:
+        return
+    log.warning(
+        "ENCRYPTION_KEY not set - Gmail auth, private API key storage, and future encrypted fields will be unavailable"
+    )
+
+
 def main():
     args = sys.argv[1:]
 
@@ -147,6 +155,7 @@ def main():
     log.info("=" * 50)
     log.info("OpenMiniCrew starting up...")
     log.info("=" * 50)
+    _log_encryption_feature_status()
 
     # 1. Init database
     init_db()

@@ -103,6 +103,8 @@ def test_reminder_fire_marks_sent():
     assert "ประชุมทีม" in result
 
 
+
+
 def test_web_search_uses_ddg_fallback_result():
     tool = WebSearchTool()
     with patch.object(tool, "_search_ddg", return_value=[

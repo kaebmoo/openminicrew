@@ -90,6 +90,11 @@ class GeminiProvider(BaseLLMProvider):
         content = ""
         tool_call = None
 
+        if not resp.candidates:
+            log.warning("Gemini returned no candidates (possibly blocked by safety filter)")
+        elif resp.candidates[0].finish_reason and str(resp.candidates[0].finish_reason) not in ("STOP", "FinishReason.STOP", "1"):
+            log.warning(f"Gemini finish_reason: {resp.candidates[0].finish_reason}")
+
         if resp.candidates and resp.candidates[0].content:
             for part in (resp.candidates[0].content.parts or []):
                 if part.text:
