@@ -31,6 +31,13 @@ Implemented tools are grouped broadly as:
 
 Use `/help` in Telegram for the live command list.
 
+## Additional Docs
+
+- [Configuration Reference](CONFIGURATION.md)
+- [Architecture](ARCHITECTURE.md)
+- [Database](DATABASE.md)
+- [Privacy, Consent, and Security](PRIVACY_SECURITY.md)
+
 ## Installation
 
 ```bash
