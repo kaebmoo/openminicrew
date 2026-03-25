@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from core import db
 from core.api_keys import get_api_key
+from core.config import DEFAULT_LLM
 from core.logger import get_logger
 from core.user_manager import get_preference, get_user_by_id
 from tools.base import BaseTool
@@ -210,7 +211,7 @@ class WebSearchTool(BaseTool):
                 raw_results = self._search_ddg(query)
             ranked_results = _rank_and_filter_results(query, raw_results)
             user = get_user_by_id(user_id) or {}
-            provider = get_preference(user, "default_llm") or "claude"
+            provider = get_preference(user, "default_llm") or DEFAULT_LLM
             quick_summary = ""
             if _looks_factual_query(query):
                 try:
@@ -219,11 +220,23 @@ class WebSearchTool(BaseTool):
                     log.warning("Quick web summary failed for %s: %s", user_id, e)
 
             result = _format_search_results(query, ranked_results, quick_summary=quick_summary)
-            db.log_tool_usage(user_id, self.name, input_summary=query[:100], output_summary=result[:200], status="success")
+            db.log_tool_usage(
+                user_id,
+                self.name,
+                status="success",
+                **db.make_log_field("input", query, kind="search_query"),
+                **db.make_log_field("output", result, kind="search_result"),
+            )
             return result
         except (ImportError, ValueError, RuntimeError) as e:
             log.error("Web search failed for %s: %s", user_id, e)
-            db.log_tool_usage(user_id, self.name, input_summary=query[:100], status="failed", error_message=str(e))
+            db.log_tool_usage(
+                user_id,
+                self.name,
+                status="failed",
+                **db.make_log_field("input", query, kind="search_query"),
+                **db.make_error_fields(str(e)),
+            )
             return f"❌ ค้นหาเว็บไม่สำเร็จ: {e}"
 
     def _search_tavily(self, query: str, api_key: str) -> list[dict]:

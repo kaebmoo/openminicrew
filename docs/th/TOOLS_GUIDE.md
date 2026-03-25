@@ -139,9 +139,9 @@ class MyTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=args[:100],
-                output_summary=result[:200],
                 status="success",
+                **db.make_log_field("input", args, kind="tool_command"),
+                **db.make_log_field("output", result, kind="tool_result"),
             )
 
             return result
@@ -151,9 +151,9 @@ class MyTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=args[:100],
                 status="failed",
-                error_message=str(e),
+                **db.make_log_field("input", args, kind="tool_command"),
+                **db.make_error_fields(str(e)),
             )
             return f"เกิดข้อผิดพลาด: {e}"
 
@@ -177,6 +177,12 @@ class MyTool(BaseTool):
             },
         }
 ```
+
+หมายเหตุเรื่อง structured logging:
+
+- ควรใช้ `db.make_log_field(...)` สำหรับ input และ output metadata แทนการเก็บ `input_summary` และ `output_summary` แบบ raw text
+- ควรใช้ `db.make_error_fields(...)` เพื่อเก็บ error metadata ที่ redact แล้ว แทนการเก็บ exception text ตรง ๆ
+- ควรตั้งค่า `kind` ให้สม่ำเสมอ เช่น `tool_command`, `tool_result`, `search_query`, หรือ `media_image` เพื่อให้ log ยังวิเคราะห์ต่อได้หลังทำ minimization
 
 ---
 

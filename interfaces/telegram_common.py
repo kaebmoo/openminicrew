@@ -31,8 +31,10 @@ MAX_MSG_LENGTH = 4096  # Telegram max message length
 def save_user_location(user_id: str, lat: float, lng: float):
     """บันทึกตำแหน่งล่าสุดของ user ลง DB"""
     from core import db
-    db.save_location(str(user_id), lat, lng)
-    log.info(f"Saved location for user {user_id}: {lat}, {lng}")
+    saved = db.save_location(str(user_id), lat, lng)
+    if saved:
+        log.info(f"Saved location for user {user_id}: {lat}, {lng}")
+    return saved
 
 
 def get_user_location(user_id: str) -> dict | None:
@@ -198,7 +200,17 @@ def send_document(chat_id: str | int, file_bytes: bytes, file_name: str, caption
 
 def send_tool_response(chat_id: str | int, response) -> bool:
     """ส่งผลลัพธ์จาก tool แบบข้อความหรือ media โดยไม่ให้ tool รู้จัก Telegram"""
-    from tools.response import MediaResponse
+    from tools.response import MediaResponse, InlineKeyboardResponse
+
+    if isinstance(response, InlineKeyboardResponse):
+        if response.buttons:
+            send_inline_keyboard(chat_id, response.text, response.buttons)
+            return True
+        # fallback: ไม่มีปุ่ม → ส่งเป็นข้อความธรรมดา
+        if response.text:
+            send_message(chat_id, response.text)
+            return True
+        return False
 
     if isinstance(response, MediaResponse):
         success = True
@@ -244,6 +256,65 @@ def _send_chunks(chat_id: str | int, text: str, parse_mode: str | None) -> bool:
             log.error(f"Telegram send error: {e}")
             return False
     return True
+
+
+def send_inline_keyboard(chat_id: str | int, text: str, buttons: list[list[dict]]) -> dict | None:
+    """ส่งข้อความพร้อม inline keyboard buttons
+
+    Args:
+        buttons: [[{"text": "label", "callback_data": "data"}, ...], ...]
+                 แต่ละ list ย่อยคือ 1 แถวของปุ่ม
+
+    Returns:
+        Telegram Message dict หรือ None ถ้าส่งไม่สำเร็จ
+    """
+    _limiter.wait()
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": json.dumps({"inline_keyboard": buttons}),
+    }
+    try:
+        resp = requests.post(f"{API_BASE}/sendMessage", json=payload, timeout=10)
+        if resp.ok:
+            return resp.json().get("result")
+        log.warning("Telegram sendMessage (inline_keyboard) failed: %s %s", resp.status_code, resp.text)
+        return None
+    except Exception as e:
+        log.error("Telegram send_inline_keyboard error: %s", e)
+        return None
+
+
+def edit_message_text(chat_id: str | int, message_id: int, text: str) -> bool:
+    """แก้ไขข้อความที่ส่งไปแล้ว (ใช้กับ inline keyboard callback)"""
+    _limiter.wait()
+    try:
+        resp = requests.post(
+            f"{API_BASE}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": text},
+            timeout=10,
+        )
+        if not resp.ok:
+            log.warning("Telegram editMessageText failed: %s %s", resp.status_code, resp.text)
+            return False
+        return True
+    except Exception as e:
+        log.error("Telegram editMessageText error: %s", e)
+        return False
+
+
+def answer_callback_query(callback_query_id: str, text: str = "", show_alert: bool = False) -> bool:
+    """ตอบ callback_query (จำเป็นต้องเรียกเพื่อหยุด loading indicator บน client)"""
+    try:
+        resp = requests.post(
+            f"{API_BASE}/answerCallbackQuery",
+            json={"callback_query_id": callback_query_id, "text": text, "show_alert": show_alert},
+            timeout=10,
+        )
+        return resp.ok
+    except Exception as e:
+        log.error("Telegram answerCallbackQuery error: %s", e)
+        return False
 
 
 def delete_message(chat_id: str | int, message_id: int) -> bool:

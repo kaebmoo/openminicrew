@@ -212,8 +212,9 @@ async def test_max_retries():
         )
 
         assert result[0] is None
-        assert mock_chat.call_count == MAX_RETRIES
-        assert result[3] == 50 * MAX_RETRIES
+        # MAX_RETRIES calls + 1 mid-tier fallback call
+        assert mock_chat.call_count == MAX_RETRIES + 1
+        assert result[3] == 50 * (MAX_RETRIES + 1)
 
 
 @pytest.mark.asyncio
@@ -308,7 +309,7 @@ async def test_llm_api_error():
         )
 
         assert result[0] is None
-        assert mock_chat.call_count == 1  # ไม่ retry LLM error
+        assert mock_chat.call_count == 2  # 1 attempt + 1 mid-tier fallback (also fails)
         assert result[3] == 0
 
 

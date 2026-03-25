@@ -5,7 +5,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from core.config import TIMEZONE
+from core.config import TIMEZONE, DEFAULT_LLM
 from core.providers.registry import provider_registry
 from core.concurrency import llm_semaphore
 from core.logger import get_logger
@@ -43,7 +43,7 @@ class LLMRouter:
     async def chat(
         self,
         messages: list[dict],
-        provider: str = "claude",
+        provider: str = DEFAULT_LLM,
         tier: str = "cheap",
         system: str = "",
         tools: list[dict] | None = None,

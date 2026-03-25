@@ -2,6 +2,7 @@
 
 import asyncio
 import concurrent.futures
+import json
 import threading
 import requests
 
@@ -87,6 +88,18 @@ def handle_update(update: dict):
 
 def start_polling():
     """Start long polling loop — blocking"""
+    # Readiness check (defense-in-depth — main.py checks too)
+    from core.readiness import collect_startup_readiness
+    report = collect_startup_readiness(bot_mode="polling")
+    if report["should_fail_fast"]:
+        failed = [c["name"] for c in report["checks"] if c["status"] == "fail" and c.get("required")]
+        log.error("Startup readiness FAILED: %s", failed)
+        raise RuntimeError(f"Polling startup blocked: {failed}")
+    elif report["status"] != "ok":
+        for check in report["checks"]:
+            if check["status"] in ("warn", "fail"):
+                log.warning("Readiness warning: %s — %s", check["name"], check.get("detail", ""))
+
     log.info("Starting Telegram bot in POLLING mode...")
     ensure_shared_async_loop()
 
@@ -120,7 +133,7 @@ def start_polling():
                 from scheduler import ensure_scheduler_alive
                 ensure_scheduler_alive()
 
-            params = {"timeout": POLLING_TIMEOUT, "allowed_updates": ["message"]}
+            params = {"timeout": POLLING_TIMEOUT, "allowed_updates": json.dumps(["message", "callback_query"])}
             if offset:
                 params["offset"] = offset
 
@@ -154,7 +167,22 @@ def start_polling():
 
 
 def _handle_update(update: dict):
-    """ประมวลผล update — เรียก dispatcher"""
+    """ประมวลผล update — เรียก dispatcher หรือ callback_query"""
+    # ---- Inline keyboard callback ----
+    callback_query = update.get("callback_query")
+    if callback_query:
+        try:
+            _handle_callback_query(callback_query)
+        except Exception as e:
+            log.error("Unhandled error in callback_query handler: %s", e, exc_info=True)
+            # พยายาม answer เพื่อหยุด loading indicator
+            try:
+                from interfaces.telegram_common import answer_callback_query
+                answer_callback_query(callback_query.get("id", ""), "เกิดข้อผิดพลาด")
+            except Exception:
+                pass
+        return
+
     message = update.get("message")
     if not message:
         log.debug("Update has no message field: keys=%s", list(update.keys()))
@@ -190,8 +218,11 @@ def _handle_update(update: dict):
     location = message.get("location")
     if location:
         from interfaces.telegram_common import save_user_location
-        save_user_location(user_id, location["latitude"], location["longitude"])
-        send_message(chat_id, "📍 ได้รับตำแหน่งแล้ว! ลองถามได้เลย เช่น \"ร้านกาแฟแถวนี้\" หรือ \"แถวนี้ ไป สยาม\"")
+        saved = save_user_location(user_id, location["latitude"], location["longitude"])
+        if saved:
+            send_message(chat_id, "📍 ได้รับตำแหน่งแล้ว! ลองถามได้เลย เช่น \"ร้านกาแฟแถวนี้\" หรือ \"แถวนี้ ไป สยาม\"")
+        else:
+            send_message(chat_id, "🔒 ยังไม่ได้ให้ consent สำหรับ location\nใช้ /consent location on ก่อน แล้วค่อยส่งตำแหน่งอีกครั้ง")
         return
 
     # Handle photo messages (e.g. expense receipt)
@@ -224,3 +255,42 @@ def _handle_update(update: dict):
             log.exception("process_message failed for %s: %s", user_id, e)
     finally:
         log.info("Finished processing for %s", user_id)
+
+
+def _handle_callback_query(callback_query: dict):
+    """ประมวลผล inline keyboard callback"""
+    from interfaces.telegram_common import answer_callback_query, edit_message_text
+    from core.user_manager import get_user
+    from core.callback_handler import handle_callback
+
+    callback_id = callback_query.get("id", "")
+    data = callback_query.get("data", "")
+    message = callback_query.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    message_id = message.get("message_id")
+    from_user = callback_query.get("from", {})
+    telegram_chat_id = from_user.get("id") or chat_id
+
+    log.info("Callback query received: from=%s, data=%s, chat=%s, msg=%s",
+             telegram_chat_id, data, chat_id, message_id)
+
+    user = get_user(telegram_chat_id)
+    if not user:
+        log.warning("Callback from unregistered user: %s", telegram_chat_id)
+        answer_callback_query(callback_id, "กรุณาลงทะเบียนก่อน /start")
+        return
+
+    user_id = user["user_id"]
+    log.info("Callback routing: user=%s, data=%s", user_id, data)
+
+    loop = _async_runtime.ensure_loop()
+    future = asyncio.run_coroutine_threadsafe(
+        handle_callback(user_id, data, chat_id=chat_id, message_id=message_id, callback_id=callback_id),
+        loop,
+    )
+    try:
+        future.result(timeout=30)
+        log.info("Callback handled successfully: user=%s, data=%s", user_id, data)
+    except Exception as e:
+        log.error("Callback handler failed: %s", e, exc_info=True)
+        answer_callback_query(callback_id, "เกิดข้อผิดพลาด")

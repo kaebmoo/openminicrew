@@ -72,7 +72,10 @@ class SettingsTool(BaseTool):
             return f"❌ เบอร์โทรไม่ถูกต้อง: {err}"
 
         normalized = "0" + promptpay_phone[4:]
-        db.update_user_profile(user_id, phone_number=normalized)
+        try:
+            db.update_user_profile(user_id, phone_number=normalized)
+        except RuntimeError as err:
+            return f"❌ {err}"
 
         if chat_id and message_id:
             try:
@@ -99,7 +102,10 @@ class SettingsTool(BaseTool):
         except ValueError as e:
             return f"❌ เลขบัตรไม่ถูกต้อง: {e}"
 
-        db.update_user_profile(user_id, national_id=cleaned)
+        try:
+            db.update_user_profile(user_id, national_id=cleaned)
+        except RuntimeError as err:
+            return f"❌ {err}"
         masked = "X" * 9 + cleaned[-4:]
 
         # ลบข้อความ user ที่มีเลขบัตรประชาชน เพื่อความปลอดภัย

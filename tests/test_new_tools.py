@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 fake_google_auth_oauthlib = types.ModuleType("google_auth_oauthlib")
@@ -367,39 +369,41 @@ def test_matcha_provider_available_with_user_key():
             assert provider.is_available_for_user("user-abc") is False
 
 
-def test_model_command_shows_matcha_when_user_has_key():
+@pytest.mark.asyncio
+async def test_model_command_shows_matcha_when_user_has_key():
     """
     /model matcha ต้องสำเร็จเมื่อ user ตั้ง per-user key แล้ว
     แม้ .env จะไม่มี MATCHA_API_KEY
     """
-    from dispatcher import _handle_model_command
+    from core.system_commands import handle_model
 
     fake_user = {"user_id": "u1", "default_llm": "claude"}
 
     # Mock: matcha ไม่มี shared key แต่มี per-user key
     with patch("core.providers.matcha_provider.MATCHA_API_KEY", ""), \
          patch("core.api_keys.get_api_key", return_value="sk-user-key"), \
-         patch("dispatcher.set_preference") as mock_set_pref:
+         patch("core.system_commands.set_preference") as mock_set_pref:
 
-        result = _handle_model_command("u1", fake_user, "matcha")
+        result_text, _, _, _ = await handle_model("u1", fake_user, "matcha")
 
-        assert "✅" in result
-        assert "matcha" in result
+        assert "✅" in result_text
+        assert "matcha" in result_text
         mock_set_pref.assert_called_once_with("u1", "default_llm", "matcha")
 
 
-def test_model_command_rejects_matcha_without_any_key():
+@pytest.mark.asyncio
+async def test_model_command_rejects_matcha_without_any_key():
     """
     /model matcha ต้อง reject เมื่อไม่มีทั้ง shared key และ per-user key
     """
-    from dispatcher import _handle_model_command
+    from core.system_commands import handle_model
 
     fake_user = {"user_id": "u1", "default_llm": "claude"}
 
     with patch("core.providers.matcha_provider.MATCHA_API_KEY", ""), \
          patch("core.api_keys.get_api_key", return_value=None):
 
-        result = _handle_model_command("u1", fake_user, "matcha")
+        result_text, _, _, _ = await handle_model("u1", fake_user, "matcha")
 
-        assert "❌" in result
-        assert "matcha" in result
+        assert "❌" in result_text
+        assert "matcha" in result_text

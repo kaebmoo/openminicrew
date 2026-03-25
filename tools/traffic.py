@@ -176,9 +176,9 @@ class TrafficTool(BaseTool):
         db.log_tool_usage(
             user_id=user_id,
             tool_name=self.name,
-            input_summary=f"{origin} → {destination} [{mode}]",
-            output_summary=output[:200],
             status="success",
+            **db.make_log_field("input", f"{origin} → {destination} [{mode}]", kind="route_query"),
+            **db.make_log_field("output", output, kind="route_result"),
         )
 
         return output

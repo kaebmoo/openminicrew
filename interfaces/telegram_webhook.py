@@ -19,9 +19,11 @@ from core.config import (
     WEBHOOK_HOST, WEBHOOK_PORT, WEBHOOK_PATH,
 )
 from core.user_manager import get_user, register_user
+from core.api_keys import summarize_workspace_key_hygiene
 from core import db
 from core.llm import llm_router
 from core.logger import get_logger
+from core.readiness import STATUS_FAIL, collect_startup_readiness
 from interfaces.telegram_common import parse_command, send_message
 
 log = get_logger(__name__)
@@ -44,9 +46,19 @@ async def _scheduler_watchdog():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: set webhook + watchdog / Shutdown: cleanup"""
+    # Readiness check (defense-in-depth — main.py checks too)
+    from core.readiness import collect_startup_readiness
+    report = collect_startup_readiness(bot_mode="webhook")
+    if report["should_fail_fast"]:
+        failed = [c["name"] for c in report["checks"] if c["status"] == "fail" and c.get("required")]
+        log.error("Startup readiness FAILED: %s", failed)
+        raise RuntimeError(f"Webhook startup blocked: {failed}")
+    elif report["status"] != "ok":
+        log.warning("Startup readiness warnings: %s", report["status"])
+
     # Set webhook
     webhook_url = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
-    payload = {"url": webhook_url}
+    payload = {"url": webhook_url, "allowed_updates": ["message", "callback_query"]}
     if TELEGRAM_WEBHOOK_SECRET:
         payload["secret_token"] = TELEGRAM_WEBHOOK_SECRET
 
@@ -131,14 +143,23 @@ async def health_check():
     """Health check endpoint"""
     uptime = time.time() - _start_time
 
+    readiness = collect_startup_readiness(bot_mode="webhook")
+    api_key_hygiene = summarize_workspace_key_hygiene()
     db_health = db.check_health()
     llm_health = llm_router.health_check()
     last_schedule = db.get_last_scheduler_run()
+    status = readiness["status"]
+    if db_health.get("db") != "ok":
+        status = STATUS_FAIL
+    elif api_key_hygiene["status"] != "ok" and status == "ok":
+        status = "degraded"
 
     return {
-        "status": "ok",
+        "status": status,
         "bot_mode": "webhook",
         "uptime_seconds": round(uptime, 1),
+        "startup_readiness": readiness,
+        "api_key_hygiene": api_key_hygiene,
         "db": db_health,
         "llm": llm_health,
         "last_scheduler_run": last_schedule,
@@ -148,6 +169,12 @@ async def health_check():
 
 async def _process_update(data: dict):
     """Background task — ประมวลผล Telegram update"""
+    # ---- Inline keyboard callback ----
+    callback_query = data.get("callback_query")
+    if callback_query:
+        await _handle_callback_query(callback_query)
+        return
+
     message = data.get("message")
     if not message:
         return
@@ -179,8 +206,11 @@ async def _process_update(data: dict):
     location = message.get("location")
     if location:
         from interfaces.telegram_common import save_user_location
-        save_user_location(user_id, location["latitude"], location["longitude"])
-        send_message(chat_id, "📍 ได้รับตำแหน่งแล้ว! ลองถามได้เลย เช่น \"ร้านกาแฟแถวนี้\" หรือ \"แถวนี้ ไป สยาม\"")
+        saved = save_user_location(user_id, location["latitude"], location["longitude"])
+        if saved:
+            send_message(chat_id, "📍 ได้รับตำแหน่งแล้ว! ลองถามได้เลย เช่น \"ร้านกาแฟแถวนี้\" หรือ \"แถวนี้ ไป สยาม\"")
+        else:
+            send_message(chat_id, "🔒 ยังไม่ได้ให้ consent สำหรับ location\nใช้ /consent location on ก่อน แล้วค่อยส่งตำแหน่งอีกครั้ง")
         return
 
     # Handle photo messages (e.g. expense receipt)
@@ -211,8 +241,38 @@ async def _process_update(data: dict):
             user_id=user_id,
             tool_name="dispatcher",
             status="failed",
-            error_message=str(e),
+            **db.make_log_field("input", text, kind="telegram_message"),
+            **db.make_error_fields(str(e)),
         )
+
+
+async def _handle_callback_query(callback_query: dict):
+    """ประมวลผล inline keyboard callback"""
+    from interfaces.telegram_common import answer_callback_query, edit_message_text
+    from core.callback_handler import handle_callback
+
+    callback_id = callback_query["id"]
+    data = callback_query.get("data", "")
+    message = callback_query.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    message_id = message.get("message_id")
+    from_user = callback_query.get("from", {})
+    telegram_chat_id = from_user.get("id") or chat_id
+
+    log.info("Callback query from %s: data=%s", telegram_chat_id, data)
+
+    user = get_user(telegram_chat_id)
+    if not user:
+        answer_callback_query(callback_id, "กรุณาลงทะเบียนก่อน /start")
+        return
+
+    user_id = user["user_id"]
+
+    try:
+        await handle_callback(user_id, data, chat_id=chat_id, message_id=message_id, callback_id=callback_id)
+    except Exception as e:
+        log.error("Callback handler failed: %s", e, exc_info=True)
+        answer_callback_query(callback_id, "เกิดข้อผิดพลาด")
 
 
 def start_webhook():

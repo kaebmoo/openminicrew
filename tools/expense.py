@@ -40,12 +40,14 @@ class ExpenseTool(BaseTool):
                             tokens = tokens[1:]
                         result = self._add(user_id, tokens)
 
+            from tools.response import InlineKeyboardResponse
+            log_output = result.memory_text or result.text if isinstance(result, InlineKeyboardResponse) else result
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=raw_args[:100],
-                output_summary=result[:200],
                 status="success",
+                **db.make_log_field("input", raw_args, kind="expense_command"),
+                **db.make_log_field("output", log_output, kind="expense_result"),
             )
             return result
         except (OSError, RuntimeError, TypeError, ValueError) as e:
@@ -53,11 +55,22 @@ class ExpenseTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=raw_args[:100],
                 status="failed",
-                error_message=str(e),
+                **db.make_log_field("input", raw_args, kind="expense_command"),
+                **db.make_error_fields(str(e)),
             )
             return f"❌ ใช้งาน expense ไม่สำเร็จ: {e}"
+
+    # คำที่ไม่ใช่ชื่อหมวดหมู่ — LLM มักใส่หน่วยเงินมาด้วย
+    _CURRENCY_WORDS = {"บาท", "baht", "thb", "฿"}
+
+    # หมวดหมู่ที่รู้จัก — ใช้ตรวจว่า token เป็นชื่อหมวดจริงหรือเป็นแค่ชื่อรายการ
+    _KNOWN_CATEGORIES = {
+        "อาหาร", "เครื่องดื่ม", "เดินทาง", "ช็อปปิ้ง", "ของใช้",
+        "สาธารณูปโภค", "สุขภาพ", "บันเทิง", "การศึกษา", "โอนเงิน", "ทั่วไป",
+        "food", "drink", "transport", "shopping", "utility", "health",
+        "entertainment", "education", "transfer", "general",
+    }
 
     def _add(self, user_id: str, tokens: list[str]) -> str:
         if len(tokens) < 2:
@@ -66,8 +79,29 @@ class ExpenseTool(BaseTool):
             amount = float(tokens[0].replace(",", ""))
         except ValueError:
             return "❌ จำนวนเงินไม่ถูกต้อง — ตัวอย่าง: /expense 120 อาหาร ก๋วยเตี๋ยว"
-        category = tokens[1]
-        note = " ".join(tokens[2:]).strip()
+
+        # กรองคำที่เป็นหน่วยเงินออก (LLM มักส่ง "65 บาท เบียร์" แทน "65 เครื่องดื่ม เบียร์")
+        rest = [t for t in tokens[1:] if t.lower() not in self._CURRENCY_WORDS]
+
+        if not rest:
+            # เหลือแค่ตัวเลขกับ "บาท" → ไม่มีข้อมูลพอ
+            category, note = "ทั่วไป", ""
+        elif len(rest) == 1:
+            # token เดียว: ถ้าเป็นหมวดที่รู้จัก → ใช้เป็น category, ไม่งั้น → เป็น note
+            if rest[0] in self._KNOWN_CATEGORIES:
+                category, note = rest[0], ""
+            else:
+                category, note = "ทั่วไป", rest[0]
+        else:
+            # 2+ tokens: ตัวแรกเป็น category, ที่เหลือเป็น note
+            if rest[0] in self._KNOWN_CATEGORIES:
+                category = rest[0]
+                note = " ".join(rest[1:]).strip()
+            else:
+                # ตัวแรกไม่ใช่หมวดที่รู้จัก → ทุก token เป็น note
+                category = "ทั่วไป"
+                note = " ".join(rest).strip()
+
         expense_id = db.add_expense(user_id, amount=amount, category=category, note=note)
         return f"💸 บันทึกรายจ่ายแล้ว [#{expense_id}]\n{amount:,.2f} บาท\nหมวด: {category}" + (f"\nหมายเหตุ: {note}" if note else "")
 
@@ -101,7 +135,7 @@ class ExpenseTool(BaseTool):
         return "\n".join(lines)
 
     async def _handle_photo(self, user_id: str, raw_args: str) -> str:
-        """รับรูปบิล/slip จาก Telegram → ใช้ Gemini Vision วิเคราะห์ → บันทึกรายจ่าย"""
+        """รับรูปบิล/slip จาก Telegram → ใช้ Gemini Vision วิเคราะห์ → บันทึกรายจ่ายแยกรายการ"""
         # Parse __photo:<file_id> <caption>
         parts = raw_args.split(None, 1)
         file_id = parts[0].replace("__photo:", "")
@@ -115,42 +149,98 @@ class ExpenseTool(BaseTool):
 
         # Use Gemini Vision to analyze the receipt/slip
         extracted = await self._extract_expense_from_image(image_bytes, caption)
+
+        if extracted == "NO_API_KEY":
+            return "❌ ยังไม่ได้ตั้งค่า Gemini API key — ไม่สามารถวิเคราะห์รูปได้\nตั้งค่าด้วย: /setkey gemini <key>\nหรือพิมพ์เอง: /expense 104 ช็อปปิ้ง Villa Market"
+        if isinstance(extracted, str) and extracted.startswith("API_ERROR:"):
+            error_detail = extracted.replace("API_ERROR:", "")
+            return f"❌ Gemini Vision เกิดข้อผิดพลาด: {error_detail}\nลองส่งรูปใหม่ หรือพิมพ์เอง: /expense 104 ช็อปปิ้ง Villa Market"
         if not extracted:
             return "❌ ไม่สามารถอ่านข้อมูลจากรูปได้ กรุณาลองถ่ายใหม่ให้ชัดขึ้น หรือพิมพ์เอง: /expense 120 อาหาร"
 
-        # บันทึกรายจ่าย
-        amount = extracted["amount"]
-        category = extracted.get("category", "ทั่วไป")
-        note = extracted.get("note", "")
-        if caption and not note:
-            note = caption
+        # Normalize: ถ้า Gemini คืน dict เดียว ให้ wrap เป็น list
+        items = extracted if isinstance(extracted, list) else [extracted]
+        items = [it for it in items if isinstance(it, dict) and it.get("amount", 0) > 0]
+        if not items:
+            return "❌ ไม่สามารถอ่านข้อมูลจากรูปได้ กรุณาลองถ่ายใหม่ให้ชัดขึ้น หรือพิมพ์เอง: /expense 120 อาหาร"
 
-        expense_id = db.add_expense(user_id, amount=amount, category=category, note=note)
-        return (
-            f"📸 บันทึกรายจ่ายจากรูปแล้ว [#{expense_id}]\n"
-            f"{amount:,.2f} บาท\n"
-            f"หมวด: {category}"
-            + (f"\nหมายเหตุ: {note}" if note else "")
+        # ดึงชื่อร้านจาก item แรก (ถ้ามี) เพื่อใส่ใน note
+        store = items[0].get("store", "")
+
+        # รายการเดียว → บันทึกทันที
+        if len(items) == 1:
+            item = items[0]
+            amount = item["amount"]
+            category = item.get("category", "ทั่วไป")
+            note = item.get("note", "")
+            if store and store not in note:
+                note = f"{store} — {note}" if note else store
+            if caption and not note:
+                note = caption
+            expense_id = db.add_expense(user_id, amount=amount, category=category, note=note)
+            return (
+                f"📸 บันทึกรายจ่ายจากรูปแล้ว\n"
+                f"  [#{expense_id}] {amount:,.2f} บาท — {category}"
+                + (f": {note}" if note else "")
+            )
+
+        # หลายรายการ → แสดง preview + inline keyboard ให้ user เลือก
+        from core.callback_handler import store_pending_expense
+        from tools.response import InlineKeyboardResponse
+
+        pending_id = store_pending_expense(user_id, items, store)
+        total = sum(it["amount"] for it in items)
+
+        lines = [f"📸 อ่านจากรูปได้ {len(items)} รายการ ({store}):" if store else f"📸 อ่านจากรูปได้ {len(items)} รายการ:"]
+        for item in items:
+            amount = item["amount"]
+            category = item.get("category", "ทั่วไป")
+            note = item.get("note", "")
+            lines.append(f"  • {amount:,.2f} — {category}" + (f": {note}" if note else ""))
+        lines.append(f"\nรวม {total:,.2f} บาท")
+        lines.append("\nเลือกวิธีบันทึก:")
+
+        preview_text = "\n".join(lines)
+        buttons = [
+            [
+                {"text": f"📋 แยก {len(items)} รายการ", "callback_data": f"exp_split:{pending_id}"},
+                {"text": f"📦 รวม 1 รายการ", "callback_data": f"exp_combine:{pending_id}"},
+            ],
+            [
+                {"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"},
+            ],
+        ]
+
+        return InlineKeyboardResponse(
+            text=preview_text,
+            buttons=buttons,
+            memory_text=f"📸 อ่านจากรูป {len(items)} รายการ รวม {total:,.2f} บาท (รอ user เลือกวิธีบันทึก)",
         )
 
-    async def _extract_expense_from_image(self, image_bytes: bytes, hint: str = "") -> dict | None:
-        """ใช้ Gemini Vision วิเคราะห์รูปบิล/slip → return {amount, category, note} หรือ None"""
+    async def _extract_expense_from_image(self, image_bytes: bytes, hint: str = "") -> list | str | None:
+        """ใช้ Gemini Vision วิเคราะห์รูปบิล/slip → return list[dict], error string, หรือ None"""
+        from core.config import GEMINI_API_KEY
+
+        if not GEMINI_API_KEY:
+            log.warning("Gemini API key not configured, cannot analyze receipt image")
+            return "NO_API_KEY"
+
         try:
             from google import genai
             from google.genai import types as genai_types
-            from core.config import GEMINI_API_KEY
-
-            if not GEMINI_API_KEY:
-                log.warning("Gemini API key not configured, cannot analyze receipt image")
-                return None
 
             client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 30000})
 
             prompt = (
                 "วิเคราะห์รูปนี้ซึ่งเป็นใบเสร็จ, บิล, หรือ slip การโอนเงิน\n"
-                "ดึงข้อมูลออกมาเป็น JSON format:\n"
-                '{"amount": <จำนวนเงิน (number)>, "category": "<หมวดหมู่>", "note": "<รายละเอียดสั้นๆ>"}\n'
-                "หมวดหมู่ที่แนะนำ: อาหาร, เครื่องดื่ม, เดินทาง, ช็อปปิ้ง, สาธารณูปโภค, สุขภาพ, บันเทิง, การศึกษา, โอนเงิน, ทั่วไป\n"
+                "ดึงรายการสินค้า/บริการ **ทุกรายการ** ออกมาเป็น JSON:\n"
+                '{"store": "<ชื่อร้าน>", "items": [\n'
+                '  {"amount": <ราคาต่อชิ้น (number)>, "category": "<หมวดหมู่>", "note": "<ชื่อรายการสั้นๆ>"},\n'
+                "  ...\n"
+                "]}\n"
+                "หมวดหมู่ที่แนะนำ: อาหาร, เครื่องดื่ม, เดินทาง, ช็อปปิ้ง, ของใช้, สาธารณูปโภค, สุขภาพ, บันเทิง, การศึกษา, โอนเงิน, ทั่วไป\n"
+                "ใช้ราคาต่อชิ้นของแต่ละรายการ (ไม่ใช่ยอดรวม)\n"
+                "ถ้าเป็น slip โอนเงินที่มีรายการเดียว ให้คืน items เพียง 1 ตัว\n"
                 "ตอบเฉพาะ JSON เท่านั้น ไม่ต้องอธิบายเพิ่ม\n"
                 "ถ้าอ่านไม่ออกหรือไม่ใช่ใบเสร็จ/บิล/slip ให้ตอบ: null"
             )
@@ -166,6 +256,7 @@ class ExpenseTool(BaseTool):
             )
 
             if not resp.candidates or not resp.candidates[0].content:
+                log.warning("Gemini Vision returned no candidates for receipt image")
                 return None
 
             response_text = ""
@@ -174,28 +265,59 @@ class ExpenseTool(BaseTool):
                     response_text += part.text
 
             response_text = response_text.strip()
+            log.info("Gemini Vision response: %s", response_text[:500])
+
             if not response_text or response_text == "null":
                 return None
 
             # Extract JSON from response (handle markdown code blocks)
             json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
             if not json_match:
+                # Try matching a bare array [...]
+                array_match = re.search(r"\[.*\]", response_text, re.DOTALL)
+                if array_match:
+                    data = json.loads(array_match.group())
+                    if isinstance(data, list):
+                        return [it for it in (self._normalize_item(d) for d in data if isinstance(d, dict)) if it]
+                log.warning("Gemini Vision response has no JSON: %s", response_text[:200])
                 return None
 
             data = json.loads(json_match.group())
-            amount = float(data.get("amount", 0))
-            if amount <= 0:
-                return None
 
-            return {
-                "amount": amount,
-                "category": data.get("category", "ทั่วไป"),
-                "note": data.get("note", ""),
-            }
+            # Format: {"store": "...", "items": [...]}
+            if "items" in data and isinstance(data["items"], list):
+                store = data.get("store", "")
+                items = []
+                for it in data["items"]:
+                    if isinstance(it, dict):
+                        normalized = self._normalize_item(it)
+                        if normalized:
+                            normalized["store"] = store
+                            items.append(normalized)
+                return items if items else None
+
+            # Fallback: single item {"amount": ..., "category": ..., "note": ...}
+            normalized = self._normalize_item(data)
+            return [normalized] if normalized else None
 
         except Exception as e:
-            log.error("Failed to extract expense from image: %s", e)
+            log.error("Failed to extract expense from image: %s", e, exc_info=True)
+            return f"API_ERROR:{e}"
+
+    @staticmethod
+    def _normalize_item(data: dict) -> dict | None:
+        """Normalize a single expense item dict → {amount, category, note} or None"""
+        try:
+            amount = float(data.get("amount", 0))
+        except (ValueError, TypeError):
             return None
+        if amount <= 0:
+            return None
+        return {
+            "amount": amount,
+            "category": data.get("category", "ทั่วไป"),
+            "note": data.get("note", data.get("name", "")),
+        }
 
     def _usage(self) -> str:
         return (
@@ -214,7 +336,7 @@ class ExpenseTool(BaseTool):
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"args": {"type": "string", "description": "คำสั่ง expense"}},
+                "properties": {"args": {"type": "string", "description": "รูปแบบ: '<จำนวนเงิน> <หมวดหมู่> <หมายเหตุ>' ห้ามใส่หน่วย 'บาท' หมวดหมู่ต้องเป็น: อาหาร|เครื่องดื่ม|เดินทาง|ช็อปปิ้ง|ของใช้|สาธารณูปโภค|สุขภาพ|บันเทิง|การศึกษา|โอนเงิน|ทั่วไป เช่น '65 เครื่องดื่ม เบียร์', '350 เครื่องดื่ม เหล้า', '120 อาหาร ก๋วยเตี๋ยว' หรือ 'list', 'summary month'"}},
                 "required": ["args"],
             },
         }

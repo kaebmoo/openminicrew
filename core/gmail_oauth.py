@@ -6,10 +6,10 @@ from datetime import datetime, timedelta
 from google.auth.exceptions import GoogleAuthError
 from google_auth_oauthlib.flow import Flow
 
-from core.config import GMAIL_CREDENTIALS_FILE, WEBHOOK_HOST
+from core.config import WEBHOOK_HOST
 from core.security import (
     GMAIL_SCOPES,
-    ensure_gmail_credentials_file_secure,
+    get_gmail_client_config,
     get_gmail_token_path,
     write_gmail_token_payload,
 )
@@ -31,18 +31,20 @@ def generate_auth_url(user_id: str, chat_id: str) -> str | None:
     - return URL string ถ้าสำเร็จ
     - return None ถ้า credentials.json ไม่มีหรือไม่ได้ตั้งค่า WEBHOOK_HOST
     """
-    if not ensure_gmail_credentials_file_secure():
-        return None
     if not WEBHOOK_HOST:
         log.warning("WEBHOOK_HOST not configured")
+        return None
+
+    client_config = get_gmail_client_config()
+    if client_config is None:
         return None
 
     state = secrets.token_urlsafe(32)
     expires_at = (datetime.now() + timedelta(minutes=15)).isoformat()
     db.save_oauth_state(state, user_id, str(chat_id), expires_at)
 
-    flow = Flow.from_client_secrets_file(
-        str(GMAIL_CREDENTIALS_FILE),
+    flow = Flow.from_client_config(
+        client_config,
         scopes=GMAIL_SCOPES,
         redirect_uri=get_redirect_uri(),
     )
@@ -69,8 +71,12 @@ def complete_oauth(code: str, state: str) -> tuple[str, str] | None:
     chat_id = record["chat_id"]
 
     try:
-        flow = Flow.from_client_secrets_file(
-            str(GMAIL_CREDENTIALS_FILE),
+        client_config = get_gmail_client_config()
+        if client_config is None:
+            return None
+
+        flow = Flow.from_client_config(
+            client_config,
             scopes=GMAIL_SCOPES,
             redirect_uri=get_redirect_uri(),
             state=state,
@@ -79,6 +85,7 @@ def complete_oauth(code: str, state: str) -> tuple[str, str] | None:
 
         token_path = get_gmail_token_path(user_id)
         write_gmail_token_payload(token_path, flow.credentials.to_json())
+        db.set_user_consent(user_id, db.CONSENT_GMAIL, db.CONSENT_STATUS_GRANTED, source="gmail_oauth_webhook")
         log.info("Gmail OAuth completed for user %s", user_id)
         return user_id, chat_id
 

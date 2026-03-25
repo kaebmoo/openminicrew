@@ -35,11 +35,23 @@ class QRCodeGenTool(BaseTool):
                 image=image_bytes,
                 image_caption="🔳 QR Code",
             )
-            db.log_tool_usage(user_id, self.name, input_summary=payload[:100], output_summary="QR image generated", status="success")
+            db.log_tool_usage(
+                user_id,
+                self.name,
+                status="success",
+                **db.make_log_field("input", payload, kind="qr_payload"),
+                **db.make_log_field("output", "png", kind="media_image", size=len(image_bytes)),
+            )
             return result
         except (ImportError, ValueError, RuntimeError) as e:
             log.error("QR tool failed for %s: %s", user_id, e)
-            db.log_tool_usage(user_id, self.name, input_summary=payload[:100], status="failed", error_message=str(e))
+            db.log_tool_usage(
+                user_id,
+                self.name,
+                status="failed",
+                **db.make_log_field("input", payload, kind="qr_payload"),
+                **db.make_error_fields(str(e)),
+            )
             return f"❌ สร้าง QR Code ไม่สำเร็จ: {e}"
 
     def get_tool_spec(self) -> dict:

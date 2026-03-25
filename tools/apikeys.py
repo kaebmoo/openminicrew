@@ -1,6 +1,6 @@
 """API Keys tool — จัดการ API keys สำหรับบริการต่างๆ"""
 
-from core.api_keys import get_supported_services, list_user_keys, remove_api_key, set_api_key
+from core.api_keys import get_rotation_period_days, get_supported_services, list_user_keys, remove_api_key, set_api_key
 from core.logger import get_logger
 from tools.base import BaseTool
 
@@ -56,7 +56,7 @@ class ApiKeysTool(BaseTool):
 
         try:
             set_api_key(user_id, service, value)
-        except RuntimeError as err:
+        except (RuntimeError, ValueError) as err:
             return f"❌ {err}"
 
         # ลบข้อความ user ที่มี API key เพื่อความปลอดภัย
@@ -67,7 +67,8 @@ class ApiKeysTool(BaseTool):
             except ImportError as err:
                 log.warning("Failed to import delete_message_safe: %s", err)
 
-        return f"✅ บันทึก key สำหรับ `{service}` แล้ว"
+        rotation_days = get_rotation_period_days(service)
+        return f"✅ บันทึก key สำหรับ `{service}` แล้ว\nแนะนำ rotate ภายใน {rotation_days} วัน"
 
     def _list(self, user_id: str) -> str:
         keys = list_user_keys(user_id)
@@ -77,7 +78,22 @@ class ApiKeysTool(BaseTool):
         lines = ["🔑 *API keys ของคุณ*\n"]
         for item in keys:
             updated = (item.get("updated_at") or "")[:16] or "-"
-            lines.append(f"• `{item['service']}` (updated: {updated})")
+            status_parts = [f"updated: {updated}"]
+            if item.get("age_days") is not None:
+                status_parts.append(f"age: {item['age_days']}d")
+            if item.get("rotation_due"):
+                status_parts.append("rotation due")
+            elif item.get("age_days") is not None:
+                status_parts.append(f"rotate every {item['rotation_days']}d")
+            if item.get("is_weak"):
+                status_parts.append("weak legacy value")
+            if not item.get("value_available", True):
+                status_parts.append("value unavailable without ENCRYPTION_KEY")
+            lines.append(f"• `{item['service']}` ({', '.join(status_parts)})")
+            if item.get("is_weak"):
+                lines.append(f"  - reasons: {', '.join(item['weak_reasons'])}")
+        lines.append("")
+        lines.append("หมายเหตุ: rotation reporting เป็น advisory only และยังไม่บังคับเปลี่ยน key")
         return "\n".join(lines)
 
     def _remove(self, user_id: str, service: str) -> str:

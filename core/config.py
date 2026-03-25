@@ -36,7 +36,7 @@ OWNER_TELEGRAM_CHAT_ID = _require("OWNER_TELEGRAM_CHAT_ID")
 OWNER_DISPLAY_NAME = _optional("OWNER_DISPLAY_NAME", "Owner")
 
 # === LLM ===
-DEFAULT_LLM = _optional("DEFAULT_LLM", "claude")
+DEFAULT_LLM = _optional("DEFAULT_LLM", "gemini")
 FALLBACK_LLM = _optional("FALLBACK_LLM", "gemini")  # fallback เมื่อ provider หลัก auth fail
 ANTHROPIC_API_KEY = _optional("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY = _optional("GEMINI_API_KEY", "")
@@ -67,6 +67,11 @@ MATCHA_MODEL_MID = _optional("MATCHA_MODEL_MID", "")
 MATCHA_SSL_VERIFY = _optional("MATCHA_SSL_VERIFY", "true").lower() in ("true", "1", "yes")
 MATCHA_TIMEOUT = int(_optional("MATCHA_TIMEOUT", "60"))
 ENCRYPTION_KEY = _optional("ENCRYPTION_KEY", "")
+STARTUP_READINESS_POLICY = _optional("STARTUP_READINESS_POLICY", "auto").strip().lower() or "auto"
+API_KEY_ROTATION_DAYS_DEFAULT = int(_optional("API_KEY_ROTATION_DAYS_DEFAULT", "180"))
+WORK_IMAP_PASSWORD_ROTATION_DAYS = int(_optional("WORK_IMAP_PASSWORD_ROTATION_DAYS", "90"))
+WORK_IMAP_USER_ROTATION_DAYS = int(_optional("WORK_IMAP_USER_ROTATION_DAYS", "180"))
+WORK_IMAP_HOST_ROTATION_DAYS = int(_optional("WORK_IMAP_HOST_ROTATION_DAYS", "365"))
 
 # === Memory ===
 MAX_CONTEXT_MESSAGES = int(_optional("MAX_CONTEXT_MESSAGES", "10"))

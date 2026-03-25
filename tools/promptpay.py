@@ -281,9 +281,9 @@ class PromptPayTool(BaseTool):
             )
             db.log_tool_usage(
                 user_id, self.name,
-                input_summary=(args or promptpay_input)[:100],
-                output_summary=f"PromptPay QR ({id_type})",
                 status="success",
+                **db.make_log_field("input", args or promptpay_input, kind="promptpay_request"),
+                **db.make_log_field("output", id_type, kind="promptpay_qr", size=len(result.image or b"")),
             )
             return result
 
@@ -291,8 +291,9 @@ class PromptPayTool(BaseTool):
             log.error("PromptPay tool failed for %s: %s", user_id, e)
             db.log_tool_usage(
                 user_id, self.name,
-                input_summary=(args or "")[:100],
-                status="failed", error_message=str(e),
+                status="failed",
+                **db.make_log_field("input", args or "", kind="promptpay_request"),
+                **db.make_error_fields(str(e)),
             )
             return f"สร้าง PromptPay QR ไม่สำเร็จ: {e}"
 

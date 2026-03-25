@@ -132,3 +132,39 @@ def test_handle_update_registers_user_on_start():
 
     assert calls == [("999", registered_user, 999, "/start")]
     assert mock_send_message.called
+
+
+def test_handle_update_rejects_location_without_explicit_consent():
+    update = {
+        "message": {
+            "chat": {"id": 12345},
+            "location": {"latitude": 13.7, "longitude": 100.5},
+        }
+    }
+    user = {"user_id": "u-123", "telegram_chat_id": "12345"}
+
+    with patch("interfaces.telegram_polling.get_user", return_value=user), \
+            patch("interfaces.telegram_common.save_user_location", return_value=False) as mock_save, \
+         patch("interfaces.telegram_polling.send_message") as mock_send_message:
+        telegram_polling.handle_update(update)
+
+    mock_save.assert_called_once_with("u-123", 13.7, 100.5)
+    assert "consent location on" in mock_send_message.call_args[0][1]
+
+
+def test_handle_update_accepts_location_after_consent():
+    update = {
+        "message": {
+            "chat": {"id": 12345},
+            "location": {"latitude": 13.7, "longitude": 100.5},
+        }
+    }
+    user = {"user_id": "u-123", "telegram_chat_id": "12345"}
+
+    with patch("interfaces.telegram_polling.get_user", return_value=user), \
+            patch("interfaces.telegram_common.save_user_location", return_value=True) as mock_save, \
+         patch("interfaces.telegram_polling.send_message") as mock_send_message:
+        telegram_polling.handle_update(update)
+
+    mock_save.assert_called_once_with("u-123", 13.7, 100.5)
+    assert "ได้รับตำแหน่งแล้ว" in mock_send_message.call_args[0][1]

@@ -399,9 +399,9 @@ class ExchangeRateTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=f"{period} {args or 'default'} {date}"[:100],
-                output_summary=output[:200],
                 status="success",
+                **db.make_log_field("input", f"{period} {args or 'default'} {date}", kind="exchange_rate_query"),
+                **db.make_log_field("output", output, kind="exchange_rate_result"),
             )
             return output
 
@@ -410,9 +410,9 @@ class ExchangeRateTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=f"{period} {args or 'default'} {date}"[:100],
                 status="failed",
-                error_message=str(e),
+                **db.make_log_field("input", f"{period} {args or 'default'} {date}", kind="exchange_rate_query"),
+                **db.make_error_fields(str(e)),
             )
             return f"เกิดข้อผิดพลาดในการดึงอัตราแลกเปลี่ยน: {e}"
 

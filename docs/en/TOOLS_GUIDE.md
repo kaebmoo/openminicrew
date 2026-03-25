@@ -139,9 +139,9 @@ class MyTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=args[:100],
-                output_summary=result[:200],
                 status="success",
+                **db.make_log_field("input", args, kind="tool_command"),
+                **db.make_log_field("output", result, kind="tool_result"),
             )
 
             return result
@@ -151,9 +151,9 @@ class MyTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=args[:100],
                 status="failed",
-                error_message=str(e),
+                **db.make_log_field("input", args, kind="tool_command"),
+                **db.make_error_fields(str(e)),
             )
             return f"Error: {e}"
 
@@ -177,6 +177,12 @@ class MyTool(BaseTool):
             },
         }
 ```
+
+Structured logging notes:
+
+- prefer `db.make_log_field(...)` for input and output metadata instead of raw `input_summary` and `output_summary`
+- prefer `db.make_error_fields(...)` so failures store redacted error metadata instead of raw exception text
+- choose stable `kind` values such as `tool_command`, `tool_result`, `search_query`, or `media_image` so logs stay analyzable after minimization
 
 ---
 

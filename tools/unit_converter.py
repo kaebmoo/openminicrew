@@ -91,11 +91,23 @@ class UnitConverterTool(BaseTool):
 
         try:
             result = self._convert(query)
-            db.log_tool_usage(user_id, self.name, input_summary=query[:100], output_summary=result[:200], status="success")
+            db.log_tool_usage(
+                user_id,
+                self.name,
+                status="success",
+                **db.make_log_field("input", query, kind="conversion_query"),
+                **db.make_log_field("output", result, kind="conversion_result"),
+            )
             return result
         except (TypeError, ValueError) as e:
             log.error("Unit converter failed for %s: %s", user_id, e)
-            db.log_tool_usage(user_id, self.name, input_summary=query[:100], status="failed", error_message=str(e))
+            db.log_tool_usage(
+                user_id,
+                self.name,
+                status="failed",
+                **db.make_log_field("input", query, kind="conversion_query"),
+                **db.make_error_fields(str(e)),
+            )
             return f"❌ แปลงหน่วยไม่สำเร็จ: {e}\n\n{self._usage()}"
 
     def _convert(self, query: str) -> str:

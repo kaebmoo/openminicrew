@@ -157,9 +157,9 @@ class PlacesTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=query,
                 status="success",
-                output_summary="No results",
+                **db.make_log_field("input", query, kind="places_query"),
+                **db.make_log_field("output", "0 places", kind="places_result_count", size=0),
             )
             return (
                 f"🔍 ไม่พบสถานที่สำหรับ \"{query}\"\n\n"
@@ -175,9 +175,9 @@ class PlacesTool(BaseTool):
         db.log_tool_usage(
             user_id=user_id,
             tool_name=self.name,
-            input_summary=query,
-            output_summary=f"Found {len(places)} places",
             status="success",
+            **db.make_log_field("input", query, kind="places_query"),
+            **db.make_log_field("output", f"Found {len(places)} places", kind="places_result_count", size=len(places)),
         )
 
         return output

@@ -225,11 +225,11 @@ class GmailSummaryTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=f"{len(emails_data)} emails ({display_label})",
-                output_summary=resp["content"][:200],
                 llm_model=resp["model"],
                 token_used=resp["token_used"],
                 status="success",
+                **db.make_log_field("input", f"{len(emails_data)} emails ({display_label})", kind="gmail_batch_request"),
+                **db.make_log_field("output", resp["content"], kind="gmail_summary_text"),
             )
 
             return f"📬 สรุปอีเมล {len(emails_data)} ฉบับ ({display_label}):\n\n{resp['content']}"
@@ -240,7 +240,7 @@ class GmailSummaryTool(BaseTool):
                 user_id=user_id,
                 tool_name=self.name,
                 status="failed",
-                error_message=str(e),
+                **db.make_error_fields(str(e)),
             )
             return f"เกิดข้อผิดพลาดในการดึงอีเมล: {e}"
 

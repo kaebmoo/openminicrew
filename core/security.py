@@ -22,6 +22,8 @@ GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
 ]
 
+SENSITIVE_FIELD_PREFIX = "enc:"
+
 
 def get_gmail_token_path(user_id: str) -> Path:
     return CREDENTIALS_DIR / f"gmail_{user_id}.json"
@@ -67,6 +69,35 @@ def _get_token_cipher() -> Fernet | None:
     return Fernet(config.ENCRYPTION_KEY.encode())
 
 
+def is_sensitive_field_encrypted(value: str | None) -> bool:
+    return bool(value) and value.startswith(SENSITIVE_FIELD_PREFIX)
+
+
+def encrypt_sensitive_field(value: str, *, field_name: str = "sensitive field") -> str:
+    cipher = _get_token_cipher()
+    if cipher is None:
+        raise RuntimeError(f"ENCRYPTION_KEY is required for {field_name} storage")
+    return SENSITIVE_FIELD_PREFIX + cipher.encrypt(value.encode()).decode()
+
+
+def decrypt_sensitive_field(value: str | None, *, field_name: str = "sensitive field") -> str | None:
+    if not value:
+        return value
+    if not is_sensitive_field_encrypted(value):
+        return value
+
+    cipher = _get_token_cipher()
+    if cipher is None:
+        log.warning("ENCRYPTION_KEY not set while reading encrypted %s", field_name)
+        return None
+
+    try:
+        return cipher.decrypt(value[len(SENSITIVE_FIELD_PREFIX):].encode()).decode()
+    except InvalidToken:
+        log.error("Failed to decrypt encrypted %s", field_name)
+        return None
+
+
 def _decrypt_token_payload(payload: str) -> str:
     cipher = _get_token_cipher()
     if cipher is None:
@@ -82,6 +113,77 @@ def _encrypt_token_payload(payload: str) -> str:
     if cipher is None:
         raise RuntimeError("ENCRYPTION_KEY is required for Gmail token storage")
     return cipher.encrypt(payload.encode()).decode()
+
+
+def _read_gmail_client_secrets_payload() -> tuple[str, bool]:
+    raw_payload = GMAIL_CREDENTIALS_FILE.read_text(encoding="utf-8")
+
+    if not config.ENCRYPTION_KEY:
+        return raw_payload, False
+
+    decrypted_payload = _decrypt_token_payload(raw_payload)
+    stored_encrypted = decrypted_payload != raw_payload or not raw_payload.lstrip().startswith("{")
+    return decrypted_payload, stored_encrypted
+
+
+def _parse_gmail_client_config(payload: str) -> dict:
+    client_config = json.loads(payload)
+    if not isinstance(client_config, dict) or not any(key in client_config for key in ("installed", "web")):
+        raise ValueError("Invalid Gmail client secrets JSON: expected top-level 'installed' or 'web'")
+    return client_config
+
+
+def write_gmail_client_secrets_payload(payload: str):
+    encrypted_payload = _encrypt_token_payload(payload)
+    GMAIL_CREDENTIALS_FILE.write_text(encrypted_payload, encoding="utf-8")
+    secure_file_permissions(GMAIL_CREDENTIALS_FILE)
+
+
+def _migrate_plaintext_gmail_client_secrets_if_needed(payload: str, stored_encrypted: bool):
+    if stored_encrypted or not config.ENCRYPTION_KEY:
+        return
+
+    try:
+        write_gmail_client_secrets_payload(payload)
+        log.info("Migrated credentials.json to encrypted storage")
+    except (OSError, ValueError, TypeError, RuntimeError) as err:
+        log.warning("Failed to migrate credentials.json to encrypted storage: %s", err)
+
+
+def get_gmail_client_config() -> dict | None:
+    if not GMAIL_CREDENTIALS_FILE.exists():
+        log.error("Missing %s", GMAIL_CREDENTIALS_FILE)
+        return None
+
+    if not ensure_gmail_credentials_file_secure():
+        return None
+
+    try:
+        payload, stored_encrypted = _read_gmail_client_secrets_payload()
+
+        if not config.ENCRYPTION_KEY and not payload.lstrip().startswith("{"):
+            log.error("Encrypted credentials.json cannot be read without ENCRYPTION_KEY")
+            return None
+
+        client_config = _parse_gmail_client_config(payload)
+        _migrate_plaintext_gmail_client_secrets_if_needed(payload, stored_encrypted)
+        return client_config
+    except (OSError, ValueError, TypeError) as err:
+        log.error("Failed to load Gmail client secrets: %s", err)
+        return None
+
+
+def import_gmail_client_secrets(source_path: str | Path):
+    source = Path(source_path)
+    if not source.exists():
+        raise FileNotFoundError(f"Gmail client secrets file not found: {source}")
+    if not config.ENCRYPTION_KEY:
+        raise RuntimeError("ENCRYPTION_KEY is required for Gmail client secret storage")
+
+    payload = source.read_text(encoding="utf-8")
+    _parse_gmail_client_config(payload)
+    write_gmail_client_secrets_payload(payload)
+    return GMAIL_CREDENTIALS_FILE
 
 
 def _read_token_payload(token_path: Path) -> tuple[str, bool]:
@@ -160,20 +262,16 @@ def authorize_gmail_interactive(user_id: str) -> bool:
     Interactive OAuth flow — ใช้ตอน setup ครั้งแรกบนเครื่อง owner
     เปิด browser ให้ login + authorize
     """
-    if not GMAIL_CREDENTIALS_FILE.exists():
-        log.error("Missing %s", GMAIL_CREDENTIALS_FILE)
-        return False
-
-    ensure_gmail_credentials_file_secure()
-
     if not config.ENCRYPTION_KEY:
         log.error("ENCRYPTION_KEY is required before authorizing Gmail tokens")
         return False
 
     try:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            str(GMAIL_CREDENTIALS_FILE), GMAIL_SCOPES
-        )
+        client_config = get_gmail_client_config()
+        if client_config is None:
+            return False
+
+        flow = InstalledAppFlow.from_client_config(client_config, GMAIL_SCOPES)
         creds = flow.run_local_server(port=0)
 
         token_path = get_gmail_token_path(user_id)
@@ -189,6 +287,8 @@ def authorize_gmail_interactive(user_id: str) -> bool:
                     "UPDATE users SET gmail_authorized = 1, updated_at = ? WHERE user_id = ?",
                     (datetime.now().isoformat(), str(user_id)),
                 )
+            from core import db
+            db.set_user_consent(user_id, db.CONSENT_GMAIL, db.CONSENT_STATUS_GRANTED, source="gmail_oauth_interactive")
         except sqlite3.Error as db_err:
             log.warning("Failed to update gmail_authorized in DB: %s", db_err)
 

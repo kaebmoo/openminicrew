@@ -27,7 +27,7 @@ Core user table. Each Telegram user maps to one row.
 | phone_number | TEXT | | Phone number |
 | status | TEXT | `'active'` | Account status |
 | role | TEXT | `'user'` | `owner` or `user` |
-| default_llm | TEXT | `'claude'` | Preferred LLM provider |
+| default_llm | TEXT | `'gemini'` | Preferred LLM provider |
 | smart_inbox_mode | TEXT | `'confirm'` | Smart inbox behavior |
 | timezone | TEXT | `'Asia/Bangkok'` | User timezone |
 | gmail_authorized | INTEGER | `0` | Gmail OAuth completed? |

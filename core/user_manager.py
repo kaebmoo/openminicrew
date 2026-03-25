@@ -39,7 +39,9 @@ def register_user(chat_id: str | int, display_name: str = "") -> dict:
         role="user",
         default_llm=DEFAULT_LLM,
         timezone=TIMEZONE,
+        ensure_default_consents=False,
     )
+    db.initialize_explicit_consents_for_new_user(user_id, source="registration")
     log.info("Registered new user: %s (%s)", final_name, chat_id)
     return db.get_user_by_chat_id(str(chat_id)) or {
         "user_id": user_id,

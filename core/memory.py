@@ -11,13 +11,21 @@ log = get_logger(__name__)
 CONVERSATION_IDLE_MINUTES = 30
 
 
+def _chat_history_enabled(user_id: str) -> bool:
+    return db.has_user_consent(user_id, db.CONSENT_CHAT_HISTORY, default=True)
+
+
 def save_user_message(user_id: str, content: str, conversation_id: str = None):
+    if not _chat_history_enabled(user_id):
+        return
     db.save_chat(user_id, "user", content, conversation_id=conversation_id)
 
 
 def save_assistant_message(user_id: str, content: str,
                            tool_used: str = None, llm_model: str = None,
                            token_used: int = None, conversation_id: str = None):
+    if not _chat_history_enabled(user_id):
+        return
     db.save_chat(user_id, "assistant", content,
                  tool_used=tool_used, llm_model=llm_model,
                  token_used=token_used, conversation_id=conversation_id)
@@ -25,6 +33,8 @@ def save_assistant_message(user_id: str, content: str,
 
 def get_context(user_id: str, conversation_id: str = None) -> list[dict]:
     """ดึง chat history ล่าสุด N ข้อความ สำหรับส่งให้ LLM"""
+    if not _chat_history_enabled(user_id):
+        return []
     rows = db.get_chat_context(user_id, limit=MAX_CONTEXT_MESSAGES,
                                conversation_id=conversation_id)
     messages = []
@@ -36,8 +46,11 @@ def get_context(user_id: str, conversation_id: str = None) -> list[dict]:
     return messages
 
 
-def ensure_conversation(user_id: str) -> str:
+def ensure_conversation(user_id: str) -> str | None:
     """ดึง active conversation หรือสร้างใหม่ถ้าไม่มี / idle เกิน threshold"""
+    if not _chat_history_enabled(user_id):
+        return None
+
     conv_id = db.get_active_conversation(user_id)
 
     if conv_id:
@@ -54,6 +67,9 @@ def ensure_conversation(user_id: str) -> str:
 
 def start_new_conversation(user_id: str) -> str:
     """ปิด conversation เก่าแล้วสร้างใหม่"""
+    if not _chat_history_enabled(user_id):
+        return ""
+
     old_conv = db.get_active_conversation(user_id)
     if old_conv:
         db.end_conversation(old_conv)

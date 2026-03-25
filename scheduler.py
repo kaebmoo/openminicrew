@@ -22,6 +22,7 @@ from core.config import (
     MISSED_JOB_WINDOW_HOURS, HEARTBEAT_INTERVAL_MINUTES,
     TOOL_LOG_RETENTION_DAYS, EMAIL_LOG_RETENTION_DAYS,
     PENDING_MSG_RETENTION_DAYS, JOB_RUN_RETENTION_DAYS,
+    LOCATION_TTL_MINUTES,
 )
 from core import db
 from core.logger import get_logger
@@ -97,7 +98,13 @@ def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: s
         )
     except Exception as e:
         log.error(f"Scheduled {tool_name} failed for {user_id}: {e}\n{traceback.format_exc()}")
-        db.log_tool_usage(user_id, tool_name, status="failed", error_message=str(e))
+        db.log_tool_usage(
+            user_id,
+            tool_name,
+            status="failed",
+            **db.make_log_field("input", args or tool_name, kind="scheduled_tool_args"),
+            **db.make_error_fields(str(e)),
+        )
         result = f"[Scheduled] {tool_name} ล้มเหลว: {e}"
 
     # Step 2: ส่ง Telegram — send_message มี tenacity retry 3 ครั้ง (1-5s backoff) อยู่แล้ว
@@ -159,6 +166,7 @@ def _cleanup_job():
         db.cleanup_old_emails(EMAIL_LOG_RETENTION_DAYS)
         db.cleanup_old_pending(PENDING_MSG_RETENTION_DAYS)
         db.cleanup_old_job_runs(JOB_RUN_RETENTION_DAYS)
+        db.cleanup_stale_locations(LOCATION_TTL_MINUTES)
         with _last_run_lock:
             _last_run_info["last_run"] = "cleanup"
         log.info("Cleanup completed")

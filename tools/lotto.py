@@ -403,9 +403,9 @@ class LottoTool(BaseTool):
                 db.log_tool_usage(
                     user_id=user_id,
                     tool_name=self.name,
-                    input_summary=f"{parsed['mode']} {target_mmyyyy}",
-                    output_summary=final_result[:200],
                     status="success",
+                    **db.make_log_field("input", f"{parsed['mode']} {target_mmyyyy}", kind="lotto_query"),
+                    **db.make_log_field("output", final_result, kind="lotto_result"),
                 )
                 return final_result
 
@@ -436,9 +436,9 @@ class LottoTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=input_summary,
-                output_summary=result[:200],
                 status="success",
+                **db.make_log_field("input", input_summary, kind="lotto_query"),
+                **db.make_log_field("output", result, kind="lotto_result"),
             )
 
             return result
@@ -448,9 +448,9 @@ class LottoTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=args,
                 status="failed",
-                error_message=str(e),
+                **db.make_log_field("input", args, kind="lotto_query"),
+                **db.make_error_fields(str(e)),
             )
             return f"❌ เกิดข้อผิดพลาด: {e}"
 

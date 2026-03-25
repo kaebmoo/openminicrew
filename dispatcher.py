@@ -1,5 +1,5 @@
 """Dispatcher — ตัดสินใจว่าจะ route message ไปที่ไหน
-   - /command → tool ตรง (ไม่เสีย token)
+   - /command → system handler หรือ tool ตรง (ไม่เสีย token)
    - ข้อความอิสระ → LLM Router → function calling → tool
    - general chat → LLM ตอบตรง
 """
@@ -9,9 +9,9 @@ from datetime import date as _date_cls
 from core.llm import llm_router
 from core.memory import (
     save_user_message, save_assistant_message, get_context,
-    ensure_conversation, start_new_conversation,
+    ensure_conversation,
 )
-from core.user_manager import get_preference, set_preference, is_owner
+from core.user_manager import get_preference
 from core.concurrency import user_rate_limiter, request_dedup
 from core import db
 from tools.registry import registry
@@ -20,7 +20,37 @@ MAX_RETRIES = 3  # จำนวนรอบ retry สูงสุดเมื่
 from interfaces.telegram_common import parse_command
 from core.logger import get_logger
 
+# -- Command handlers (แยกไว้ใน core/) --
+from core.system_commands import (
+    handle_help, handle_start, handle_model, handle_new, handle_history,
+    handle_adduser, handle_removeuser, handle_listusers, handle_authgmail,
+    handle_keyaudit,
+)
+from core.privacy_commands import (
+    handle_consent, handle_privacy, handle_delete_my_data,
+    handle_disconnectgmail, handle_clearlocation,
+)
+
 log = get_logger(__name__)
+
+# command string → async handler(user_id, user, args, **kw) → (text, tool, model, tokens)
+SYSTEM_COMMANDS: dict[str, ...] = {
+    "/help": handle_help,
+    "/consent": handle_consent,
+    "/privacy": handle_privacy,
+    "/start": handle_start,
+    "/model": handle_model,
+    "/adduser": handle_adduser,
+    "/removeuser": handle_removeuser,
+    "/delete_my_data": handle_delete_my_data,
+    "/disconnectgmail": handle_disconnectgmail,
+    "/clearlocation": handle_clearlocation,
+    "/listusers": handle_listusers,
+    "/keyaudit": handle_keyaudit,
+    "/authgmail": handle_authgmail,
+    "/new": handle_new,
+    "/history": handle_history,
+}
 
 
 def _build_system_prompt() -> str:
@@ -49,159 +79,38 @@ def _build_system_prompt() -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# dispatch — thin routing layer
+# ---------------------------------------------------------------------------
+
 async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = None, message_id: int = None) -> tuple[str, str | None, str | None, int]:
     """
     ตัดสินใจ route message → return ข้อความที่จะส่งกลับ user
-
-    Args:
-        chat_id: สำหรับลบข้อความ sensitive (เช่น /setkey)
-        message_id: message_id ของข้อความ user (สำหรับ deleteMessage)
 
     Returns:
         (response_text, tool_used, llm_model, token_used)
     """
     command, args = parse_command(text)
 
-    # ---- /help ----
-    if command == "/help":
-        return registry.get_help_text(), None, None, 0
+    # ---- 1. System command → handler dict ----
+    handler = SYSTEM_COMMANDS.get(command)
+    if handler:
+        return await handler(user_id, user, args)
 
-    # ---- /start ----
-    if command == "/start":
-        display_name = user.get("display_name") or "ผู้ใช้ใหม่"
-        phone = user.get("phone_number")
-        national_id = user.get("national_id")
-        gmail_ok = user.get("gmail_authorized")
-        # Fallback: ถ้า DB ยังไม่ได้ mark แต่ token file มีอยู่ → ถือว่า authorized
-        if not gmail_ok:
-            from core.security import get_gmail_token_path
-            if get_gmail_token_path(user_id).exists():
-                gmail_ok = True
-                # sync DB ให้ตรง
-                from core.db import get_conn
-                with get_conn() as conn:
-                    conn.execute("UPDATE users SET gmail_authorized = 1 WHERE user_id = ?", (user_id,))
-
-        # Returning user — มีข้อมูลตั้งค่าแล้วอย่างน้อย 1 อย่าง
-        if phone or national_id or gmail_ok:
-            lines = [f"สวัสดีอีกครั้ง {display_name}\n", "ข้อมูลปัจจุบัน:"]
-            lines.append(f"• ชื่อ: {display_name}")
-            lines.append(f"• เบอร์โทร: {phone}" if phone else "• เบอร์โทร: ยังไม่ได้ตั้ง (/setphone)")
-            if national_id:
-                masked = "X" * 9 + national_id[-4:]
-                lines.append(f"• เลขบัตรประชาชน: {masked}")
-            else:
-                lines.append("• เลขบัตรประชาชน: ยังไม่ได้ตั้ง (สำหรับ PromptPay) (/setid)")
-            lines.append("• Gmail: เชื่อมแล้ว" if gmail_ok else "• Gmail: ยังไม่ได้เชื่อม (/authgmail)")
-            lines.append("\nพิมพ์ /help หรือถามงานที่ต้องการได้เลย")
-            return "\n".join(lines), None, None, 0
-
-        # New user — แสดง setup instructions
-        welcome = (
-            f"✅ ลงทะเบียนเรียบร้อยแล้ว {display_name}\n\n"
-            "ผมเป็นผู้ช่วยส่วนตัวของคุณ\n\n"
-            "ตั้งค่าเพิ่มเติมได้ทันที:\n"
-            "• /setname ชื่อที่ต้องการ\n"
-            "• /setphone 08XXXXXXXX\n"
-            "• /setid <เลขบัตรประชาชน 13 หลัก>\n"
-            "• /authgmail\n"
-            "• /setkey tmd <key>\n\n"
-            "พร้อมใช้งานแล้ว พิมพ์ /help หรือถามงานที่ต้องการได้เลย"
-        )
-        return welcome, None, None, 0
-
-    # ---- /model ----
-    if command == "/model":
-        return _handle_model_command(user_id, user, args), None, None, 0
-
-    # ---- /adduser — owner only ----
-    if command == "/adduser":
-        if not is_owner(user):
-            return "❌ คำสั่งนี้ใช้ได้เฉพาะ owner", None, None, 0
-        parts = args.strip().split(None, 1)
-        if not parts:
-            return "❌ ใช้: /adduser <chat_id> [ชื่อ]", None, None, 0
-        new_chat_id = parts[0]
-        display_name = parts[1] if len(parts) > 1 else new_chat_id
-        db.upsert_user(new_chat_id, new_chat_id, display_name)
-        log.info(f"Owner {user_id} added user: {new_chat_id} ({display_name})")
-        return f"✅ เพิ่มผู้ใช้ *{display_name}* (chat\\_id: `{new_chat_id}`) แล้ว", None, None, 0
-
-    # ---- /removeuser — owner only ----
-    if command == "/removeuser":
-        if not is_owner(user):
-            return "❌ คำสั่งนี้ใช้ได้เฉพาะ owner", None, None, 0
-        target_id = args.strip()
-        if not target_id:
-            return "❌ ใช้: /removeuser <chat_id>", None, None, 0
-        db.deactivate_user(target_id)
-        log.info(f"Owner {user_id} deactivated: {target_id}")
-        return f"✅ ปิดการใช้งาน chat\\_id: `{target_id}` แล้ว", None, None, 0
-
-    # ---- /listusers — owner only ----
-    if command == "/listusers":
-        if not is_owner(user):
-            return "❌ คำสั่งนี้ใช้ได้เฉพาะ owner", None, None, 0
-        users = db.get_all_users()
-        lines = [f"👥 *ผู้ใช้ทั้งหมด ({len(users)} คน):*\n"]
-        for u in users:
-            status = "✅" if u["is_active"] else "❌"
-            lines.append(f"{status} {u['display_name']} — `{u['telegram_chat_id']}` ({u['role']})")
-        return "\n".join(lines), None, None, 0
-
-    # ---- /authgmail — authorize Gmail สำหรับ user นี้ ----
-    if command == "/authgmail":
-        from core.gmail_oauth import generate_auth_url
-        from core.config import WEBHOOK_HOST
-        if not WEBHOOK_HOST:
-            return (
-                "❌ ต้องตั้งค่า `WEBHOOK_HOST` ใน .env ก่อน\n"
-                "เช่น: `WEBHOOK_HOST=https://yourdomain.com`"
-            ), None, None, 0
-        url = generate_auth_url(user_id, user["telegram_chat_id"])
-        if not url:
-            return "❌ ยังไม่ได้ตั้งค่า `credentials.json` (Google OAuth client)", None, None, 0
-        return (
-            "🔐 *Authorize Gmail*\n\n"
-            f"คลิกลิงก์นี้เพื่อ authorize Gmail ของคุณ:\n{url}\n\n"
-            "⏱ ลิงก์หมดอายุใน 15 นาที\n\n"
-            "_หลัง authorize แล้ว bot จะแจ้งให้ทราบอัตโนมัติ_"
-        ), None, None, 0
-
-    # ---- /new — เริ่มสนทนาใหม่ ----
-    if command == "/new":
-        conv_id = start_new_conversation(user_id)
-        return f"🆕 เริ่มสนทนาใหม่แล้ว (ID: `{conv_id}`)", None, None, 0
-
-    # ---- /history — ดูประวัติสนทนา ----
-    if command == "/history":
-        conversations = db.list_conversations(user_id, limit=10)
-        if not conversations:
-            return "📭 ยังไม่มีประวัติสนทนา", None, None, 0
-
-        lines = ["📋 *ประวัติสนทนาล่าสุด:*\n"]
-        for i, conv in enumerate(conversations, 1):
-            title = conv["title"] or "ไม่มีชื่อ"
-            count = conv["message_count"]
-            time = conv["updated_at"][:16] if conv["updated_at"] else "—"
-            lines.append(f"{i}. {title} ({count} ข้อความ, {time})")
-
-        return "\n".join(lines), None, None, 0
-
-    # ---- Photo message → route ไป expense tool อัตโนมัติ ----
+    # ---- 2. Photo message → route ไป expense tool อัตโนมัติ ----
     if text.startswith("__photo:"):
         expense_tool = registry.get_tool("expense")
         if expense_tool:
             log.info("Photo message → routing to expense tool")
             try:
-                result = await expense_tool.execute(user_id, text)
+                result = await expense_tool.execute(user_id, text, chat_id=chat_id)
                 return result, "expense", None, 0
             except Exception as e:
                 log.error(f"Expense photo failed: {e}", exc_info=True)
                 return f"❌ ไม่สามารถประมวลผลรูปได้: {e}", "expense", None, 0
         return "❌ ระบบบันทึกรายจ่ายยังไม่พร้อม", None, None, 0
 
-    # ---- Direct command → tool (ไม่เสีย LLM token) ----
+    # ---- 3. Direct command → tool via registry (ไม่เสีย LLM token) ----
     tool = registry.get_by_command(command) if command else None
     if tool:
         log.info(f"Direct command: {command} → {tool.name}")
@@ -211,10 +120,16 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
             return result, tool.name, None, 0
         except Exception as e:
             log.error(f"Tool {tool.name} failed: {e}", exc_info=True)
-            db.log_tool_usage(user_id, tool.name, status="failed", error_message=str(e))
+            db.log_tool_usage(
+                user_id,
+                tool.name,
+                status="failed",
+                **db.make_log_field("input", f"{command or tool.name} {args}".strip(), kind="tool_command"),
+                **db.make_error_fields(str(e)),
+            )
             return f"เกิดข้อผิดพลาด: {e}\nกรุณาลองใหม่", tool.name, None, 0
 
-    # ---- ข้อความอิสระ → LLM Router ----
+    # ---- 4. ข้อความอิสระ → LLM Router ----
     conv_id = ensure_conversation(user_id)
     provider = get_preference(user, "default_llm")
     context = get_context(user_id, conversation_id=conv_id)
@@ -222,7 +137,6 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
 
     tool_specs = registry.get_all_specs()
 
-    # LLM Router พร้อม self-correction: retry ได้ถ้า tool fail หรือ LLM เลือก tool ผิด
     response_text, tool_used, llm_model, token_used = await _dispatch_with_retry(
         user_id=user_id,
         user=user,
@@ -232,7 +146,6 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
         tool_specs=tool_specs,
     )
 
-    # ถ้า retry loop return None → fallback error message
     if not response_text:
         log.warning(f"Retry loop returned empty for: {text[:80]}")
         return "ไม่สามารถประมวลผลได้ กรุณาลองใหม่", tool_used, llm_model, token_used
@@ -240,28 +153,9 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
     return response_text, tool_used, llm_model, token_used
 
 
-def _handle_model_command(user_id: str, user: dict, args: str) -> str:
-    from core.llm import llm_router
-
-    available = llm_router.get_available_providers(user_id=user_id)
-    args = args.strip().lower()
-
-    if not args:
-        # แสดงรายการ providers ที่ใช้ได้
-        current = get_preference(user, "default_llm") or "claude"
-        lines = ["🧠 LLM ที่ใช้ได้:\n"]
-        for name in available:
-            marker = "👉" if name == current else "  "
-            lines.append(f"  {marker} ✅ {name}")
-        lines.append(f"\nใช้: /model [ชื่อ] เช่น /model {available[0]}" if available else "\n❌ ไม่มี LLM ที่ตั้งค่าไว้")
-        return "\n".join(lines)
-
-    if args not in available:
-        return f"❌ ใช้ {args} ไม่ได้ — ยังไม่ได้ตั้งค่า API key\nลอง: /setkey {args} <key>\n✅ ใช้ได้: {', '.join(available)}"
-
-    set_preference(user_id, "default_llm", args)
-    return f"✅ เปลี่ยน LLM เป็น {args} เรียบร้อย"
-
+# ---------------------------------------------------------------------------
+# LLM dispatch with retry + mid-tier fallback
+# ---------------------------------------------------------------------------
 
 async def _dispatch_with_retry(
     user_id: str,
@@ -361,10 +255,11 @@ async def _dispatch_with_retry(
         except Exception as e:
             log.error(f"[dispatch] tool {tool_name} error at attempt {attempt}: {e}", exc_info=True)
             db.log_tool_usage(
-                user_id, tool_name,
-                input_summary=str(tool_args)[:200],
+                user_id,
+                tool_name,
                 status="failed",
-                error_message=str(e),
+                **db.make_log_field("input", str(tool_args), kind="tool_call_args"),
+                **db.make_error_fields(str(e)),
             )
 
             if attempt >= MAX_RETRIES:
@@ -451,6 +346,10 @@ async def _dispatch_with_retry(
     return None, last_tool_used, last_model, total_tokens
 
 
+# ---------------------------------------------------------------------------
+# process_message — full pipeline
+# ---------------------------------------------------------------------------
+
 async def process_message(user_id: str, user: dict, chat_id: str | int, text: str, message_id: int = None):
     """
     Full pipeline: dedup → rate limit → dispatch + save memory + send Telegram
@@ -479,11 +378,12 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
         save_user_message(user_id, text, conversation_id=conv_id)
 
         # Auto-set title จากข้อความแรกของ user (ถ้ายังไม่มี title)
-        existing_title = db.get_conversation_title(conv_id)
-        if not existing_title:
-            db.update_conversation(conv_id, title=text[:50])
-        else:
-            db.update_conversation(conv_id)
+        if conv_id:
+            existing_title = db.get_conversation_title(conv_id)
+            if not existing_title:
+                db.update_conversation(conv_id, title=text[:50])
+            else:
+                db.update_conversation(conv_id)
 
         try:
             result = await asyncio.wait_for(dispatch(user_id, user, text, chat_id=chat_id, message_id=message_id), timeout=DISPATCH_TIMEOUT)
@@ -500,7 +400,13 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
         else:
             response_text, tool_used, llm_model, token_used = result, None, None, 0
 
-        memory_text = response_text.text if isinstance(response_text, MediaResponse) else response_text
+        from tools.response import InlineKeyboardResponse
+        if isinstance(response_text, InlineKeyboardResponse):
+            memory_text = response_text.memory_text or response_text.text
+        elif isinstance(response_text, MediaResponse):
+            memory_text = response_text.text
+        else:
+            memory_text = response_text
 
         # ถ้า dispatch ส่ง error กลับมา → clear dedup ให้ user retry ได้ทันที
         if isinstance(memory_text, str) and memory_text and ("ไม่สำเร็จ" in memory_text or "ข้อผิดพลาด" in memory_text):

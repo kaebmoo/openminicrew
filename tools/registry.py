@@ -106,10 +106,16 @@ class ToolRegistry:
         lines.append("  /setphone <เบอร์> — บันทึกเบอร์โทร")
         lines.append("  /setid <เลขบัตร 13 หลัก> — บันทึกเลขบัตรประชาชน")
         lines.append("  /authgmail — เชื่อมต่อ Gmail")
+        lines.append("  /disconnectgmail — ยกเลิกการเชื่อมต่อ Gmail")
+        lines.append("  /clearlocation — ลบตำแหน่งล่าสุดที่บันทึกไว้")
+        lines.append("  /consent [gmail|location|chat] [on|off] — จัดการ consent แบบ explicit")
+        lines.append("  /privacy — ดู retention และตัวเลือกด้านข้อมูลส่วนบุคคล")
+        lines.append("  /delete_my_data confirm — ลบข้อมูลทั้งหมดแบบถาวร")
         lines.append("  /model — ดู/เปลี่ยน LLM (claude, gemini, matcha)")
         lines.append("  /setkey <service> <value> — บันทึก API key ของตัวเอง")
         lines.append("  /mykeys — ดูรายการ key ของตัวเอง")
         lines.append("  /removekey <service> — ลบ key ที่บันทึกไว้")
+        lines.append("  /keyaudit — owner only, ดูรายงาน rows ของ user_api_keys ที่ยังเป็น plaintext")
         lines.append("  /help — แสดงข้อความนี้")
 
         # ---- Tip ----

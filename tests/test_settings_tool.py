@@ -43,3 +43,16 @@ def test_settings_setphone_rejects_invalid_phone():
 
     mock_update.assert_not_called()
     assert "เบอร์โทรไม่ถูกต้อง" in result
+
+
+def test_settings_setid_returns_error_when_encryption_key_missing():
+    tool = SettingsTool()
+    user = {"user_id": "u1", "national_id": None}
+
+    with patch("tools.settings.db.get_user_by_chat_id", return_value=user), \
+         patch("tools.settings.db.update_user_profile", side_effect=RuntimeError("ENCRYPTION_KEY is required for national_id storage")):
+        import asyncio
+
+        result = asyncio.run(tool.execute("u1", args="1234567890121", command="/setid"))
+
+    assert "ENCRYPTION_KEY is required" in result

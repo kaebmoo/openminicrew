@@ -59,7 +59,7 @@ Supported providers:
 Example `.env` values:
 
 ```bash
-DEFAULT_LLM=claude
+DEFAULT_LLM=gemini
 
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
@@ -82,7 +82,12 @@ Gmail and Calendar use the same per-user Google OAuth flow.
 1. Create a Google Cloud project
 2. Enable Gmail API and Google Calendar API
 3. Create a Desktop App OAuth client
-4. Place `credentials.json` at the project root
+4. Download the OAuth client JSON from Google Cloud Console
+5. Import it into the app:
+
+```bash
+python main.py --import-gmail-client-secrets /path/to/downloaded.json
+```
 
 Webhook mode:
 
@@ -101,6 +106,9 @@ Important:
 
 - There is no cross-user fallback to the owner's Gmail token anymore
 - If a user is not authorized yet, Gmail and Calendar tools will ask them to connect with `/authgmail`
+- The managed `credentials.json` is now stored encrypted-at-rest when `ENCRYPTION_KEY` is configured
+- If an older plaintext `credentials.json` is still present, the app will auto-migrate it on first Gmail OAuth use when `ENCRYPTION_KEY` is available
+- Do not hand-edit the encrypted managed file; import a fresh plaintext download instead
 
 ### 4. Work Email / IMAP
 
@@ -171,11 +179,13 @@ BOT_MODE=webhook python main.py
 1. Open the bot chat
 2. Send `/start`
 3. Optionally continue with:
-   - `/setname <name>`
-   - `/setphone <phone>`
-   - `/setid <13-digit-thai-id>`
-   - `/authgmail`
-   - `/setkey tmd <key>`
+    - `/setname <name>`
+    - `/setphone <phone>`
+    - `/setid <13-digit-thai-id>`
+    - `/consent chat on`
+    - `/consent location on`
+    - `/authgmail`
+    - `/setkey tmd <key>`
 
 ### Common System Commands
 
@@ -188,11 +198,33 @@ BOT_MODE=webhook python main.py
 | `/setphone` | Save phone number |
 | `/setid` | Save a Thai national ID |
 | `/authgmail` | Connect Gmail and Calendar |
+| `/disconnectgmail` | Revoke Gmail access without purging other data |
+| `/consent [gmail\|location\|chat] [on\|off]` | View or change explicit consent state |
+| `/privacy` | Show retention, consent, and private data handling summary |
+| `/clearlocation` | Delete the last saved location |
+| `/delete_my_data confirm` | Permanently purge user-linked data |
 | `/setkey <service> <value>` | Save a personal API key |
 | `/mykeys` | List saved keys |
 | `/removekey <service>` | Remove a saved key |
 | `/new` | Start a new conversation |
 | `/history` | Show recent conversations |
+
+### Privacy and Consent
+
+The current rollout adds explicit privacy controls for sensitive features.
+
+- Chat history can be turned on or off with `/consent chat on\|off`
+- Location storage requires explicit consent through `/consent location on`
+- Gmail access can be revoked with `/disconnectgmail`
+- `/privacy` shows retention settings, consent state, and advisory API key hygiene information
+- `/delete_my_data confirm` hard-purges user-linked records and credential artifacts
+
+Consent and data lifecycle behavior:
+
+- location is stored only after explicit consent and is subject to TTL cleanup
+- chat history can be revoked and future history writes stop when consent is off
+- Gmail revocation disconnects access without deleting unrelated data
+- API key rotation reporting is advisory only; existing keys are not blocked automatically
 
 ## Usage Examples
 
@@ -357,5 +389,22 @@ TELEGRAM_WEBHOOK_SECRET=random-secret-string
 python main.py
 curl https://your-domain.com/health
 ```
+
+`/health` is an HTTP operator endpoint, not a Telegram command.
+
+It returns JSON with:
+
+- overall service status
+- startup readiness checks
+- `ENCRYPTION_KEY` readiness impact summary
+- API key hygiene summary
+- DB and LLM health
+- last scheduler run information
+
+Typical status meanings:
+
+- `ok`: required readiness checks passed
+- `degraded`: warning-level readiness or advisory hygiene issues exist
+- `fail`: required readiness or DB health failed
 
 For deeper nginx and deployment details, use the dedicated docs later.

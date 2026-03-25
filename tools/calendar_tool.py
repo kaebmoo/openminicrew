@@ -46,9 +46,9 @@ class CalendarTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=raw_args[:100],
-                output_summary=result[:200],
                 status="success",
+                **db.make_log_field("input", raw_args, kind="calendar_command"),
+                **db.make_log_field("output", result, kind="calendar_result"),
             )
             return result
         except HttpError as exc:
@@ -57,9 +57,9 @@ class CalendarTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=raw_args[:100],
                 status="failed",
-                error_message=str(exc),
+                **db.make_log_field("input", raw_args, kind="calendar_command"),
+                **db.make_error_fields(str(exc)),
             )
             return result
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -67,9 +67,9 @@ class CalendarTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=raw_args[:100],
                 status="failed",
-                error_message=str(exc),
+                **db.make_log_field("input", raw_args, kind="calendar_command"),
+                **db.make_error_fields(str(exc)),
             )
             return "❌ ใช้งาน Google Calendar ไม่สำเร็จในตอนนี้\nกรุณาลองใหม่อีกครั้ง ถ้ายังไม่หายให้เชื่อมต่อใหม่ด้วย /authgmail"
 

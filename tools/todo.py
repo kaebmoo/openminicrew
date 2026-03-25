@@ -43,9 +43,9 @@ class TodoTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=raw_args[:100],
-                output_summary=result[:200],
                 status="success",
+                **db.make_log_field("input", raw_args, kind="todo_command"),
+                **db.make_log_field("output", result, kind="todo_result"),
             )
             return result
         except (OSError, RuntimeError, TypeError, ValueError) as e:
@@ -53,9 +53,9 @@ class TodoTool(BaseTool):
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
-                input_summary=raw_args[:100],
                 status="failed",
-                error_message=str(e),
+                **db.make_log_field("input", raw_args, kind="todo_command"),
+                **db.make_error_fields(str(e)),
             )
             return f"❌ ใช้งาน todo ไม่สำเร็จ: {e}"
 
