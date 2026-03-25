@@ -73,7 +73,8 @@ The table below reflects the current implementation.
 | `user_locations.latitude`, `user_locations.longitude` | Plaintext with consent and TTL controls | Location is operational data with explicit consent, cleanup, and manual delete support |
 | `chat_history.content` and `conversations.title` | Plaintext with consent and retention controls | High-volume app data; protected through consent gating, retention, and purge semantics |
 | `users.telegram_chat_id` | Plaintext operational identifier | Kept plaintext because it is the primary Telegram lookup key |
-| Tool logs and processed email metadata | Minimized structured metadata | New flows avoid storing raw summaries where possible; retention cleanup still applies |
+| Tool logs | Minimized structured metadata | New flows store kind, fingerprint hash, and size instead of raw input/output text; retention cleanup still applies |
+| Processed email metadata | Minimized to message ID and has-subject flag | Subject, sender address, and sender domain are not stored; only a deduplication message ID and boolean has-subject flag are retained |
 
 ## Shared Keys vs Per-User Secrets
 
@@ -176,7 +177,7 @@ The project is moving away from storing raw sensitive payloads in operational lo
 Current direction:
 
 - structured log fields such as kind, reference hash, and payload size are preferred over raw text
-- processed email storage has been minimized to reduce unnecessary third-party metadata retention
+- processed email storage has been minimized to only a deduplication message ID and a boolean has-subject flag; subject, sender address, and sender domain are no longer stored
 - tool log safety fields avoid retaining raw input and output when a safer representation is sufficient
 
 This does not mean the system stores no sensitive operational data. It means the default direction is to reduce storage wherever the feature does not require the full payload.
