@@ -13,7 +13,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 # ---- In-memory pending expense storage ----
-# { pending_id: {"user_id": str, "items": list[dict], "store": str, "created_at": float} }
+# { pending_id: {"user_id": str, "items": list[dict], "store": str, "source_type": str, "source_hash": str, "created_at": float} }
 _pending_expenses: dict[str, dict] = {}
 _pending_lock = threading.Lock()
 _PENDING_TTL = 300  # 5 นาที
@@ -22,7 +22,7 @@ _counter = 0
 _counter_lock = threading.Lock()
 
 
-def store_pending_expense(user_id: str, items: list[dict], store: str = "") -> str:
+def store_pending_expense(user_id: str, items: list[dict], store: str = "", source_type: str = "", source_hash: str = "") -> str:
     """เก็บรายการ expense ที่รอ user ยืนยัน → return pending_id"""
     global _counter
     with _counter_lock:
@@ -40,9 +40,32 @@ def store_pending_expense(user_id: str, items: list[dict], store: str = "") -> s
             "user_id": user_id,
             "items": items,
             "store": store,
+            "source_type": (source_type or "").strip(),
+            "source_hash": (source_hash or "").strip(),
             "created_at": now,
         }
     return pending_id
+
+
+def has_pending_expense_source(user_id: str, source_type: str, source_hash: str) -> bool:
+    """Return True เมื่อมี receipt เดิมรอยืนยันอยู่แล้ว"""
+    normalized_source_type = (source_type or "").strip()
+    normalized_source_hash = (source_hash or "").strip()
+    if not normalized_source_type or not normalized_source_hash:
+        return False
+
+    now = time.time()
+    with _pending_lock:
+        expired = [k for k, v in _pending_expenses.items() if now - v["created_at"] > _PENDING_TTL]
+        for key in expired:
+            del _pending_expenses[key]
+
+        for pending in _pending_expenses.values():
+            if pending["user_id"] != user_id:
+                continue
+            if pending.get("source_type") == normalized_source_type and pending.get("source_hash") == normalized_source_hash:
+                return True
+    return False
 
 
 def pop_pending_expense(pending_id: str, user_id: str) -> dict | None:
@@ -110,6 +133,8 @@ def _handle_expense_split(user_id: str, pending_id: str) -> str:
 
     items = pending["items"]
     store = pending.get("store", "")
+    source_type = pending.get("source_type", "")
+    source_hash = pending.get("source_hash", "")
 
     lines = [f"💸 บันทึกแยก {len(items)} รายการแล้ว:"]
     total = 0.0
@@ -120,7 +145,14 @@ def _handle_expense_split(user_id: str, pending_id: str) -> str:
         if store and store not in note:
             note = f"{store} — {note}" if note else store
 
-        expense_id = db.add_expense(user_id, amount=amount, category=category, note=note)
+        expense_id = db.add_expense(
+            user_id,
+            amount=amount,
+            category=category,
+            note=note,
+            source_type=source_type,
+            source_hash=source_hash,
+        )
         line = f"  [#{expense_id}] {amount:,.2f} บาท — {category}"
         if note:
             line += f": {note}"
@@ -142,6 +174,8 @@ def _handle_expense_combine(user_id: str, pending_id: str) -> str:
 
     items = pending["items"]
     store = pending.get("store", "")
+    source_type = pending.get("source_type", "")
+    source_hash = pending.get("source_hash", "")
     total = sum(it["amount"] for it in items)
 
     # ใช้หมวดหมู่จากรายการที่แพงที่สุด
@@ -155,5 +189,12 @@ def _handle_expense_combine(user_id: str, pending_id: str) -> str:
         combined = ", ".join(n for n in notes[:3])  # จำกัด 3 รายการ
         note = f"{store} — {combined}" if store else combined
 
-    expense_id = db.add_expense(user_id, amount=total, category=category, note=note)
+    expense_id = db.add_expense(
+        user_id,
+        amount=total,
+        category=category,
+        note=note,
+        source_type=source_type,
+        source_hash=source_hash,
+    )
     return f"💸 บันทึกรวม 1 รายการแล้ว\n  [#{expense_id}] {total:,.2f} บาท — {category}: {note}"

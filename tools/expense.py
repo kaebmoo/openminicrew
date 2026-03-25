@@ -1,5 +1,6 @@
 """Expense tracker tool — บันทึกรายจ่ายด้วยการพิมพ์ หรือถ่ายรูปบิล/slip"""
 
+import hashlib
 import json
 import re
 from datetime import date, timedelta
@@ -16,6 +17,7 @@ class ExpenseTool(BaseTool):
     description = "บันทึกรายจ่าย ดูรายการล่าสุด สรุปรายจ่าย หรือถ่ายรูปบิล/slip เพื่อบันทึกอัตโนมัติ"
     commands = ["/exp", "/expense"]
     direct_output = True
+    RECEIPT_SOURCE_TYPE = "telegram_photo"
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         raw_args = (args or "").strip()
@@ -42,12 +44,18 @@ class ExpenseTool(BaseTool):
 
             from tools.response import InlineKeyboardResponse
             log_output = result.memory_text or result.text if isinstance(result, InlineKeyboardResponse) else result
+            input_log = db.make_log_field("input", raw_args, kind="expense_command")
+            output_log = db.make_log_field("output", log_output, kind="expense_result")
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
                 status="success",
-                **db.make_log_field("input", raw_args, kind="expense_command"),
-                **db.make_log_field("output", log_output, kind="expense_result"),
+                input_kind=input_log["input_kind"],
+                input_ref=input_log["input_ref"],
+                input_size=input_log["input_size"],
+                output_kind=output_log["output_kind"],
+                output_ref=output_log["output_ref"],
+                output_size=output_log["output_size"],
             )
             return result
         except (OSError, RuntimeError, TypeError, ValueError) as e:
@@ -102,7 +110,12 @@ class ExpenseTool(BaseTool):
                 category = "ทั่วไป"
                 note = " ".join(rest).strip()
 
-        expense_id = db.add_expense(user_id, amount=amount, category=category, note=note)
+        expense_id = db.add_expense(
+            user_id,
+            amount=amount,
+            category=category,
+            note=self._normalize_note(note),
+        )
         return f"💸 บันทึกรายจ่ายแล้ว [#{expense_id}]\n{amount:,.2f} บาท\nหมวด: {category}" + (f"\nหมายเหตุ: {note}" if note else "")
 
     def _list(self, user_id: str) -> str:
@@ -147,6 +160,16 @@ class ExpenseTool(BaseTool):
         if not image_bytes:
             return "❌ ไม่สามารถดาวน์โหลดรูปได้ กรุณาลองส่งใหม่"
 
+        source_hash = self._compute_receipt_source_hash(image_bytes)
+
+        from core.callback_handler import has_pending_expense_source
+        if has_pending_expense_source(user_id, self.RECEIPT_SOURCE_TYPE, source_hash):
+            return "ℹ️ ใบเสร็จรูปนี้กำลังรอการยืนยันอยู่แล้ว กรุณาเลือกบันทึกจากข้อความก่อนหน้า หรือยกเลิกแล้วส่งใหม่"
+
+        existing_rows = db.get_expenses_by_source_hash(user_id, self.RECEIPT_SOURCE_TYPE, source_hash)
+        if existing_rows:
+            return self._build_duplicate_receipt_message(existing_rows)
+
         # Use Gemini Vision to analyze the receipt/slip
         extracted = await self._extract_expense_from_image(image_bytes, caption)
 
@@ -172,12 +195,17 @@ class ExpenseTool(BaseTool):
             item = items[0]
             amount = item["amount"]
             category = item.get("category", "ทั่วไป")
-            note = item.get("note", "")
-            if store and store not in note:
-                note = f"{store} — {note}" if note else store
+            note = self._build_receipt_note(store, item.get("note", ""), caption=caption)
             if caption and not note:
                 note = caption
-            expense_id = db.add_expense(user_id, amount=amount, category=category, note=note)
+            expense_id = db.add_expense(
+                user_id,
+                amount=amount,
+                category=category,
+                note=note,
+                source_type=self.RECEIPT_SOURCE_TYPE,
+                source_hash=source_hash,
+            )
             return (
                 f"📸 บันทึกรายจ่ายจากรูปแล้ว\n"
                 f"  [#{expense_id}] {amount:,.2f} บาท — {category}"
@@ -188,7 +216,13 @@ class ExpenseTool(BaseTool):
         from core.callback_handler import store_pending_expense
         from tools.response import InlineKeyboardResponse
 
-        pending_id = store_pending_expense(user_id, items, store)
+        pending_id = store_pending_expense(
+            user_id,
+            items,
+            store,
+            source_type=self.RECEIPT_SOURCE_TYPE,
+            source_hash=source_hash,
+        )
         total = sum(it["amount"] for it in items)
 
         lines = [f"📸 อ่านจากรูปได้ {len(items)} รายการ ({store}):" if store else f"📸 อ่านจากรูปได้ {len(items)} รายการ:"]
@@ -204,7 +238,7 @@ class ExpenseTool(BaseTool):
         buttons = [
             [
                 {"text": f"📋 แยก {len(items)} รายการ", "callback_data": f"exp_split:{pending_id}"},
-                {"text": f"📦 รวม 1 รายการ", "callback_data": f"exp_combine:{pending_id}"},
+                {"text": "📦 รวม 1 รายการ", "callback_data": f"exp_combine:{pending_id}"},
             ],
             [
                 {"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"},
@@ -326,6 +360,40 @@ class ExpenseTool(BaseTool):
             "/expense summary month — สรุปรายจ่ายเดือนนี้\n"
             "📸 หรือถ่ายรูปบิล/slip ส่งมา จะบันทึกอัตโนมัติ"
         )
+
+    @staticmethod
+    def _normalize_note(note: str) -> str:
+        return re.sub(r"\s+", " ", (note or "").strip())
+
+    def _build_receipt_note(self, store: str, note: str, *, caption: str = "") -> str:
+        normalized_store = self._normalize_note(store)
+        normalized_note = self._normalize_note(note)
+        normalized_caption = self._normalize_note(caption)
+
+        if normalized_store and normalized_note:
+            combined = f"{normalized_store} — {normalized_note}"
+        else:
+            combined = normalized_store or normalized_note
+
+        if normalized_caption and normalized_caption not in combined:
+            combined = f"{combined} — {normalized_caption}" if combined else normalized_caption
+        return combined
+
+    @staticmethod
+    def _compute_receipt_source_hash(image_bytes: bytes) -> str:
+        return hashlib.sha256(image_bytes).hexdigest()
+
+    def _build_duplicate_receipt_message(self, existing_rows: list[dict]) -> str:
+        first_row = existing_rows[0]
+        ids = ", ".join(f"#{row['id']}" for row in existing_rows[:5])
+        note = self._normalize_note(first_row.get("note", ""))
+        lines = ["ℹ️ ใบเสร็จรูปนี้เคยถูกบันทึกแล้ว จึงไม่บันทึกซ้ำ"]
+        lines.append(f"- พบ {len(existing_rows)} รายการเดิม: {ids}")
+        lines.append(f"- วันที่รายการ: {first_row['expense_date']}")
+        if note:
+            lines.append(f"- ตัวอย่างหมายเหตุ: {note}")
+        lines.append("หากต้องการบันทึกแยกจริง ให้พิมพ์ /expense เองแทนการอัปโหลดรูปเดิมซ้ำ")
+        return "\n".join(lines)
 
     def get_tool_spec(self) -> dict:
         return {

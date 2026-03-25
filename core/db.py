@@ -180,6 +180,8 @@ CREATE TABLE IF NOT EXISTS expenses (
     currency      TEXT DEFAULT 'THB',
     category      TEXT DEFAULT 'ทั่วไป',
     note          TEXT DEFAULT '',
+    source_type   TEXT DEFAULT '',
+    source_hash   TEXT DEFAULT '',
     expense_date  TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -206,6 +208,7 @@ CREATE INDEX IF NOT EXISTS idx_job_runs_job_time
 """
 
 PROFILE_SECRET_FIELDS = ("phone_number", "national_id")
+EXPENSE_SECRET_FIELDS = ("note",)
 CONSENT_GMAIL = "gmail_access"
 CONSENT_LOCATION = "location_access"
 CONSENT_CHAT_HISTORY = "chat_history"
@@ -292,6 +295,8 @@ def init_db():
         ("ALTER TABLE tool_logs ADD COLUMN error_kind TEXT DEFAULT ''", "error_kind"),
         ("ALTER TABLE tool_logs ADD COLUMN error_code TEXT DEFAULT ''", "error_code"),
         ("ALTER TABLE tool_logs ADD COLUMN error_safe_message TEXT DEFAULT ''", "error_safe_message"),
+        ("ALTER TABLE expenses ADD COLUMN source_type TEXT DEFAULT ''", "expenses.source_type"),
+        ("ALTER TABLE expenses ADD COLUMN source_hash TEXT DEFAULT ''", "expenses.source_hash"),
     ]:
         try:
             get_conn().execute(statement)
@@ -302,6 +307,7 @@ def init_db():
     # สร้าง index หลัง migration เพื่อให้มั่นใจว่า column มีแล้ว
     with get_conn() as conn:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversation ON chat_history(conversation_id, created_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_expenses_source_hash ON expenses(user_id, source_type, source_hash)")
 
     # Migration: เพิ่ม UNIQUE index บน job_runs(job_id, scheduled_at) ป้องกัน duplicate catchup
     try:
@@ -763,6 +769,46 @@ def _hydrate_user_row(conn: sqlite3.Connection, row: sqlite3.Row | None) -> dict
     return data
 
 
+def _hydrate_expense_row(conn: sqlite3.Connection, row: sqlite3.Row | None) -> dict | None:
+    if not row:
+        return None
+
+    data = dict(row)
+
+    try:
+        from core import config
+        from core.security import decrypt_sensitive_field, encrypt_sensitive_field, is_sensitive_field_encrypted
+    except Exception:
+        return data
+
+    migrated_fields: dict[str, str] = {}
+    for field_name in EXPENSE_SECRET_FIELDS:
+        raw_value = data.get(field_name)
+        if raw_value is None or raw_value == "":
+            continue
+
+        if is_sensitive_field_encrypted(raw_value):
+            decrypted = decrypt_sensitive_field(raw_value, field_name=f"expense_{field_name}")
+            data[field_name] = decrypted or ""
+            continue
+
+        data[field_name] = raw_value
+        if config.ENCRYPTION_KEY:
+            try:
+                migrated_fields[field_name] = encrypt_sensitive_field(raw_value, field_name=f"expense_{field_name}")
+            except RuntimeError as err:
+                log.warning("Failed to encrypt legacy expense %s during migration: %s", field_name, err)
+
+    if migrated_fields:
+        assignments = ", ".join(f"{field_name} = ?" for field_name in migrated_fields)
+        conn.execute(
+            f"UPDATE expenses SET {assignments} WHERE id = ?",
+            [*migrated_fields.values(), data["id"]],
+        )
+
+    return data
+
+
 def _rename_tool(old_name: str, new_name: str):
     """Rename tool name in tool_logs, schedules, chat_history"""
     try:
@@ -1173,13 +1219,34 @@ def remove_todo(todo_id: int, user_id: str) -> bool:
         return cursor.rowcount > 0
 
 
-def add_expense(user_id: str, amount: float, category: str, note: str = "", expense_date: str = "", currency: str = "THB") -> int:
+def add_expense(user_id: str, amount: float, category: str, note: str = "", expense_date: str = "",
+                currency: str = "THB", source_type: str = "", source_hash: str = "") -> int:
+    from core.security import encrypt_sensitive_field
+
     date_value = expense_date or datetime.now().date().isoformat()
     created_at = datetime.now().isoformat()
+    normalized_note = (note or "").strip()
+    encrypted_note = ""
+    if normalized_note:
+        encrypted_note = encrypt_sensitive_field(normalized_note, field_name="expense_note")
+
     with get_conn() as conn:
         cursor = conn.execute(
-            "INSERT INTO expenses (user_id, amount, currency, category, note, expense_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (str(user_id), amount, currency, category, note, date_value, created_at),
+            """
+            INSERT INTO expenses (user_id, amount, currency, category, note, source_type, source_hash, expense_date, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(user_id),
+                amount,
+                currency,
+                category,
+                encrypted_note,
+                (source_type or "").strip(),
+                (source_hash or "").strip(),
+                date_value,
+                created_at,
+            ),
         )
         return cursor.lastrowid
 
@@ -1190,7 +1257,25 @@ def list_expenses(user_id: str, limit: int = 20) -> list[dict]:
             "SELECT * FROM expenses WHERE user_id = ? ORDER BY expense_date DESC, id DESC LIMIT ?",
             (str(user_id), limit),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [_hydrate_expense_row(conn, row) for row in rows]
+
+
+def get_expenses_by_source_hash(user_id: str, source_type: str, source_hash: str) -> list[dict]:
+    normalized_source_type = (source_type or "").strip()
+    normalized_source_hash = (source_hash or "").strip()
+    if not normalized_source_type or not normalized_source_hash:
+        return []
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM expenses
+            WHERE user_id = ? AND source_type = ? AND source_hash = ?
+            ORDER BY id ASC
+            """,
+            (str(user_id), normalized_source_type, normalized_source_hash),
+        ).fetchall()
+        return [_hydrate_expense_row(conn, row) for row in rows]
 
 
 def summarize_expenses(user_id: str, start_date: str, end_date: str) -> list[dict]:
