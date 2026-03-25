@@ -251,7 +251,7 @@ class PromptPayTool(BaseTool):
             return (
                 "ไม่พบเบอร์โทรหรือเลขบัตรประชาชน\n"
                 "ใช้ /pay <จำนวนเงิน> <เบอร์หรือเลขบัตร>\n"
-                "หรือบันทึกเบอร์ด้วย /setphone หรือเลขบัตรด้วย /setid ก่อน"
+                "หรือบันทึกเบอร์ด้วย /setphone หรือเลขบัตรประชาชนด้วย /setid ก่อน"
             )
 
         try:
@@ -270,9 +270,9 @@ class PromptPayTool(BaseTool):
             if id_type == ID_TYPE_NATIONAL_ID:
                 # mask เลขบัตร เหลือ 4 หลักท้าย
                 masked = "X" * 9 + promptpay_input[-4:]
-                id_label = f"เลขบัตร: {masked}"
+                id_label = f"เลขบัตรประชาชน: {masked}"
             else:
-                id_label = f"เบอร์: {promptpay_input}"
+                id_label = f"เบอร์โทรศัพท์: {promptpay_input}"
 
             result = MediaResponse(
                 text=f"PromptPay QR\n{id_label}\nจำนวนเงิน: {amount_text}",

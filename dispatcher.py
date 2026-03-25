@@ -6,7 +6,6 @@
 
 import asyncio
 from datetime import date as _date_cls
-from core.api_keys import get_supported_services, list_user_keys, remove_api_key, set_api_key
 from core.llm import llm_router
 from core.memory import (
     save_user_message, save_assistant_message, get_context,
@@ -22,6 +21,7 @@ from interfaces.telegram_common import parse_command
 from core.logger import get_logger
 
 log = get_logger(__name__)
+
 
 def _build_system_prompt() -> str:
     """สร้าง system prompt พร้อมวันที่ปัจจุบัน — เรียกทุกครั้งเพื่อให้ date ไม่ stale"""
@@ -42,7 +42,10 @@ def _build_system_prompt() -> str:
         "โดยเฉพาะ exchange_rate: ให้ส่ง date ตามที่ผู้ใช้ระบุเสมอ tool จัดการวันหยุดเอง "
         "หมายเหตุ: ปีที่ผู้ใช้ระบุเวลาถามมักจะเป็นปี พ.ศ. ของไทย (Buddhist Era) ซึ่งจะมากกว่า ค.ศ. (CE) 543 ปี "
         f"(เช่น ปี {today.year} คือ พ.ศ. {today.year + 543}) "
-        "ให้พิจารณาว่าปี พ.ศ. ที่สมเหตุสมผล ไม่ใช่ปีในอนาคตเสมอ"
+        "ให้พิจารณาว่าปี พ.ศ. ที่สมเหตุสมผล ไม่ใช่ปีในอนาคตเสมอ "
+        "สำคัญ: ห้ามสร้างข้อความที่เลียนแบบผลลัพธ์ของ tool เด็ดขาด "
+        "เช่น ห้ามพิมพ์ข้อความที่ดูเหมือน QR code, PromptPay, สภาพอากาศ, อัตราแลกเปลี่ยน ฯลฯ ด้วยตัวเอง "
+        "ถ้างานนั้นมี tool รองรับ ต้องเรียก tool เท่านั้น ห้ามตอบเองเด็ดขาด"
     )
 
 
@@ -66,6 +69,34 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
     # ---- /start ----
     if command == "/start":
         display_name = user.get("display_name") or "ผู้ใช้ใหม่"
+        phone = user.get("phone_number")
+        national_id = user.get("national_id")
+        gmail_ok = user.get("gmail_authorized")
+        # Fallback: ถ้า DB ยังไม่ได้ mark แต่ token file มีอยู่ → ถือว่า authorized
+        if not gmail_ok:
+            from core.security import get_gmail_token_path
+            if get_gmail_token_path(user_id).exists():
+                gmail_ok = True
+                # sync DB ให้ตรง
+                from core.db import get_conn
+                with get_conn() as conn:
+                    conn.execute("UPDATE users SET gmail_authorized = 1 WHERE user_id = ?", (user_id,))
+
+        # Returning user — มีข้อมูลตั้งค่าแล้วอย่างน้อย 1 อย่าง
+        if phone or national_id or gmail_ok:
+            lines = [f"สวัสดีอีกครั้ง {display_name}\n", "ข้อมูลปัจจุบัน:"]
+            lines.append(f"• ชื่อ: {display_name}")
+            lines.append(f"• เบอร์โทร: {phone}" if phone else "• เบอร์โทร: ยังไม่ได้ตั้ง (/setphone)")
+            if national_id:
+                masked = "X" * 9 + national_id[-4:]
+                lines.append(f"• เลขบัตรประชาชน: {masked}")
+            else:
+                lines.append("• เลขบัตรประชาชน: ยังไม่ได้ตั้ง (สำหรับ PromptPay) (/setid)")
+            lines.append("• Gmail: เชื่อมแล้ว" if gmail_ok else "• Gmail: ยังไม่ได้เชื่อม (/authgmail)")
+            lines.append("\nพิมพ์ /help หรือถามงานที่ต้องการได้เลย")
+            return "\n".join(lines), None, None, 0
+
+        # New user — แสดง setup instructions
         welcome = (
             f"✅ ลงทะเบียนเรียบร้อยแล้ว {display_name}\n\n"
             "ผมเป็นผู้ช่วยส่วนตัวของคุณ\n\n"
@@ -78,43 +109,6 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
             "พร้อมใช้งานแล้ว พิมพ์ /help หรือถามงานที่ต้องการได้เลย"
         )
         return welcome, None, None, 0
-
-    # ---- /setname ----
-    if command == "/setname":
-        display_name = args.strip()
-        if not display_name:
-            return "❌ ใช้: /setname <ชื่อ>", None, None, 0
-        db.update_user_profile(user_id, display_name=display_name)
-        return f"✅ ตั้งชื่อเป็น {display_name} แล้ว", None, None, 0
-
-    # ---- /setphone ----
-    if command == "/setphone":
-        phone_number = args.strip()
-        if not phone_number:
-            return "❌ ใช้: /setphone <เบอร์โทร>", None, None, 0
-        normalized_phone = phone_number.replace(" ", "").replace("-", "")
-        db.update_user_profile(user_id, phone_number=normalized_phone)
-        return f"✅ บันทึกเบอร์โทรแล้ว: {normalized_phone}", None, None, 0
-
-    # ---- /setid ----
-    if command == "/setid":
-        raw_id = args.strip()
-        if not raw_id:
-            return "❌ ใช้: /setid <เลขบัตรประชาชน 13 หลัก>", None, None, 0
-        from tools.promptpay import _validate_national_id
-        try:
-            cleaned = _validate_national_id(raw_id)
-        except ValueError as e:
-            return f"❌ เลขบัตรไม่ถูกต้อง: {e}", None, None, 0
-        db.update_user_profile(user_id, national_id=cleaned)
-        masked = "X" * 9 + cleaned[-4:]
-
-        # ลบข้อความ user ที่มีเลขบัตรประชาชน เพื่อความปลอดภัย
-        if chat_id and message_id:
-            from interfaces.telegram_common import delete_message_safe
-            delete_message_safe(chat_id, message_id)
-
-        return f"✅ บันทึกเลขบัตรประชาชนแล้ว: {masked}", None, None, 0
 
     # ---- /model ----
     if command == "/model":
@@ -154,52 +148,6 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
             status = "✅" if u["is_active"] else "❌"
             lines.append(f"{status} {u['display_name']} — `{u['telegram_chat_id']}` ({u['role']})")
         return "\n".join(lines), None, None, 0
-
-    # ---- /setkey ----
-    if command == "/setkey":
-        parts = args.strip().split(None, 1)
-        if len(parts) < 2:
-            services = ", ".join(get_supported_services())
-            return (
-                "❌ ใช้: /setkey <service> <value>\n"
-                f"services ที่รองรับ: {services}"
-            ), None, None, 0
-
-        service, value = parts[0].strip().lower(), parts[1].strip()
-        if not value:
-            return "❌ ค่า key ว่างไม่ได้", None, None, 0
-
-        set_api_key(user_id, service, value)
-
-        # ลบข้อความ user ที่มี API key เพื่อความปลอดภัย
-        if chat_id and message_id:
-            from interfaces.telegram_common import delete_message_safe
-            delete_message_safe(chat_id, message_id)
-
-        return f"✅ บันทึก key สำหรับ `{service}` แล้ว", None, None, 0
-
-    # ---- /mykeys ----
-    if command == "/mykeys":
-        keys = list_user_keys(user_id)
-        if not keys:
-            return "🔑 ยังไม่มี key ที่บันทึกไว้", None, None, 0
-
-        lines = ["🔑 *API keys ของคุณ*\n"]
-        for item in keys:
-            updated = (item.get("updated_at") or "")[:16] or "-"
-            lines.append(f"• `{item['service']}` (updated: {updated})")
-        return "\n".join(lines), None, None, 0
-
-    # ---- /removekey ----
-    if command == "/removekey":
-        service = args.strip().lower()
-        if not service:
-            return "❌ ใช้: /removekey <service>", None, None, 0
-
-        deleted = remove_api_key(user_id, service)
-        if not deleted:
-            return f"ℹ️ ไม่พบ key สำหรับ `{service}`", None, None, 0
-        return f"✅ ลบ key สำหรับ `{service}` แล้ว", None, None, 0
 
     # ---- /authgmail — authorize Gmail สำหรับ user นี้ ----
     if command == "/authgmail":
@@ -258,7 +206,8 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
     if tool:
         log.info(f"Direct command: {command} → {tool.name}")
         try:
-            result = await tool.execute(user_id, args)
+            result = await tool.execute(user_id, args, command=command,
+                                        chat_id=chat_id, message_id=message_id)
             return result, tool.name, None, 0
         except Exception as e:
             log.error(f"Tool {tool.name} failed: {e}", exc_info=True)

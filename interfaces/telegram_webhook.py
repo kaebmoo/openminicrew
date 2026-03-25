@@ -105,6 +105,19 @@ async def gmail_callback(code: str = None, state: str = None, error: str = None)
         return {"error": "Invalid or expired link. Please use /authgmail again."}
 
     user_id, chat_id = result
+
+    # อัปเดต DB ให้ gmail_authorized = 1
+    try:
+        from core.db import get_conn
+        from datetime import datetime
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE users SET gmail_authorized = 1, updated_at = ? WHERE user_id = ?",
+                (datetime.now().isoformat(), str(user_id)),
+            )
+    except Exception as db_err:
+        log.warning(f"Failed to update gmail_authorized in DB: {db_err}")
+
     try:
         send_message(int(chat_id), "✅ Gmail authorized เรียบร้อยแล้ว\\! ลองใช้ /email ได้เลย 📬")
     except Exception as e:

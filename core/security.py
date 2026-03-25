@@ -75,6 +75,19 @@ def authorize_gmail_interactive(user_id: str) -> bool:
         token_path = get_gmail_token_path(user_id)
         token_path.write_text(creds.to_json())
         log.info(f"Gmail authorized for user {user_id}")
+
+        # อัปเดต DB ให้ gmail_authorized = 1
+        try:
+            from core.db import get_conn
+            from datetime import datetime
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE users SET gmail_authorized = 1, updated_at = ? WHERE user_id = ?",
+                    (datetime.now().isoformat(), str(user_id)),
+                )
+        except Exception as db_err:
+            log.warning(f"Failed to update gmail_authorized in DB: {db_err}")
+
         return True
 
     except Exception as e:
