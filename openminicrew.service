@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenMiniCrew Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=seal
+WorkingDirectory=/home/seal/openminicrew
+ExecStart=/home/seal/openminicrew/venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

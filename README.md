@@ -370,17 +370,152 @@ openminicrew/
 
 Webhook mode เหมาะกับ VPS หรือ production ที่มี HTTPS
 
+### 1. Clone และติดตั้งบน Server
+
+```bash
+cd /home/seal
+git clone https://github.com/kaebmoo/openminicrew.git
+cd openminicrew
+
+# สร้าง Python virtual environment
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. ตั้งค่า .env
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+สร้างค่าสุ่มสำหรับ webhook:
+
+```bash
+# Webhook path ที่เดายาก
+python3 -c "import secrets; print('WEBHOOK_PATH=/bot/wh_' + secrets.token_urlsafe(16))"
+
+# Secret token สำหรับ verify request จาก Telegram
+python3 -c "import secrets; print('TELEGRAM_WEBHOOK_SECRET=' + secrets.token_urlsafe(32))"
+
+# Encryption key สำหรับเข้ารหัส Gmail token และข้อมูลส่วนตัว
+python3 -c "import secrets; print('ENCRYPTION_KEY=' + secrets.token_urlsafe(32))"
+```
+
+ตั้งค่าสำคัญใน `.env`:
+
 ```bash
 BOT_MODE=webhook
 WEBHOOK_HOST=https://your-domain.com
 WEBHOOK_PORT=8443
-TELEGRAM_WEBHOOK_SECRET=random-secret-string
-
-python main.py
-curl https://your-domain.com/health
+WEBHOOK_PATH=/bot/wh_xxxxxxxxxxxxxxxx    # ค่าจาก generate ด้านบน
+TELEGRAM_WEBHOOK_SECRET=xxxxxxxxxxxxxxxx  # ค่าจาก generate ด้านบน
+ENCRYPTION_KEY=xxxxxxxxxxxxxxxx           # ค่าจาก generate ด้านบน
 ```
 
-รายละเอียดเชิงลึกของ webhook, nginx, และ deployment ดูใน docs ที่เกี่ยวข้องได้ภายหลัง
+### 3. Import Gmail Client Secrets (ถ้าใช้ Gmail/Calendar)
+
+```bash
+python main.py --import-gmail-client-secrets /path/to/client_secret.json
+```
+
+### 4. ทดสอบรัน
+
+```bash
+python main.py
+```
+
+### 5. ตั้ง Nginx Reverse Proxy
+
+เพิ่ม location blocks ใน nginx config (ภายใน `server { listen 443 ssl; ... }`):
+
+```nginx
+# OpenMiniCrew Telegram Bot Webhook
+# ⚠️ เปลี่ยน path ให้ตรงกับ WEBHOOK_PATH ใน .env
+location /bot/wh_xxxxxxxxxxxxxxxx {
+    proxy_pass http://127.0.0.1:8443;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_read_timeout 60s;
+}
+
+# Gmail OAuth Callback
+location /gmail-callback {
+    proxy_pass http://127.0.0.1:8443;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_read_timeout 60s;
+}
+
+# Bot Health Check (optional)
+location /health {
+    proxy_pass http://127.0.0.1:8443;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+ตรวจสอบและ reload nginx:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### 6. ตั้ง Google OAuth Redirect URI
+
+ไปที่ [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → Credentials → OAuth 2.0 Client IDs
+
+เพิ่ม Authorized redirect URI:
+
+```
+https://your-domain.com/gmail-callback
+```
+
+### 7. ตั้ง Systemd Service
+
+```bash
+sudo cp openminicrew.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable openminicrew
+sudo systemctl start openminicrew
+```
+
+หมายเหตุ: ก่อน copy ให้ตรวจสอบ path ใน `openminicrew.service` ว่าตรงกับที่ติดตั้งจริง
+
+คำสั่งจัดการ service:
+
+```bash
+sudo systemctl status openminicrew    # ดูสถานะ
+sudo systemctl restart openminicrew   # restart
+sudo journalctl -u openminicrew -f    # ดู log แบบ realtime
+```
+
+### 8. ตรวจสอบ
+
+```bash
+# Health check
+curl https://your-domain.com/health
+
+# ดู log
+sudo journalctl -u openminicrew --since "5 minutes ago"
+
+# ดูสถานะ service
+sudo systemctl status openminicrew
+```
+
+ทดสอบใน Telegram:
+- ส่งข้อความหาบอท → ต้องตอบกลับ
+- ส่ง `/authgmail` → ต้องได้ลิงก์ OAuth ที่ redirect กลับมาถูก
 
 ## License
 
