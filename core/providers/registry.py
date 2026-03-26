@@ -59,18 +59,25 @@ class ProviderRegistry:
 
     def get_fallback(self, preferred: str, user_id: str = None) -> BaseLLMProvider | None:
         """
-        ถ้า preferred ไม่พร้อม → ลอง FALLBACK_LLM → ลอง provider อื่นที่พร้อม
+        ถ้า preferred ไม่พร้อมสำหรับ user → ลอง FALLBACK_LLM → ลอง provider อื่นที่พร้อม
         ถ้าไม่มีเลย → return None
+
+        สำคัญ: preferred ต้องผ่าน is_available_for_user() ถ้ามี user_id
+        เพื่อป้องกัน user ใช้ shared key ของ provider ที่ไม่มีสิทธิ์
         """
-        # ลอง preferred ก่อน
+        # ลอง preferred ก่อน — ตรวจสิทธิ์ user
         p = self.providers.get(preferred)
         if p:
-            if user_id and p.is_available_for_user(user_id):
-                return p
+            if user_id:
+                if p.is_available_for_user(user_id):
+                    return p
+                # user ไม่มีสิทธิ์ใช้ preferred → ไป fallback
+                log.info(f"Provider '{preferred}' not available for user {user_id}, trying fallback")
             elif p.is_configured():
                 return p
 
-        # ลอง configured fallback ก่อน
+        # ลอง configured fallback — ใช้ is_configured() (shared key)
+        # เพราะ fallback เป็นการตัดสินใจของระบบ ไม่ใช่ user เลือก
         from core.config import FALLBACK_LLM
         if FALLBACK_LLM and FALLBACK_LLM != preferred:
             fb = self.providers.get(FALLBACK_LLM)

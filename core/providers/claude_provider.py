@@ -7,7 +7,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from core.providers.base import BaseLLMProvider
 from core.config import (
-    ANTHROPIC_API_KEY,
+    ANTHROPIC_API_KEY, OWNER_TELEGRAM_CHAT_ID,
     CLAUDE_MODEL_CHEAP, CLAUDE_MODEL_MID,
 )
 from core.logger import get_logger
@@ -37,6 +37,29 @@ class ClaudeProvider(BaseLLMProvider):
     def is_configured(self) -> bool:
         return self._client is not None
 
+    def _has_personal_key(self, user_id: str) -> bool:
+        """ตรวจว่า user มี per-user key ของตัวเอง (ไม่ fallback ไป shared key)"""
+        from core.db import get_user_api_key
+        return bool(get_user_api_key(str(user_id), "anthropic"))
+
+    def is_available_for_user(self, user_id: str) -> bool:
+        """Claude ใช้ shared key ได้เฉพาะ owner — user ทั่วไปต้อง /setkey anthropic <key>"""
+        # owner ใช้ shared key ได้
+        if str(user_id) == str(OWNER_TELEGRAM_CHAT_ID) and self.is_configured():
+            return True
+        # user ทั่วไปต้องมี key ส่วนตัว
+        return self._has_personal_key(user_id)
+
+    def _get_api_key(self, user_id: str = None) -> str:
+        """Resolve API key: user key > shared key (owner only)"""
+        if user_id:
+            from core.api_keys import get_api_key
+            user_key = get_api_key(user_id, "anthropic")
+            if user_key:
+                return user_key
+        # fallback shared key — ถ้าถึงตรงนี้แปลว่าเป็น owner
+        return ANTHROPIC_API_KEY
+
     def get_model(self, tier: str = "cheap") -> str:
         return CLAUDE_MODEL_MID if tier == "mid" else CLAUDE_MODEL_CHEAP
 
@@ -64,6 +87,16 @@ class ClaudeProvider(BaseLLMProvider):
     ) -> dict:
         model = self.get_model(tier)
 
+        # Resolve API key: per-user key > shared key
+        api_key = self._get_api_key(user_id)
+        if not api_key:
+            raise ValueError("ยังไม่มี API key สำหรับ Claude — ใช้ /setkey anthropic <key>")
+
+        # ใช้ per-user client ถ้า key ต่างจาก shared key
+        client = self._client
+        if api_key != ANTHROPIC_API_KEY or client is None:
+            client = anthropic.AsyncAnthropic(api_key=api_key, timeout=60.0)
+
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": 2000,
@@ -85,7 +118,7 @@ class ClaudeProvider(BaseLLMProvider):
                 converted[-1]["cache_control"] = {"type": "ephemeral"}
             kwargs["tools"] = converted
 
-        resp = await self._client.messages.create(**kwargs)
+        resp = await client.messages.create(**kwargs)
 
         content = ""
         tool_call = None

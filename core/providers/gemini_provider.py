@@ -8,7 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from core.providers.base import BaseLLMProvider
 from core.config import (
-    GEMINI_API_KEY,
+    GEMINI_API_KEY, OWNER_TELEGRAM_CHAT_ID,
     GEMINI_MODEL_CHEAP, GEMINI_MODEL_MID,
 )
 from core.logger import get_logger
@@ -29,6 +29,28 @@ class GeminiProvider(BaseLLMProvider):
 
     def is_configured(self) -> bool:
         return self._client is not None
+
+    def _has_personal_key(self, user_id: str) -> bool:
+        """ตรวจว่า user มี per-user key ของตัวเอง (ไม่ fallback ไป shared key)"""
+        from core.db import get_user_api_key
+        return bool(get_user_api_key(str(user_id), "gemini"))
+
+    def is_available_for_user(self, user_id: str) -> bool:
+        """Gemini: owner ใช้ shared key ได้, user ทั่วไปต้อง /setkey gemini <key>
+        หมายเหตุ: fallback จากระบบยังใช้ shared key ได้ ผ่าน get_fallback() ที่ตรวจแค่ is_configured()
+        """
+        if str(user_id) == str(OWNER_TELEGRAM_CHAT_ID) and self.is_configured():
+            return True
+        return self._has_personal_key(user_id)
+
+    def _get_api_key(self, user_id: str = None) -> str:
+        """Resolve API key: user key > shared key"""
+        if user_id:
+            from core.api_keys import get_api_key
+            user_key = get_api_key(user_id, "gemini")
+            if user_key:
+                return user_key
+        return GEMINI_API_KEY
 
     def get_model(self, tier: str = "cheap") -> str:
         return GEMINI_MODEL_MID if tier == "mid" else GEMINI_MODEL_CHEAP
@@ -57,6 +79,16 @@ class GeminiProvider(BaseLLMProvider):
     ) -> dict:
         model = self.get_model(tier)
 
+        # Resolve API key: per-user key > shared key
+        api_key = self._get_api_key(user_id)
+        if not api_key:
+            raise ValueError("ยังไม่มี API key สำหรับ Gemini — ใช้ /setkey gemini <key>")
+
+        # ใช้ per-user client ถ้า key ต่างจาก shared key
+        client = self._client
+        if api_key != GEMINI_API_KEY or client is None:
+            client = genai.Client(api_key=api_key, http_options={"timeout": 60000})
+
         # Convert messages to Gemini format
         gemini_contents = []
         for msg in messages:
@@ -80,7 +112,7 @@ class GeminiProvider(BaseLLMProvider):
 
         config = genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
-        resp = await self._client.aio.models.generate_content(
+        resp = await client.aio.models.generate_content(
             model=model,
             contents=gemini_contents,
             config=config,
