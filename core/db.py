@@ -117,10 +117,11 @@ CREATE TABLE IF NOT EXISTS user_locations (
 );
 
 CREATE TABLE IF NOT EXISTS oauth_states (
-    state      TEXT PRIMARY KEY,
-    user_id    TEXT NOT NULL,
-    chat_id    TEXT NOT NULL,
-    expires_at TEXT NOT NULL
+    state          TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL,
+    chat_id        TEXT NOT NULL,
+    expires_at     TEXT NOT NULL,
+    code_verifier  TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS user_consents (
@@ -280,6 +281,12 @@ def init_db():
     try:
         get_conn().execute("ALTER TABLE users ADD COLUMN national_id TEXT")
         log.info("Migration: added national_id column to users")
+    except Exception:
+        pass
+
+    try:
+        get_conn().execute("ALTER TABLE oauth_states ADD COLUMN code_verifier TEXT DEFAULT ''")
+        log.info("Migration: added code_verifier column to oauth_states")
     except Exception:
         pass
 
@@ -1622,12 +1629,12 @@ def save_location(user_id: str, lat: float, lng: float):
     return True
 
 
-def save_oauth_state(state: str, user_id: str, chat_id: str, expires_at: str):
-    """บันทึก OAuth state สำหรับ Gmail callback"""
+def save_oauth_state(state: str, user_id: str, chat_id: str, expires_at: str, code_verifier: str = ""):
+    """บันทึก OAuth state + PKCE code_verifier สำหรับ Gmail callback"""
     with get_conn() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO oauth_states (state, user_id, chat_id, expires_at) VALUES (?, ?, ?, ?)",
-            (state, user_id, chat_id, expires_at)
+            "INSERT OR REPLACE INTO oauth_states (state, user_id, chat_id, expires_at, code_verifier) VALUES (?, ?, ?, ?, ?)",
+            (state, user_id, chat_id, expires_at, code_verifier)
         )
 
 

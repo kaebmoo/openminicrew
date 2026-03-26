@@ -41,7 +41,6 @@ def generate_auth_url(user_id: str, chat_id: str) -> str | None:
 
     state = secrets.token_urlsafe(32)
     expires_at = (datetime.now() + timedelta(minutes=15)).isoformat()
-    db.save_oauth_state(state, user_id, str(chat_id), expires_at)
 
     flow = Flow.from_client_config(
         client_config,
@@ -53,6 +52,11 @@ def generate_auth_url(user_id: str, chat_id: str) -> str | None:
         access_type="offline",
         prompt="consent",
     )
+
+    # บันทึก PKCE code_verifier เพื่อใช้ตอน token exchange
+    code_verifier = flow.code_verifier or ""
+    db.save_oauth_state(state, user_id, str(chat_id), expires_at, code_verifier=code_verifier)
+
     return auth_url
 
 
@@ -69,6 +73,7 @@ def complete_oauth(code: str, state: str) -> tuple[str, str] | None:
 
     user_id = record["user_id"]
     chat_id = record["chat_id"]
+    code_verifier = record.get("code_verifier", "")
 
     try:
         client_config = get_gmail_client_config()
@@ -81,6 +86,9 @@ def complete_oauth(code: str, state: str) -> tuple[str, str] | None:
             redirect_uri=get_redirect_uri(),
             state=state,
         )
+        # ใส่ PKCE code_verifier กลับเข้า flow ก่อน fetch_token
+        if code_verifier:
+            flow.code_verifier = code_verifier
         flow.fetch_token(code=code)
 
         token_path = get_gmail_token_path(user_id)
@@ -89,6 +97,6 @@ def complete_oauth(code: str, state: str) -> tuple[str, str] | None:
         log.info("Gmail OAuth completed for user %s", user_id)
         return user_id, chat_id
 
-    except (OSError, ValueError, TypeError, GoogleAuthError, RuntimeError) as err:
+    except (OSError, ValueError, TypeError, GoogleAuthError, RuntimeError, Exception) as err:
         log.error("OAuth token exchange failed for user %s: %s", user_id, err)
         return None

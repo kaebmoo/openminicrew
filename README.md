@@ -500,11 +500,37 @@ sudo systemctl restart openminicrew   # restart
 sudo journalctl -u openminicrew -f    # ดู log แบบ realtime
 ```
 
-### 8. ตรวจสอบ
+### 8. Telegram Webhook
+
+Bot จะลงทะเบียน webhook กับ Telegram **อัตโนมัติ**ตอน startup
+
+ถ้าต้องการตรวจสอบหรือจัดการ webhook ด้วยมือ:
+
+```bash
+# ดูสถานะ webhook ปัจจุบัน
+curl "https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo" | python3 -m json.tool
+
+# ลงทะเบียน webhook ด้วยมือ (เปลี่ยน <BOT_TOKEN> และ <WEBHOOK_PATH>)
+curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-domain.com<WEBHOOK_PATH>",
+    "secret_token": "<TELEGRAM_WEBHOOK_SECRET>",
+    "allowed_updates": ["message", "callback_query"]
+  }'
+
+# ลบ webhook (กลับไปใช้ polling)
+curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/deleteWebhook"
+```
+
+### 9. ตรวจสอบ
 
 ```bash
 # Health check
 curl https://your-domain.com/health
+
+# ดู webhook status
+curl "https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo" | python3 -m json.tool
 
 # ดู log
 sudo journalctl -u openminicrew --since "5 minutes ago"
