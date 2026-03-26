@@ -222,7 +222,14 @@ def _handle_update(update: dict):
         if saved:
             send_message(chat_id, "📍 ได้รับตำแหน่งแล้ว! ลองถามได้เลย เช่น \"ร้านกาแฟแถวนี้\" หรือ \"แถวนี้ ไป สยาม\"")
         else:
-            send_message(chat_id, "🔒 ยังไม่ได้ให้ consent สำหรับ location\nใช้ /consent location on ก่อน แล้วค่อยส่งตำแหน่งอีกครั้ง")
+            from interfaces.telegram_common import send_inline_keyboard
+            send_inline_keyboard(chat_id,
+                "🔒 ยังไม่ได้ให้ consent สำหรับ location\nอนุญาตให้บันทึกตำแหน่งไหม?",
+                [[
+                    {"text": "✅ อนุญาต", "callback_data": "consent:location:on"},
+                    {"text": "❌ ไม่อนุญาต", "callback_data": "consent:location:off"},
+                ]]
+            )
         return
 
     # Handle photo messages (e.g. expense receipt)

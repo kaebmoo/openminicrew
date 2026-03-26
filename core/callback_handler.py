@@ -104,6 +104,13 @@ async def handle_callback(user_id: str, data: str, *, chat_id=None, message_id=N
         if callback_id:
             answer_callback_query(callback_id)
 
+    elif data.startswith("consent:"):
+        result = _handle_consent_callback(user_id, data)
+        if message_id and chat_id:
+            edit_message_text(chat_id, message_id, result)
+        if callback_id:
+            answer_callback_query(callback_id)
+
     elif data.startswith("exp_cancel:"):
         pending_id = data.replace("exp_cancel:", "")
         _pop_or_expired(user_id, pending_id)  # discard
@@ -198,3 +205,36 @@ def _handle_expense_combine(user_id: str, pending_id: str) -> str:
         source_hash=source_hash,
     )
     return f"💸 บันทึกรวม 1 รายการแล้ว\n  [#{expense_id}] {total:,.2f} บาท — {category}: {note}"
+
+
+def _handle_consent_callback(user_id: str, data: str) -> str:
+    """จัดการ consent callback จาก inline keyboard
+
+    data format: consent:<type>:<on|off>
+    เช่น consent:location:on, consent:location:off
+    """
+    from core import db
+
+    parts = data.split(":")
+    if len(parts) != 3:
+        return "❌ ข้อมูล callback ไม่ถูกต้อง"
+
+    _, consent_type_short, action = parts
+
+    consent_map = {
+        "location": db.CONSENT_LOCATION,
+        "chat": db.CONSENT_CHAT_HISTORY,
+        "gmail": db.CONSENT_GMAIL,
+    }
+    consent_type = consent_map.get(consent_type_short)
+    if not consent_type:
+        return f"❌ ไม่รู้จัก consent type: {consent_type_short}"
+
+    if action == "on":
+        db.set_user_consent(user_id, consent_type, db.CONSENT_STATUS_GRANTED, source="inline_keyboard")
+        return f"✅ consent {consent_type_short} = granted\nส่งตำแหน่งได้เลย 📍"
+    elif action == "off":
+        db.set_user_consent(user_id, consent_type, db.CONSENT_STATUS_REVOKED, source="inline_keyboard")
+        return f"🔒 consent {consent_type_short} = revoked"
+    else:
+        return f"❌ action ไม่ถูกต้อง: {action}"
