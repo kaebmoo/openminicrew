@@ -415,3 +415,16 @@ Typical status meanings:
 - `fail`: required readiness or DB health failed
 
 For deeper nginx and deployment details, use the dedicated docs later.
+
+<!-- Paste this section into your README.md -->
+
+## License
+
+openminicrew is dual-licensed:
+
+- **[AGPL-3.0](LICENSE)** — Free for open-source use. If you deploy this as a
+  network service, you must release your complete source code under AGPL-3.0.
+- **Commercial License** — For proprietary/closed-source use. Contact
+  kaebmoo (at) gmail.com for terms.
+
+See [LICENSING.md](LICENSING.md) for full details.

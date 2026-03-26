@@ -1,0 +1,14 @@
+NOTICE — License Change
+
+Project: openminicrew
+Copyright (c) 2026 kaebmoo
+
+License History:
+- Prior to 2026-03-26: MIT License
+- From 2026-03-26 onward: AGPL-3.0-only + Commercial dual license
+
+Code obtained under the MIT License prior to the change date retains that
+license for the version obtained. All subsequent commits, releases, and
+versions are licensed under the AGPL-3.0 with a commercial license option.
+
+For commercial licensing inquiries: kaebmoo (at) gmail.com

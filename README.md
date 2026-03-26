@@ -381,3 +381,14 @@ curl https://your-domain.com/health
 ```
 
 รายละเอียดเชิงลึกของ webhook, nginx, และ deployment ดูใน docs ที่เกี่ยวข้องได้ภายหลัง
+
+## License
+
+openminicrew is dual-licensed:
+
+- **[AGPL-3.0](LICENSE)** — Free for open-source use. If you deploy this as a
+  network service, you must release your complete source code under AGPL-3.0.
+- **Commercial License** — For proprietary/closed-source use. Contact
+  kaebmoo (at) gmail.com for terms.
+
+See [LICENSING.md](LICENSING.md) for full details.
