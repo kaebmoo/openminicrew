@@ -70,6 +70,15 @@ def _ensure_gmail_auth():
     token_path = get_gmail_token_path(user_id)
 
     if not token_path.exists():
+        # Webhook mode: ไม่เปิด browser (headless server) → แนะนำใช้ /authgmail แทน
+        if BOT_MODE == "webhook":
+            log.warning("=" * 50)
+            log.warning("Gmail token ไม่พบ — webhook mode: ข้ามการ authorize อัตโนมัติ")
+            log.warning("ใช้คำสั่ง /authgmail ใน Telegram เพื่อ authorize Gmail")
+            log.warning("หรือรัน: python main.py --auth-gmail (บนเครื่องที่มี browser)")
+            log.warning("=" * 50)
+            return False
+
         log.warning("=" * 50)
         log.warning("Gmail token ไม่พบ! กำลังเปิด browser เพื่อ authorize...")
         log.warning("=" * 50)
