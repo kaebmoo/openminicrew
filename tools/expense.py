@@ -36,7 +36,15 @@ class ExpenseTool(BaseTool):
                         result = self._list(user_id)
                     elif sub == "summary":
                         period = tokens[1].lower() if len(tokens) > 1 else "month"
-                        result = self._summary(user_id, period)
+                        # tokens ที่เหลือหลัง period: category หรือ keyword
+                        category = ""
+                        keyword = ""
+                        for t in tokens[2:]:
+                            if t in self._KNOWN_CATEGORIES:
+                                category = t
+                            elif not keyword:
+                                keyword = t
+                        result = self._summary(user_id, period, category=category, keyword=keyword)
                     else:
                         if sub == "add":
                             tokens = tokens[1:]
@@ -80,9 +88,25 @@ class ExpenseTool(BaseTool):
         "entertainment", "education", "transfer", "general",
     }
 
+    _INCOME_KEYWORDS = {"รับเงิน", "รับโอน", "เงินเข้า", "โอนเข้า", "income", "receive", "รับจ่าย"}
+
+    def _is_income_intent(self, tokens: list[str]) -> bool:
+        """ตรวจว่า tokens มี keyword รายรับ"""
+        text_lower = " ".join(tokens).lower()
+        return any(kw in text_lower for kw in self._INCOME_KEYWORDS)
+
     def _add(self, user_id: str, tokens: list[str]) -> str:
         if len(tokens) < 2:
             return self._usage()
+
+        # Guard: income intent
+        if self._is_income_intent(tokens):
+            return (
+                "ดูเหมือนเป็นรายรับ ไม่ใช่รายจ่าย -- ไม่ได้บันทึก\n"
+                "ถ้าต้องการสร้าง QR รับเงิน ใช้: /pay 150\n"
+                "ถ้าต้องการบันทึกรายจ่ายจริง ใช้: /expense 150 หมวด หมายเหตุ"
+            )
+
         try:
             amount = float(tokens[0].replace(",", ""))
         except ValueError:
@@ -127,7 +151,7 @@ class ExpenseTool(BaseTool):
             lines.append(f"[{item['id']}] {item['expense_date']} — {item['category']} {item['amount']:,.2f} บาท {item['note']}")
         return "\n".join(lines)
 
-    def _summary(self, user_id: str, period: str) -> str:
+    def _summary(self, user_id: str, period: str, category: str = "", keyword: str = "") -> str:
         today = date.today()
         if period == "today":
             start_date = end_date = today.isoformat()
@@ -138,11 +162,19 @@ class ExpenseTool(BaseTool):
             start_date = today.replace(day=1).isoformat()
             end_date = today.isoformat()
 
-        rows = db.summarize_expenses(user_id, start_date, end_date)
+        rows = db.summarize_expenses(user_id, start_date, end_date, category=category, keyword=keyword)
         if not rows:
-            return "💸 ไม่มีรายจ่ายในช่วงที่เลือก"
+            filter_desc = keyword or category or ""
+            msg = f"💸 ไม่มีรายจ่าย '{filter_desc}' ในช่วงที่เลือก" if filter_desc else "💸 ไม่มีรายจ่ายในช่วงที่เลือก"
+            return msg
         total = sum(float(item["total"]) for item in rows)
-        lines = [f"💸 สรุปรายจ่าย {start_date} ถึง {end_date}\nรวม {total:,.2f} บาท\n"]
+        filter_label = ""
+        if keyword:
+            filter_label = f" '{keyword}'"
+        elif category:
+            filter_label = f" หมวด {category}"
+        header = f"💸 สรุปรายจ่าย{filter_label} {start_date} ถึง {end_date}\nรวม {total:,.2f} บาท\n"
+        lines = [header]
         for item in rows:
             lines.append(f"• {item['category']}: {float(item['total']):,.2f} บาท ({item['count']} รายการ)")
         return "\n".join(lines)
@@ -399,12 +431,28 @@ class ExpenseTool(BaseTool):
         return {
             "name": self.name,
             "description": (
-                "บันทึกและสรุปรายจ่าย เช่น '/expense 120 อาหาร ข้าวกลางวัน', '/expense list', '/expense summary month' "
-                "หรือส่งรูปถ่ายบิล/slip เพื่อบันทึกอัตโนมัติ"
+                "บันทึกและสรุปรายจ่าย (เฉพาะเงินออก/จ่ายเงิน/ซื้อของ). "
+                "ห้ามใช้กับรายรับ เงินเข้า รับเงิน รับโอน — "
+                "ถ้า user ต้องการรับเงินหรือสร้าง QR รับโอน ให้ใช้ promptpay แทน. "
+                "เช่น 'จ่ายค่ากาแฟ 65', 'ซื้อข้าว 50 อาหาร', 'กินเหล้า 350'"
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"args": {"type": "string", "description": "รูปแบบ: '<จำนวนเงิน> <หมวดหมู่> <หมายเหตุ>' ห้ามใส่หน่วย 'บาท' หมวดหมู่ต้องเป็น: อาหาร|เครื่องดื่ม|เดินทาง|ช็อปปิ้ง|ของใช้|สาธารณูปโภค|สุขภาพ|บันเทิง|การศึกษา|โอนเงิน|ทั่วไป เช่น '65 เครื่องดื่ม เบียร์', '350 เครื่องดื่ม เหล้า', '120 อาหาร ก๋วยเตี๋ยว' หรือ 'list', 'summary month'"}},
+                "properties": {
+                    "args": {
+                        "type": "string",
+                        "description": (
+                            "รูปแบบ: '<จำนวนเงิน> <หมวดหมู่> <หมายเหตุ>' "
+                            "ห้ามใส่หน่วย 'บาท' "
+                            "หมวดหมู่ต้องเป็น: อาหาร|เครื่องดื่ม|เดินทาง|ช็อปปิ้ง|ของใช้|"
+                            "สาธารณูปโภค|สุขภาพ|บันเทิง|การศึกษา|โอนเงิน|ทั่วไป "
+                            "เช่น '65 เครื่องดื่ม เบียร์', '120 อาหาร ก๋วยเตี๋ยว' "
+                            "หรือ 'list', 'summary month', "
+                            "'summary month เครื่องดื่ม' (filter หมวด), "
+                            "'summary month กาแฟ' (ค้นหาใน note)"
+                        )
+                    }
+                },
                 "required": ["args"],
             },
         }

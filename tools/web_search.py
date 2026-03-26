@@ -280,7 +280,13 @@ class WebSearchTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": "ค้นหาข้อมูลบนเว็บจากคำถามล่าสุดและคืนผลลัพธ์ดิบให้ LLM สรุป เช่น '/search ข่าว AI ล่าสุด' หรือ '/google รีวิว Google AI Studio' ไม่ใช่การค้นหาสถานที่บนแผนที่",
+            "description": (
+                "ค้นหาข้อมูลบนเว็บจากคำถามของ user แล้วคืนผลลัพธ์ดิบให้ LLM สรุป. "
+                "ใช้สำหรับค้นหาข้อมูลทั่วไป ข้อเท็จจริง รีวิว ราคา. "
+                "ไม่ใช่สำหรับค้นหาข่าว/สรุปข่าว (ใช้ news_summary) "
+                "และไม่ใช่สำหรับค้นหาสถานที่บนแผนที่ (ใช้ places). "
+                "เช่น 'AI คืออะไร', 'รีวิว iPhone 16', 'วิธีทำ pad thai'"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"args": {"type": "string", "description": "คำค้นหาเว็บ"}},

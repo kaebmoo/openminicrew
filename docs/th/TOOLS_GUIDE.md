@@ -998,15 +998,26 @@ from core.logger import get_logger
 log = get_logger(__name__)
 ```
 
-### 4. `get_tool_spec()` เขียนยังไง
+### 4. `get_tool_spec()` เขียนยังไง (Standardized Format)
 
-Tool spec เป็น **format กลาง** — LLM Router จะแปลงให้ตรง provider อัตโนมัติ:
+Tool spec เป็น **format กลาง** — LLM Router จะแปลงให้ตรง provider อัตโนมัติ.
+สิ่งสำคัญที่สุดคือ **`description`** ต้องเขียนให้ครอบคลุมขอบเขต (Boundary) เพื่อให้ LLM เลือก Tool ได้ถูกต้อง โดยให้ยึดโครงสร้างนี้:
+
+1. **Positive:** อธิบายว่า Tool นี้ทำอะไรได้
+2. **Usage Condition:** "ใช้เมื่อ..." อธิบาย pattern คำถามที่ควรเข้า Tool นี้
+3. **Negative Boundary:** "ไม่ใช่สำหรับ..." ดักทางที่ LLM มักจะหลงมาผิด และบอกว่าควรไปใช้ Tool ไหนแทน
+4. **Examples:** "เช่น..." ตัวอย่างคำถามที่ถูกต้อง
 
 ```python
 def get_tool_spec(self) -> dict:
     return {
         "name": self.name,             # ❗ ใช้ self.name เสมอ ห้าม hardcode
-        "description": "คำอธิบาย",     # LLM ใช้ตัดสินใจ — ยิ่งชัดเจนยิ่งดี
+        "description": (
+            "ค้นหาสถานที่จริงบนแผนที่ เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล. "
+            "ใช้เมื่อ user ถามว่า 'มีร้านอะไรแถวนี้' หรือ 'หาร้าน...'. "
+            "ไม่ใช่สำหรับเช็คเส้นทาง/ระยะทาง/จราจร -- ให้ใช้ traffic แทน. "
+            "เช่น 'ร้านกาแฟแถวสยาม', 'ATM ใกล้ MBK'"
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -1015,7 +1026,7 @@ def get_tool_spec(self) -> dict:
                     "description": "อธิบาย parameter",
                 }
             },
-            "required": [],            # list ของ parameter ที่จำเป็น
+            "required": ["args"],      # list ของ parameter ที่จำเป็น
         },
     }
 ```
@@ -1073,7 +1084,27 @@ async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
 > ⚠️ **อย่าให้ exception หลุดออกจาก `execute()`** — dispatcher จะ catch ได้
 > แต่ user จะได้ error message ที่ไม่สวย ควร catch เองแล้ว return ข้อความที่อ่านง่าย
 
-### 6. `direct_output` — ส่งตรง vs ผ่าน LLM
+### 6. Input Guard (ป้องกัน Tool หลงทาง)
+
+ถึงแม้ `description` ใน `get_tool_spec()` จะเขียนชัดเจนแล้ว แต่ในบางครั้ง LLM ก็ยังอาจจะส่ง intent ผิดๆ มาเข้า Tool ได้ (โดยเฉพาะเรื่องใกล้เคียงกัน เช่น บันทึกรายได้ ไปเข้า Expense Tool)
+เพื่อความปลอดภัย ควรทำ **Input Guard** ดักที่ต้นทางของ logic ภายใน Tool เสมอ:
+
+```python
+def _is_invalid_intent(self, text: str) -> bool:
+    # ดักจับคำที่อาจเป็น intent ของ Tool อื่น
+    keywords = {"รับเงิน", "รับโอน", "รายได้", "เงินเข้า"}
+    return any(kw in text for kw in keywords)
+
+async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+    # 1. ป้องกัน Input ผิดประเภท
+    if self._is_invalid_intent(args):
+        return "❌ ดูเหมือนคุณต้องการบันทึกรายได้/สร้าง QR รับเงิน กรุณาใช้คำสั่งที่เหมาะสม"
+        
+    # 2. ทำงานปกติ
+    ...
+```
+
+### 7. `direct_output` — ส่งตรง vs ผ่าน LLM
 
 ```python
 class MyTool(BaseTool):
@@ -1089,7 +1120,7 @@ class MyTool(BaseTool):
 > **หมายเหตุ:** tools ที่เรียก LLM เองภายใน (เช่น gmail_summary, news_summary)
 > ใช้ `direct_output = True` เพราะ output สรุปแล้ว ไม่ต้องให้ dispatcher สรุปซ้ำ
 
-### 7. `preferred_tier` — เลือกระดับ LLM
+### 8. `preferred_tier` — เลือกระดับ LLM
 
 ```python
 class MyTool(BaseTool):
@@ -1146,15 +1177,27 @@ resp = await llm_router.chat(
 
 | Tool | Commands | API/Source | preferred_tier | API Keys ที่ต้องมี |
 |---|---|---|---|---|
-| **gmail_summary** — สรุป Gmail | `/email` | Gmail API (OAuth2) + LLM | mid | `ANTHROPIC_API_KEY` หรือ `GEMINI_API_KEY` |
+| **expense** — บันทึกรายจ่าย | `/exp`, `/expense` | SQLite + Gemini Vision (รูปบิล) | cheap | `GEMINI_API_KEY` (เฉพาะถ่ายรูปบิล) |
+| **promptpay** — สร้าง PromptPay QR | `/pay`, `/promptpay` | EMVCo + segno | cheap | ไม่ต้อง |
+| **qrcode_gen** — สร้าง QR Code ทั่วไป | `/qr` | segno | cheap | ไม่ต้อง |
+| **gmail_summary** — สรุป Gmail | `/gmail`, `/email` | Gmail API (OAuth2) + LLM | mid | `ANTHROPIC_API_KEY` หรือ `GEMINI_API_KEY` |
 | **work_email** — สรุปอีเมลที่ทำงาน (IMAP) | `/wm`, `/workmail` | IMAP + LLM | mid | `WORK_IMAP_HOST`, `WORK_IMAP_PORT`, `WORK_IMAP_USER`, `WORK_IMAP_PASSWORD` |
+| **smart_inbox** — หา action items จากอีเมล | `/inbox` | Gmail API + LLM | mid | `ANTHROPIC_API_KEY` หรือ `GEMINI_API_KEY` |
 | **traffic** — เส้นทาง/จราจร | `/traffic`, `/route` | Google Maps Directions + Routes API | cheap | `GOOGLE_MAPS_API_KEY` |
-| **places** — ค้นหาสถานที่ | `/places`, `/nearby`, `/search` | Google Places API (New) | cheap | `GOOGLE_MAPS_API_KEY` |
+| **places** — ค้นหาสถานที่ | `/places`, `/nearby` | Google Places API (New) | cheap | `GOOGLE_MAPS_API_KEY` |
 | **exchange_rate** — อัตราแลกเปลี่ยน | `/fx`, `/rate`, `/exchange` | Bank of Thailand API | cheap | `BOT_API_EXCHANGE_TOKEN`, `BOT_API_HOLIDAY_TOKEN` |
 | **news_summary** — สรุปข่าว | `/news` | Google News RSS + LLM | cheap | ไม่ต้อง (RSS ฟรี) |
+| **web_search** — ค้นหาเว็บ | `/search`, `/google` | Google Custom Search + LLM | cheap | `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_CX` |
 | **lotto** — ตรวจสลากกินแบ่ง | `/lotto` | lotto.api.rayriffy.com | cheap | ไม่ต้อง (API ฟรี) |
+| **todo** — จัดการ to-do list | `/todo` | SQLite | cheap | ไม่ต้อง |
+| **reminder** — ตั้งเตือนครั้งเดียว | `/remind` | SQLite + asyncio scheduler | cheap | ไม่ต้อง |
+| **schedule** — ตั้งเวลา tool อัตโนมัติ | `/schedule` | SQLite + asyncio scheduler | cheap | ไม่ต้อง |
+| **calendar_tool** — Google Calendar | `/cal`, `/calendar` | Google Calendar API (OAuth2) | cheap | ไม่ต้อง (ใช้ OAuth2) |
+| **unit_converter** — แปลงหน่วย | `/convert`, `/unit` | Built-in | cheap | ไม่ต้อง |
+| **settings** — ตั้งค่าส่วนตัว | `/setname`, `/setphone`, `/setid` | SQLite | cheap | ไม่ต้อง |
+| **apikeys** — จัดการ API keys | `/setkey`, `/mykeys`, `/removekey` | SQLite (encrypted) | cheap | ไม่ต้อง |
 
-> **หมายเหตุ:** ทุก tool ใช้ `direct_output = True` (default) — tools ที่ใช้ LLM (gmail_summary, work_email, news_summary) สรุปเองภายแล้ว
+> **หมายเหตุ:** ทุก tool ใช้ `direct_output = True` (default) — tools ที่ใช้ LLM (gmail_summary, work_email, news_summary, smart_inbox, web_search) สรุปเองภายในแล้ว
 
 ---
 
@@ -1164,11 +1207,8 @@ resp = await llm_router.chat(
 |---|---|---|---|
 | พยากรณ์อากาศ | `/weather` | Open-Meteo (ฟรี) | ง่าย |
 | แปลภาษา | `/translate` | ใช้ LLM (ไม่ต้อง API เพิ่ม) | ง่าย |
-| จดบันทึก/เตือนความจำ | `/note` | SQLite (มีอยู่แล้ว) | ง่าย |
-| ค้นหาเว็บ | `/search` | Google Custom Search / SerpAPI | ปานกลาง |
 | ติดตามพัสดุ | `/track` | Thailand Post API / Kerry API | ปานกลาง |
 | สรุป YouTube | `/yt` | YouTube Transcript API + LLM | ปานกลาง |
-| จัดการ Google Calendar | `/cal` | Google Calendar API | ยาก |
 
 ---
 

@@ -1278,12 +1278,19 @@ def get_expenses_by_source_hash(user_id: str, source_type: str, source_hash: str
         return [_hydrate_expense_row(conn, row) for row in rows]
 
 
-def summarize_expenses(user_id: str, start_date: str, end_date: str) -> list[dict]:
+def summarize_expenses(user_id: str, start_date: str, end_date: str, category: str = "", keyword: str = "") -> list[dict]:
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT category, SUM(amount) AS total, COUNT(*) AS count FROM expenses WHERE user_id = ? AND expense_date BETWEEN ? AND ? GROUP BY category ORDER BY total DESC",
-            (str(user_id), start_date, end_date),
-        ).fetchall()
+        sql = "SELECT category, SUM(amount) AS total, COUNT(*) AS count FROM expenses WHERE user_id = ? AND expense_date BETWEEN ? AND ?"
+        params: list = [str(user_id), start_date, end_date]
+        if category:
+            sql += " AND category = ?"
+            params.append(category)
+        if keyword:
+            sql += " AND (note LIKE ? OR category LIKE ?)"
+            params.append(f"%{keyword}%")
+            params.append(f"%{keyword}%")
+        sql += " GROUP BY category ORDER BY total DESC"
+        rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -1602,7 +1609,7 @@ def save_location(user_id: str, lat: float, lng: float):
     if not has_user_consent(user_id, CONSENT_LOCATION, default=False):
         return False
 
-    now = datetime.now().isoformat()
+    now = datetime.utcnow().isoformat()
     with get_conn() as conn:
         conn.execute("""
             INSERT INTO user_locations (user_id, latitude, longitude, updated_at)

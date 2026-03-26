@@ -584,7 +584,12 @@ class WorkEmailTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": self.description,
+            "description": (
+                "สรุปอีเมลที่ทำงานผ่านระบบ IMAP ขององค์กร. "
+                "ใช้เมื่อ user ถามเรื่องอีเมลงาน หรืออีเมลบริษัท. "
+                "ไม่ใช่สำหรับ Gmail ส่วนตัว (ใช้ gmail_summary). "
+                "เช่น 'มีเมลงานเข้าไหม', 'สรุปเมล บขบ. วันนี้', 'เมลจาก hr'"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

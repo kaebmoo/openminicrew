@@ -33,6 +33,9 @@ class PlacesTool(BaseTool):
     # คำที่บ่งบอกว่าต้องการเฉพาะร้านที่เปิดอยู่
     _OPEN_NOW_KEYWORDS = re.compile(r"(เปิดอยู่|ที่เปิด|เปิดตอนนี้|open now|ยังเปิด|เปิดไหม)")
 
+    # ดึง minimum rating จาก query เช่น "4.5 ดาวขึ้นไป", "rating 4+", "4 ดาว"
+    _RATING_PATTERN = re.compile(r"(\d+\.?\d*)\s*(?:ดาว|stars?|rating)(?:\s*ขึ้นไป|\+)?", re.IGNORECASE)
+
     # Bangkok center fallback
     _BANGKOK_CENTER = {"latitude": 13.7563, "longitude": 100.5018}
     _BANGKOK_RADIUS = 30000.0  # 30km
@@ -41,9 +44,12 @@ class PlacesTool(BaseTool):
         return {
             "name": self.name,
             "description": (
-                "ค้นหาสถานที่จริงบนแผนที่ เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล ATM "
-                "ร้านสะดวกซื้อ พร้อมข้อมูลรีวิว คะแนน เวลาเปิด-ปิด "
-                "เช่น 'ร้านกาแฟแถวสยาม' หรือ 'coffee shop near MBK'"
+                "ค้นหาสถานที่จริงบนแผนที่ เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล. "
+                "ใช้เมื่อ user พูดถึงร้าน/สถานที่ เช่น 'หาร้าน...', 'ร้าน...ดีๆ', 'ร้าน...ราคาถูก', 'ร้าน...4.5 ดาว'. "
+                "ต้องใช้ tool นี้เสมอเมื่อ user ถามหาร้านหรือสถานที่ ห้ามตอบจากความรู้ทั่วไป. "
+                "ไม่ใช่สำหรับเช็คเส้นทาง/ระยะทาง/จราจร -- ให้ใช้ traffic แทน. "
+                "แม้ผู้ใช้ไม่ระบุทำเล ระบบจะใช้พิกัด GPS ปัจจุบันของผู้ใช้เป็นค่าเริ่มต้นอัตโนมัติ. "
+                "เช่น 'ร้านกาแฟแถวสยาม', 'ร้านอาหารเปิดอยู่', 'ก๋วยเตี๋ยวเรือ 4.5 ดาว ราคาไม่แพง'"
             ),
             "parameters": {
                 "type": "object",
@@ -53,7 +59,9 @@ class PlacesTool(BaseTool):
                         "description": (
                             "สิ่งที่ต้องการค้นหา พร้อมสถานที่ "
                             "เช่น 'ร้านกาแฟแถวสยาม', 'restaurant near Sukhumvit', "
-                            "'โรงพยาบาลใกล้ลาดพร้าว'"
+                            "'โรงพยาบาลใกล้ลาดพร้าว'. "
+                            "หากผู้ใช้ใช้คำว่า 'แถวนี้', 'ใกล้ๆ' รูปแบบนี้ หรือไม่ระบุทำเล (เช่น 'หาร้านกาแฟ') ให้ส่งคำนั้นมาเลย "
+                            "เช่น 'ร้านอาหารแถวนี้' หรือ 'ร้านกาแฟ' (ระบบจะใช้พิกัด GPS ของผู้ใช้เป็นค่าเริ่มต้นเสมอ)"
                         ),
                     }
                 },
@@ -88,20 +96,21 @@ class PlacesTool(BaseTool):
                 "💡 ส่งตำแหน่งปัจจุบันแล้วพิมพ์ \"ร้านกาแฟแถวนี้\" ได้เลย"
             )
 
-        # 3. ถ้าพูดว่า "แถวนี้" แต่ยังไม่เคยส่งตำแหน่ง → ขอ location
+        # 3. Resolve location — ใช้ GPS จริงถ้ามี (restriction), fallback กรุงเทพ (bias)
         from interfaces.telegram_common import get_user_location
-        if self._NEARBY_KEYWORDS.search(query) and not get_user_location(user_id):
-            return (
-                "📍 ยังไม่ทราบตำแหน่งปัจจุบันของคุณ\n\n"
-                "กดปุ่ม 📎 (แนบไฟล์) แล้วเลือก Location เพื่อส่งตำแหน่ง\n"
-                "จากนั้นพิมพ์คำถามอีกครั้งได้เลย"
-            )
-
-        # 4. Resolve location bias — ใช้ GPS จริงถ้ามี, fallback กรุงเทพ
-        location_bias = self._resolve_location_bias(user_id, query)
+        nearby_requested = bool(self._NEARBY_KEYWORDS.search(query))
+        user_loc = get_user_location(user_id)
+        has_location = user_loc is not None
+        location_params = self._resolve_location_params(user_id, query)
 
         # 4.5 ตรวจว่าผู้ใช้ต้องการเฉพาะร้านที่เปิดอยู่หรือไม่
         want_open_now = bool(self._OPEN_NOW_KEYWORDS.search(query))
+
+        # 4.6 ตรวจ minimum rating filter
+        min_rating = 0.0
+        rating_match = self._RATING_PATTERN.search(query)
+        if rating_match:
+            min_rating = float(rating_match.group(1))
 
         # 5. Call Google Places API (New) - Text Search
         try:
@@ -109,7 +118,7 @@ class PlacesTool(BaseTool):
                 "textQuery": query,
                 "languageCode": "th",
                 "maxResultCount": 10,
-                "locationBias": location_bias,
+                **location_params,
             }
             if want_open_now:
                 request_body["openNow"] = True
@@ -151,8 +160,10 @@ class PlacesTool(BaseTool):
             log.error("Google Places API request failed: %s", e)
             return "❌ เกิดข้อผิดพลาดในการเชื่อมต่อ Google Places"
 
-        # 6. Handle empty results
+        # 6. Filter by rating + handle empty results
         places = data.get("places", [])
+        if min_rating > 0:
+            places = [p for p in places if (p.get("rating") or 0) >= min_rating]
         if not places:
             db.log_tool_usage(
                 user_id=user_id,
@@ -168,8 +179,18 @@ class PlacesTool(BaseTool):
                 "  โรงพยาบาลใกล้สุขุมวิท (แทน โรงพยาบาลเอกชนใกล้สุขุมวิท)"
             )
 
-        # 7. Format response
-        output = self._format_places(places, query, open_only=want_open_now)
+        # 7. สร้างข้อความตำแหน่งไว้ด้านบน
+        if has_location:
+            area_name = self._reverse_geocode(user_loc["lat"], user_loc["lng"])
+            if area_name:
+                location_line = f"📍 ค้นหาจากตำแหน่งล่าสุด: {area_name}\nส่ง Location ใหม่ถ้าต้องการเปลี่ยนพื้นที่\n\n"
+            else:
+                location_line = "📍 ค้นหาจากตำแหน่ง GPS ล่าสุดของคุณ\nส่ง Location ใหม่ถ้าต้องการเปลี่ยนพื้นที่\n\n"
+        else:
+            location_line = "📍 ไม่มีตำแหน่ง GPS — ผลลัพธ์อิงจากกรุงเทพกลาง\nส่ง Location มาเพื่อค้นหาใกล้ตัวมากขึ้น\n\n"
+
+        # 8. Format response — ตำแหน่งอยู่บนสุด ตามด้วยผลลัพธ์
+        output = location_line + self._format_places(places, query, open_only=want_open_now, min_rating=min_rating)
 
         # 8. Log success
         db.log_tool_usage(
@@ -182,43 +203,68 @@ class PlacesTool(BaseTool):
 
         return output
 
-    def _resolve_location_bias(self, user_id: str, query: str) -> dict:
-        """เลือก locationBias — ใช้ GPS จริงถ้าผู้ใช้พูดว่า 'แถวนี้' + เคยส่งตำแหน่ง"""
+    def _reverse_geocode(self, lat: float, lng: float) -> str:
+        """แปลง lat/lng เป็นชื่อย่าน เช่น 'แขวงทุ่งวัดดอน เขตสาทร'"""
+        try:
+            resp = requests.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={
+                    "latlng": f"{lat},{lng}",
+                    "key": GOOGLE_MAPS_API_KEY,
+                    "language": "th",
+                    "result_type": "sublocality|locality",
+                },
+                timeout=5,
+            )
+            results = resp.json().get("results", [])
+            if results:
+                return results[0].get("formatted_address", "").replace(" ประเทศไทย", "")
+        except Exception:
+            pass
+        return ""
+
+    # ประมาณ 1 องศา latitude ≈ 111 km, 3km ≈ 0.027 องศา
+    _GPS_OFFSET = 0.027  # ~3km — ใช้เสมอเมื่อมี GPS
+
+    def _resolve_location_params(self, user_id: str, query: str) -> dict:
+        """เลือก location parameter สำหรับ Places API.
+
+        - มี GPS → restriction ~3km (ใกล้ตำแหน่งจริงเสมอ)
+        - ไม่มี GPS → bias กรุงเทพกว้างๆ (ให้ API ตีความจาก text)
+        """
         from interfaces.telegram_common import get_user_location
 
         user_loc = get_user_location(user_id)
 
-        if self._NEARBY_KEYWORDS.search(query) and user_loc:
-            # ใช้ตำแหน่งจริงของ user, รัศมีแคบ 5 กม.
+        if user_loc:
+            lat, lng = user_loc["lat"], user_loc["lng"]
+            offset = self._GPS_OFFSET
             return {
-                "circle": {
-                    "center": {"latitude": user_loc["lat"], "longitude": user_loc["lng"]},
-                    "radius": 5000.0,
+                "locationRestriction": {
+                    "rectangle": {
+                        "low": {"latitude": lat - offset, "longitude": lng - offset},
+                        "high": {"latitude": lat + offset, "longitude": lng + offset},
+                    }
                 }
             }
 
-        if user_loc:
-            # มีตำแหน่งแต่ไม่ได้พูดว่า "แถวนี้" — ใช้เป็น bias กว้างๆ
-            return {
+        # ไม่มี GPS → bias กรุงเทพกลาง ให้ API ตีความจาก text
+        return {
+            "locationBias": {
                 "circle": {
-                    "center": {"latitude": user_loc["lat"], "longitude": user_loc["lng"]},
+                    "center": self._BANGKOK_CENTER,
                     "radius": self._BANGKOK_RADIUS,
                 }
             }
-
-        # Fallback: กรุงเทพกลาง
-        return {
-            "circle": {
-                "center": self._BANGKOK_CENTER,
-                "radius": self._BANGKOK_RADIUS,
-            }
         }
 
-    def _format_places(self, places: list[dict], query: str, open_only: bool = False) -> str:
+    def _format_places(self, places: list[dict], query: str, open_only: bool = False, min_rating: float = 0.0) -> str:
         """Format places into readable output"""
         header = f"🔍 ค้นหา \"{query}\""
         if open_only:
             header += " (เฉพาะร้านที่เปิดอยู่)"
+        if min_rating > 0:
+            header += f" (≥ {min_rating} ดาว)"
         lines = [header, f"พบ {len(places)} สถานที่:\n"]
 
         for i, place in enumerate(places, 1):

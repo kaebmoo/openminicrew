@@ -197,7 +197,12 @@ class CalendarTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": "ดู เพิ่ม หรือลบนัดใน Google Calendar เช่น '/calendar list', '/calendar add 2026-03-30 09:00 10:00 ประชุมทีม'",
+            "description": (
+                "จัดการ Google Calendar (ดู/เพิ่ม/ลบนัดหมาย). "
+                "ใช้เมื่อ user ถามตารางงาน นัดหมาย หรือให้ลงปฏิทิน. "
+                "ไม่ใช่สำหรับการจดงาน (ใช้ todo) หรือตั้งเตือนปลุก (ใช้ reminder/schedule). "
+                "เช่น 'พรุ่งนี้มีนัดไหม', 'ดึงตารางงาน', 'เพิ่มนัดประชุม 10 โมง'"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"args": {"type": "string", "description": "คำสั่ง calendar"}},

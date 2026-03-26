@@ -123,7 +123,13 @@ class ReminderTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": "ตั้ง reminder ครั้งเดียวและจัดการรายการเตือน เช่น '/remind 2026-03-30 09:00 ประชุมทีม', '/remind list', '/remind remove 1'",
+            "description": (
+                "ตั้งเตือนครั้งเดียวตามวันเวลาที่ระบุ แล้ว bot จะส่งข้อความเตือน. "
+                "ใช้เมื่อ user ต้องการให้เตือนอะไรสักอย่างในเวลาที่กำหนด (ครั้งเดียว). "
+                "ไม่ใช่สำหรับจดงานที่ต้องทำ (ใช้ todo) "
+                "หรือ schedule tool ซ้ำๆ (ใช้ schedule). "
+                "เช่น 'เตือนประชุม 2026-03-30 09:00', 'remind list'"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"args": {"type": "string", "description": "คำสั่ง reminder"}},

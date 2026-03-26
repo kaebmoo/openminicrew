@@ -120,7 +120,12 @@ class SmartInboxTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": "วิเคราะห์อีเมลล่าสุด หา action items และสร้าง todo ได้ เช่น '/inbox' หรือ '/inbox mode auto'",
+            "description": (
+                "วิเคราะห์อีเมลจาก Gmail เพื่อหา action items สิ่งที่ต้องทำ หรือนัดหมาย. "
+                "ใช้เมื่อ user ต้องการคัดกรองว่ามีงานอะไรต้องทำจากอีเมลบ้าง. "
+                "ไม่ใช่แค่สรุปอีเมลเฉยๆ (ใช้ gmail_summary) และไม่ใช่เมลงาน (ใช้ work_email). "
+                "เช่น 'มีเมลไหนต้องทำบ้าง', 'ดึงงานจากอีเมลให้หน่อย'"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"args": {"type": "string", "description": "คำสั่ง smart inbox"}},

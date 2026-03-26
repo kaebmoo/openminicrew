@@ -248,10 +248,11 @@ class GmailSummaryTool(BaseTool):
         return {
             "name": "gmail_summary",
             "description": (
-                "สรุปอีเมลที่ยังไม่ได้อ่าน หรืออีเมลมาใหม่/ล่าสุด จาก Gmail ของผู้ใช้ "
-                "สามารถระบุช่วงเวลาได้ เช่น today, 3d, 7d, 30d "
-                "ค้นหาเรื่องที่สนใจได้ เช่น บัตรเครดิต, from:ktc.co.th "
-                "ใส่ force เพื่อสรุปใหม่แม้เคยสรุปแล้ว"
+                "สรุปอีเมลจาก Gmail ส่วนตัวของ user (ต้อง /authgmail ก่อน). "
+                "ใช้เมื่อ user ถามเรื่องอีเมล Gmail. "
+                "ไม่ใช่สำหรับอีเมลที่ทำงาน IMAP (ใช้ work_email) "
+                "และไม่ใช่สำหรับหา action items จากอีเมล (ใช้ smart_inbox). "
+                "เช่น 'เช็คอีเมล', 'สรุปอีเมลวันนี้', 'มีเมลจาก grab ไหม'"
             ),
             "parameters": {
                 "type": "object",

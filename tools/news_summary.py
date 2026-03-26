@@ -21,7 +21,12 @@ class NewsSummaryTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": "ใช้สำหรับค้นหาและสรุปข่าวล่าสุดจาก Google News สามารถค้นหาตาม keyword หรือดูข่าวเด่นทั่วไปได้",
+            "description": (
+                "ค้นหาและสรุปข่าวล่าสุดจาก Google News. "
+                "ใช้เมื่อ user ถามเรื่องข่าว ข่าวสาร สิ่งที่เกิดขึ้นล่าสุด. "
+                "ไม่ใช่สำหรับค้นหาข้อมูลทั่วไป (ใช้ web_search). "
+                "เช่น 'ข่าววันนี้', 'ข่าวเทคโนโลยี', 'มีข่าวอะไรใหม่'"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
