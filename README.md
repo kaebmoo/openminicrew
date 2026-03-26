@@ -399,8 +399,8 @@ python3 -c "import secrets; print('WEBHOOK_PATH=/bot/wh_' + secrets.token_urlsaf
 # Secret token สำหรับ verify request จาก Telegram
 python3 -c "import secrets; print('TELEGRAM_WEBHOOK_SECRET=' + secrets.token_urlsafe(32))"
 
-# Encryption key สำหรับเข้ารหัส Gmail token และข้อมูลส่วนตัว
-python3 -c "import secrets; print('ENCRYPTION_KEY=' + secrets.token_urlsafe(32))"
+# Encryption key สำหรับเข้ารหัส Gmail token และข้อมูลส่วนตัว (ต้องเป็น Fernet key)
+python3 -c "from cryptography.fernet import Fernet; print('ENCRYPTION_KEY=' + Fernet.generate_key().decode())"
 ```
 
 ตั้งค่าสำคัญใน `.env`:
