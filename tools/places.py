@@ -182,10 +182,11 @@ class PlacesTool(BaseTool):
         # 7. สร้างข้อความตำแหน่งไว้ด้านบน
         if has_location:
             area_name = self._reverse_geocode(user_loc["lat"], user_loc["lng"])
-            if area_name:
-                location_line = f"📍 ค้นหาจากตำแหน่งล่าสุด: {area_name}\nส่ง Location ใหม่ถ้าต้องการเปลี่ยนพื้นที่\n\n"
+            loc_label = area_name or "ตำแหน่ง GPS ล่าสุดของคุณ"
+            if nearby_requested:
+                location_line = f"📍 ค้นหาใกล้: {loc_label}\nส่ง Location ใหม่ถ้าต้องการเปลี่ยนพื้นที่\n\n"
             else:
-                location_line = "📍 ค้นหาจากตำแหน่ง GPS ล่าสุดของคุณ\nส่ง Location ใหม่ถ้าต้องการเปลี่ยนพื้นที่\n\n"
+                location_line = f"📍 ผลลัพธ์ให้น้ำหนักใกล้: {loc_label}\nพิมพ์ 'แถวนี้' เพื่อจำกัดเฉพาะรอบตำแหน่ง หรือส่ง Location ใหม่\n\n"
         else:
             location_line = "📍 ไม่มีตำแหน่ง GPS — ผลลัพธ์อิงจากกรุงเทพกลาง\nส่ง Location มาเพื่อค้นหาใกล้ตัวมากขึ้น\n\n"
 
@@ -224,31 +225,48 @@ class PlacesTool(BaseTool):
         return ""
 
     # ประมาณ 1 องศา latitude ≈ 111 km, 3km ≈ 0.027 องศา
-    _GPS_OFFSET = 0.027  # ~3km — ใช้เสมอเมื่อมี GPS
+    _GPS_OFFSET = 0.027   # ~3km — restriction สำหรับ nearby
+    _GPS_BIAS_RADIUS = 10000.0  # 10km — bias สำหรับ non-nearby + GPS
 
     def _resolve_location_params(self, user_id: str, query: str) -> dict:
         """เลือก location parameter สำหรับ Places API.
 
-        - มี GPS → restriction ~3km (ใกล้ตำแหน่งจริงเสมอ)
-        - ไม่มี GPS → bias กรุงเทพกว้างๆ (ให้ API ตีความจาก text)
+        - มี GPS + nearby keyword ("แถวนี้") → restriction ~3km (บังคับใกล้)
+        - มี GPS + ไม่มี nearby keyword → bias 10km (ให้น้ำหนักใกล้ แต่ไม่บังคับ)
+        - ไม่มี GPS → bias กรุงเทพกลาง 30km
         """
         from interfaces.telegram_common import get_user_location
 
         user_loc = get_user_location(user_id)
+        nearby_requested = bool(self._NEARBY_KEYWORDS.search(query))
 
         if user_loc:
             lat, lng = user_loc["lat"], user_loc["lng"]
-            offset = self._GPS_OFFSET
-            return {
-                "locationRestriction": {
-                    "rectangle": {
-                        "low": {"latitude": lat - offset, "longitude": lng - offset},
-                        "high": {"latitude": lat + offset, "longitude": lng + offset},
+
+            if nearby_requested:
+                # User บอกชัดว่า "แถวนี้" → restriction 3km
+                offset = self._GPS_OFFSET
+                return {
+                    "locationRestriction": {
+                        "rectangle": {
+                            "low":  {"latitude": lat - offset, "longitude": lng - offset},
+                            "high": {"latitude": lat + offset, "longitude": lng + offset},
+                        }
                     }
                 }
-            }
+            else:
+                # ค้นหาเจาะจง หรือค้นหาทั่วไปแต่ไม่ได้บอก "แถวนี้"
+                # → bias จาก GPS ให้น้ำหนัก แต่ไม่บังคับ
+                return {
+                    "locationBias": {
+                        "circle": {
+                            "center": {"latitude": lat, "longitude": lng},
+                            "radius": self._GPS_BIAS_RADIUS,
+                        }
+                    }
+                }
 
-        # ไม่มี GPS → bias กรุงเทพกลาง ให้ API ตีความจาก text
+        # ไม่มี GPS → bias กรุงเทพกลาง
         return {
             "locationBias": {
                 "circle": {
