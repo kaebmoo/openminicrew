@@ -150,11 +150,24 @@ class PlacesTool(BaseTool):
             log.error("Google Places API timeout")
             return "❌ Google Places ไม่ตอบสนอง ลองใหม่อีกครั้งครับ"
         except requests.exceptions.HTTPError as e:
-            log.error("Google Places API HTTP error: %s", e)
+            error_body = ""
+            try:
+                error_body = resp.text[:300]
+            except Exception:
+                pass
+            log.error("Google Places API HTTP %s: %s | body: %s", resp.status_code, e, error_body)
             if resp.status_code == 400:
                 return "❌ คำค้นหาไม่ถูกต้อง กรุณาลองใหม่"
             if resp.status_code == 403:
+                # แยกสาเหตุ: key ผิด vs quota exceeded vs API ไม่ได้เปิด
+                body_lower = error_body.lower()
+                if "quota" in body_lower or "rate" in body_lower:
+                    return "❌ Google Places API ถึงขีดจำกัดการใช้งานชั่วคราว กรุณาลองใหม่ในอีกสักครู่"
+                if "not activated" in body_lower or "enable" in body_lower:
+                    return "❌ ยังไม่ได้เปิดใช้ Places API (New) ใน Google Cloud Console"
                 return "❌ API Key ไม่ถูกต้อง หรือยังไม่ได้เปิดใช้ Places API (New)"
+            if resp.status_code == 429:
+                return "❌ Google Places API ถึงขีดจำกัด กรุณาลองใหม่ในอีกสักครู่"
             return f"❌ เกิดข้อผิดพลาดจาก Google Places: {resp.status_code}"
         except requests.exceptions.RequestException as e:
             log.error("Google Places API request failed: %s", e)
