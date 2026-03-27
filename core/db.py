@@ -206,6 +206,24 @@ CREATE TABLE IF NOT EXISTS job_runs (
 
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_time
     ON job_runs(job_id, scheduled_at DESC);
+
+CREATE TABLE IF NOT EXISTS security_audit_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_user_id   TEXT,
+    target_user_id  TEXT,
+    action          TEXT NOT NULL,
+    resource_type   TEXT NOT NULL,
+    resource_id     TEXT DEFAULT '',
+    outcome         TEXT NOT NULL DEFAULT 'success',
+    detail          TEXT DEFAULT '',
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_audit_target_time
+    ON security_audit_logs(target_user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_security_audit_action_time
+    ON security_audit_logs(action, created_at DESC);
 """
 
 PROFILE_SECRET_FIELDS = ("phone_number", "national_id")
@@ -378,6 +396,35 @@ def _make_text_ref(value: str | bytes | None) -> str:
     if not normalized:
         return ""
     return _fingerprint_text(normalized)
+
+
+def log_security_audit(actor_user_id: str | None, target_user_id: str | None,
+                       action: str, resource_type: str,
+                       resource_id: str = "", outcome: str = "success",
+                       detail: str = ""):
+    """Write a governance-focused audit record for sensitive read/purge actions."""
+    safe_resource_id = (resource_id or "")[:128]
+    safe_detail = (detail or "")[:255]
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO security_audit_logs (
+                actor_user_id, target_user_id, action, resource_type,
+                resource_id, outcome, detail, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(actor_user_id) if actor_user_id is not None else None,
+                str(target_user_id) if target_user_id is not None else None,
+                action,
+                resource_type,
+                safe_resource_id,
+                outcome,
+                safe_detail,
+                datetime.now().isoformat(),
+            ),
+        )
 
 
 def make_log_field(prefix: str, value: str | bytes | None = None, *, kind: str,
@@ -845,6 +892,30 @@ def check_health() -> dict:
         return {"db": f"error: {e}"}
 
 
+def get_security_audit_summary(hours: int = 24) -> dict:
+    with get_conn() as conn:
+        since_expr = f"-{int(hours)} hours"
+        total = conn.execute(
+            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE created_at >= datetime('now', ?)",
+            (since_expr,),
+        ).fetchone()["c"]
+        denied = conn.execute(
+            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE outcome = 'denied' AND created_at >= datetime('now', ?)",
+            (since_expr,),
+        ).fetchone()["c"]
+        purges = conn.execute(
+            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE action = 'purge_user_data' AND created_at >= datetime('now', ?)",
+            (since_expr,),
+        ).fetchone()["c"]
+
+    return {
+        "window_hours": int(hours),
+        "total_events": int(total),
+        "denied_events": int(denied),
+        "purge_events": int(purges),
+    }
+
+
 # === User operations ===
 
 def get_user_by_chat_id(chat_id: str) -> dict | None:
@@ -904,7 +975,7 @@ def deactivate_user(chat_id: str):
         )
 
 
-def purge_user_data(user_id: str) -> dict:
+def purge_user_data(user_id: str, *, actor_user_id: str | None = None, source: str = "user_request") -> dict:
     """Hard-delete all user-linked data for right-to-be-forgotten flows.
 
     Returns a summary dictionary with deleted row counts and whether a Gmail token
@@ -969,6 +1040,21 @@ def purge_user_data(user_id: str) -> dict:
             log.warning("Failed to delete Gmail token for user %s: %s", user_id, err)
 
     summary["gmail_token_deleted"] = token_deleted
+    log_security_audit(
+        actor_user_id=actor_user_id or user_id,
+        target_user_id=user_id,
+        action="purge_user_data",
+        resource_type="user_data",
+        resource_id=user_id,
+        outcome="success",
+        detail=f"{source};audit_retained=1;gmail_token_deleted={int(token_deleted)}",
+    )
+    with get_conn() as conn:
+        retained_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE target_user_id = ? OR actor_user_id = ?",
+            (user_id, user_id),
+        ).fetchone()["c"]
+    summary["security_audit_logs_retained"] = int(retained_count)
     return summary
 
 
@@ -1003,6 +1089,16 @@ def revoke_gmail_access(user_id: str) -> dict:
             token_deleted = True
         except OSError as err:
             log.warning("Failed to delete Gmail token during revoke for user %s: %s", user_id, err)
+
+    log_security_audit(
+        actor_user_id=user_id,
+        target_user_id=user_id,
+        action="revoke_gmail_access",
+        resource_type="gmail_token",
+        resource_id=user_id,
+        outcome="success",
+        detail="disconnectgmail",
+    )
 
     return {
         "user_updated": user_updated,
@@ -1287,18 +1383,43 @@ def get_expenses_by_source_hash(user_id: str, source_type: str, source_hash: str
 
 def summarize_expenses(user_id: str, start_date: str, end_date: str, category: str = "", keyword: str = "") -> list[dict]:
     with get_conn() as conn:
-        sql = "SELECT category, SUM(amount) AS total, COUNT(*) AS count FROM expenses WHERE user_id = ? AND expense_date BETWEEN ? AND ?"
-        params: list = [str(user_id), start_date, end_date]
+        if not keyword:
+            sql = "SELECT category, SUM(amount) AS total, COUNT(*) AS count FROM expenses WHERE user_id = ? AND expense_date BETWEEN ? AND ?"
+            params: list = [str(user_id), start_date, end_date]
+            if category:
+                sql += " AND category = ?"
+                params.append(category)
+            sql += " GROUP BY category ORDER BY total DESC"
+            rows = conn.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
+
+        sql = "SELECT * FROM expenses WHERE user_id = ? AND expense_date BETWEEN ? AND ?"
+        params = [str(user_id), start_date, end_date]
         if category:
             sql += " AND category = ?"
             params.append(category)
-        if keyword:
-            sql += " AND (note LIKE ? OR category LIKE ?)"
-            params.append(f"%{keyword}%")
-            params.append(f"%{keyword}%")
-        sql += " GROUP BY category ORDER BY total DESC"
-        rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        sql += " ORDER BY expense_date DESC, id DESC"
+
+        normalized_keyword = keyword.strip().casefold()
+        category_totals: dict[str, dict] = {}
+        for row in conn.execute(sql, params).fetchall():
+            expense = _hydrate_expense_row(conn, row)
+            if not expense:
+                continue
+
+            note_value = str(expense.get("note") or "")
+            category_value = str(expense.get("category") or "")
+            if normalized_keyword not in note_value.casefold() and normalized_keyword not in category_value.casefold():
+                continue
+
+            bucket = category_totals.setdefault(
+                category_value,
+                {"category": category_value, "total": 0.0, "count": 0},
+            )
+            bucket["total"] += float(expense.get("amount") or 0.0)
+            bucket["count"] += 1
+
+        return sorted(category_totals.values(), key=lambda item: item["total"], reverse=True)
 
 
 # === Conversations ===
@@ -1616,7 +1737,7 @@ def save_location(user_id: str, lat: float, lng: float):
     if not has_user_consent(user_id, CONSENT_LOCATION, default=False):
         return False
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now().isoformat()
     with get_conn() as conn:
         conn.execute("""
             INSERT INTO user_locations (user_id, latitude, longitude, updated_at)

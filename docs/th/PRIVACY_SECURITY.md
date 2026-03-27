@@ -5,6 +5,8 @@
 เอกสารนี้อธิบายว่า OpenMiniCrew จัดการเรื่อง privacy, consent และ security อย่างไรใน implementation ปัจจุบัน
 เอกสารนี้เป็นคู่มือเชิงเทคนิคสำหรับ operator และ contributor ไม่ใช่คำวินิจฉัยทางกฎหมาย
 
+สำหรับขั้นตอนปฏิบัติการรายวันและการรับมือเหตุการณ์ ให้ใช้คู่มือเฉพาะสำหรับผู้ดูแลระบบ: [Admin Operations Runbook](ADMIN_RUNBOOK.md)
+
 ## ขอบเขต
 
 OpenMiniCrew มีการจัดการข้อมูลที่อาจเป็นข้อมูลส่วนบุคคลหรือข้อมูลอ่อนไหวหลายกลุ่ม เช่น
@@ -153,6 +155,10 @@ shared keys ใช้กับบริการเช่น
 - `job_runs` ของ schedules ที่เป็นของ user นั้น
 - Gmail token file ใต้ `credentials/gmail_{user_id}.json`
 
+ข้อยกเว้นที่ตั้งใจไว้:
+
+- `security_audit_logs` จะไม่ถูกลบใน flow นี้ เพราะต้องเก็บไว้เพื่อ governance, accountability และ incident investigation โดยระบบจะเขียนและเก็บ audit record แบบขั้นต่ำไว้แทน
+
 ## Gmail และ Google OAuth Security
 
 integration ของ Gmail และ Calendar ใช้ secret อยู่ 2 ชั้น
@@ -200,6 +206,61 @@ operator ควรถือสิ่งต่อไปนี้เป็น oper
 4. ป้องกัน deployment host, filesystem permissions และ backups ให้เหมาะสม
 5. ใช้ `/privacy`, `/mykeys` และ `/health` เป็นส่วนหนึ่งของการตรวจสอบระบบ
 6. ถ้าผู้ใช้ขอลบข้อมูลทั้งหมด ให้ใช้ hard purge ไม่ใช่อาศัย deactivate อย่างเดียว
+
+## Security Audit Trail
+
+ระบบมี audit trail เชิง governance ในตาราง `security_audit_logs` สำหรับเหตุการณ์ด้านข้อมูลอ่อนไหว
+
+เหตุการณ์หลักที่มีการบันทึกใน implementation ปัจจุบัน เช่น
+
+- การอ่าน profile secrets บางเส้นทางที่ผู้ใช้เรียกดูเอง
+- การอ่าน/อัปเดต private API keys
+- การ hard purge (`/delete_my_data confirm`)
+- การ revoke/disconnect Gmail
+
+หมายเหตุสำหรับ operator:
+
+- audit trail นี้ใช้เพื่อสืบสวนเหตุการณ์และความรับผิดชอบ ไม่ได้เก็บ secret payload ดิบ
+- ให้ตรวจ `/health` เป็นประจำเพื่อดูสถิติ audit events ล่าสุด
+
+## Key Management และ Rotation Runbook
+
+OpenMiniCrew รองรับ keyring model ดังนี้
+
+- `ENCRYPTION_KEY` เป็น primary key สำหรับงานเข้ารหัสใหม่
+- `ENCRYPTION_KEY_PREVIOUS` และ `ENCRYPTION_KEY_PREVIOUS_LIST` ใช้เป็น decrypt-only keys ระหว่าง migration
+
+ลำดับแนะนำสำหรับ rotation:
+
+1. ออกและ deploy `ENCRYPTION_KEY` ใหม่
+2. ย้ายคีย์เดิมไปไว้ใน `ENCRYPTION_KEY_PREVIOUS` (หรือเพิ่มใน `ENCRYPTION_KEY_PREVIOUS_LIST`)
+3. รัน `python main.py --rotate-encryption` เพื่อ re-encrypt ข้อมูลอ่อนไหวด้วย primary key ใหม่
+4. ตรวจสอบ `/health`, `/mykeys` และฟีเจอร์ที่พึ่งพาคีย์
+5. หลังยืนยันเสถียรแล้ว ค่อยถอด previous keys ออกจาก config
+
+แนวทางนี้ช่วยลดความเสี่ยงข้อมูลอ่านไม่ได้ระหว่าง rollout
+
+## Incident Response (เมื่อสงสัยว่าข้อมูลรั่วไหล)
+
+แนวทางปฏิบัติเมื่อเกิดเหตุ:
+
+1. Contain: จำกัดการเข้าถึง host/operator และหยุด automation ที่ไม่จำเป็น
+2. Assess: ตรวจ `security_audit_logs`, tool logs และ deployment logs เพื่อประเมินขอบเขต
+3. Revoke: ยกเลิก Gmail/OAuth ที่เกี่ยวข้อง และ rotate keys ที่เสี่ยง
+4. Eradicate: ใช้ hard purge/export workflows ตาม policy และคำขอผู้ใช้
+5. Recover: เปิดบริการกลับด้วยคีย์ใหม่และสิทธิ์ที่ตรวจสอบแล้ว
+6. Review: สรุป root cause และมาตรการป้องกันซ้ำ
+
+## Export, Purge และ Backup Handling
+
+ข้อกำหนดเชิงปฏิบัติ:
+
+- มองไฟล์ export และ database snapshots เป็นข้อมูลอ่อนไหวแบบ data-at-rest
+- จำกัดสิทธิ์ไฟล์และสิทธิ์เข้าถึง backup/export อย่างเข้มงวด
+- กำหนด retention และ deletion schedule ให้ backup/export ด้วย
+- นำ backup/restore path เข้า security review เป็นรอบ
+
+การลบจากฐานข้อมูลหลักอย่างเดียวไม่พอ หาก backup/export ยังเก็บข้อมูลไว้นอกนโยบาย
 
 ## สรุป
 

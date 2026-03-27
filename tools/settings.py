@@ -61,6 +61,15 @@ class SettingsTool(BaseTool):
         if not value:
             current = user.get("phone_number")
             if current:
+                db.log_security_audit(
+                    actor_user_id=user_id,
+                    target_user_id=user_id,
+                    action="read_profile_secret",
+                    resource_type="users.phone_number",
+                    resource_id=user_id,
+                    outcome="success",
+                    detail="setphone_view",
+                )
                 return f"เบอร์โทรปัจจุบัน: {current}\nเปลี่ยนเบอร์: /setphone <เบอร์ใหม่>"
             return "ยังไม่ได้บันทึกเบอร์โทร\nใช้: /setphone <เบอร์โทร>"
 
@@ -92,6 +101,15 @@ class SettingsTool(BaseTool):
         if not value:
             current = user.get("national_id")
             if current:
+                db.log_security_audit(
+                    actor_user_id=user_id,
+                    target_user_id=user_id,
+                    action="read_profile_secret",
+                    resource_type="users.national_id",
+                    resource_id=user_id,
+                    outcome="success",
+                    detail="setid_view",
+                )
                 masked = "X" * 9 + current[-4:]
                 return f"เลขบัตรประชาชนปัจจุบัน: {masked}\nเปลี่ยน: /setid <เลขบัตรใหม่>"
             return "ยังไม่ได้บันทึกเลขบัตรประชาชน\nใช้: /setid <เลขบัตรประชาชน 13 หลัก>"
@@ -127,7 +145,26 @@ class SettingsTool(BaseTool):
         lines = ["📋 ข้อมูลส่วนตัว:"]
         lines.append(f"• ชื่อ: {display_name}")
         lines.append(f"• เบอร์โทร: {phone}" if phone else "• เบอร์โทร: ยังไม่ได้ตั้ง (/setphone)")
+        if phone:
+            db.log_security_audit(
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                action="read_profile_secret",
+                resource_type="users.phone_number",
+                resource_id=user_id,
+                outcome="success",
+                detail="settings_view",
+            )
         if national_id:
+            db.log_security_audit(
+                actor_user_id=user_id,
+                target_user_id=user_id,
+                action="read_profile_secret",
+                resource_type="users.national_id",
+                resource_id=user_id,
+                outcome="success",
+                detail="settings_view",
+            )
             masked = "X" * 9 + national_id[-4:]
             lines.append(f"• เลขบัตร: {masked}")
         else:

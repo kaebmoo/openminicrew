@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenMiniCrew - AI-Powered Telegram Bot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #1a1a2e;
+            background: #f8f9fa;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 60px 24px;
+        }
+        h1 {
+            font-size: 2.2rem;
+            margin-bottom: 8px;
+        }
+        .tagline {
+            font-size: 1.1rem;
+            color: #555;
+            margin-bottom: 40px;
+        }
+        h2 {
+            font-size: 1.3rem;
+            margin: 32px 0 12px;
+            color: #2d3436;
+        }
+        p, li {
+            color: #444;
+            margin-bottom: 10px;
+        }
+        ul {
+            padding-left: 24px;
+            margin-bottom: 20px;
+        }
+        .section {
+            background: #fff;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .links {
+            margin-top: 40px;
+            padding-top: 24px;
+            border-top: 1px solid #e0e0e0;
+        }
+        .links a {
+            color: #0066cc;
+            text-decoration: none;
+            margin-right: 24px;
+            font-weight: 500;
+        }
+        .links a:hover { text-decoration: underline; }
+        footer {
+            margin-top: 48px;
+            color: #888;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>OpenMiniCrew</h1>
+        <p class="tagline">AI-Powered Personal Assistant Telegram Bot</p>
+
+        <div class="section">
+            <h2>About</h2>
+            <p>
+                OpenMiniCrew is an open-source Telegram bot framework that uses LLM-powered routing
+                to connect users with modular tools for everyday tasks. It supports multiple AI providers
+                including Google Gemini and Anthropic Claude.
+            </p>
+
+            <h2>Features</h2>
+            <ul>
+                <li>Gmail and Google Calendar integration for email summaries and scheduling</li>
+                <li>Expense tracking with receipt OCR via Gemini Vision</li>
+                <li>PromptPay QR code generation</li>
+                <li>Real-time traffic and places search via Google Maps</li>
+                <li>Web search and news summaries</li>
+                <li>Reminders, to-do lists, and scheduled automation</li>
+                <li>Thai unit conversion (land area, gold weight)</li>
+                <li>Exchange rate lookup</li>
+            </ul>
+
+            <h2>Google API Usage</h2>
+            <p>
+                OpenMiniCrew uses Google APIs (Gmail API and Google Calendar API) to provide
+                email summary and calendar management features. Access to your Google data
+                requires explicit authorization through OAuth 2.0 and can be revoked at any time
+                using the <code>/disconnectgmail</code> command or through your
+                <a href="https://myaccount.google.com/permissions">Google Account permissions</a>.
+            </p>
+            <p>
+                OpenMiniCrew's use and transfer of information received from Google APIs adheres to the
+                <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+                including the Limited Use requirements.
+            </p>
+        </div>
+
+        <div class="links">
+            <a href="user-guide-th.html">คู่มือการใช้งาน (ภาษาไทย)</a>
+            <a href="privacy.html">Privacy Policy</a>
+            <a href="https://github.com/kaebmoo/openminicrew">Source Code (GitHub)</a>
+        </div>
+
+        <footer>
+            <p>&copy; 2025 OpenMiniCrew Project. Open-source under MIT License.</p>
+            <p>Contact: kaebmoo@gmail.com</p>
+        </footer>
+    </div>
+</body>
+</html>

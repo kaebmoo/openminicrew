@@ -145,6 +145,7 @@ async def health_check():
 
     readiness = collect_startup_readiness(bot_mode="webhook")
     api_key_hygiene = summarize_workspace_key_hygiene()
+    audit_summary = db.get_security_audit_summary(hours=24)
     db_health = db.check_health()
     llm_health = llm_router.health_check()
     last_schedule = db.get_last_scheduler_run()
@@ -160,6 +161,7 @@ async def health_check():
         "uptime_seconds": round(uptime, 1),
         "startup_readiness": readiness,
         "api_key_hygiene": api_key_hygiene,
+        "security_audit": audit_summary,
         "db": db_health,
         "llm": llm_health,
         "last_scheduler_run": last_schedule,

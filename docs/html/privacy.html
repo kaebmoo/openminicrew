@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - OpenMiniCrew</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #1a1a2e;
+            background: #f8f9fa;
+            line-height: 1.7;
+        }
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 60px 24px;
+        }
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 4px;
+        }
+        .app-name {
+            color: #555;
+            margin-bottom: 8px;
+            font-size: 1.05rem;
+        }
+        .updated {
+            color: #888;
+            font-size: 0.9rem;
+            margin-bottom: 40px;
+        }
+        h2 {
+            font-size: 1.2rem;
+            margin: 32px 0 12px;
+            color: #2d3436;
+            padding-top: 16px;
+            border-top: 1px solid #eee;
+        }
+        h2:first-of-type { border-top: none; padding-top: 0; }
+        p, li {
+            color: #444;
+            margin-bottom: 10px;
+        }
+        ul {
+            padding-left: 24px;
+            margin-bottom: 16px;
+        }
+        .section {
+            background: #fff;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        code {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        a { color: #0066cc; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .back { margin-bottom: 32px; }
+        footer {
+            margin-top: 48px;
+            color: #888;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <p class="back"><a href="index.html">&larr; Back to OpenMiniCrew</a></p>
+
+        <h1>Privacy Policy</h1>
+        <p class="app-name">OpenMiniCrew - AI-Powered Telegram Bot</p>
+        <p class="updated">Last updated: March 26, 2026</p>
+
+        <div class="section">
+            <h2>Overview</h2>
+            <p>
+                OpenMiniCrew is an open-source Telegram bot that helps users manage everyday tasks
+                through AI-powered tools. This policy explains what data the application collects,
+                how it is used, and how you can control or delete your data.
+            </p>
+
+            <h2>Data We Collect</h2>
+            <p>OpenMiniCrew collects and processes the following data only when you use the corresponding features:</p>
+            <ul>
+                <li><strong>Telegram profile:</strong> Your Telegram chat ID and display name, used to identify your account and deliver messages.</li>
+                <li><strong>Messages:</strong> Text messages you send to the bot are processed to determine which tool to use. Chat history may be stored temporarily to provide conversational context, subject to your consent.</li>
+                <li><strong>Location:</strong> If you share your location, it is stored temporarily to provide location-based features (nearby places, traffic). Location data expires automatically based on a configurable time limit and can be deleted at any time.</li>
+                <li><strong>Phone number and national ID:</strong> Stored only if you voluntarily provide them for PromptPay QR generation. These are encrypted at rest.</li>
+                <li><strong>Expense records:</strong> Amounts, categories, and notes you record through the expense tracker. Notes are encrypted at rest.</li>
+                <li><strong>Google account data:</strong> See the dedicated section below.</li>
+            </ul>
+
+            <h2>Google User Data</h2>
+            <p>
+                OpenMiniCrew accesses Google APIs (Gmail API and Google Calendar API) only after
+                you explicitly authorize access through the standard Google OAuth 2.0 flow.
+            </p>
+            <p>The application accesses:</p>
+            <ul>
+                <li><strong>Gmail (read-only):</strong> Message headers and content are read to generate email summaries. The application does not send, modify, or delete your emails.</li>
+                <li><strong>Google Calendar:</strong> Calendar events are read to show your schedule. Events can be created or deleted only when you explicitly request it.</li>
+            </ul>
+            <p>
+                <strong>How Google data is used:</strong> Email content and calendar data are processed in memory to generate summaries and are not stored permanently. Only minimal metadata (message IDs for deduplication) is retained temporarily.
+            </p>
+            <p>
+                <strong>Sharing:</strong> Your Google data is never shared with, sold to, or disclosed to any third party.
+                It is processed only by the LLM provider (Google Gemini or Anthropic Claude) as configured by the bot operator,
+                solely for the purpose of generating responses to your requests.
+            </p>
+            <p>
+                OpenMiniCrew's use and transfer of information received from Google APIs adheres to the
+                <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+                including the Limited Use requirements.
+            </p>
+
+            <h2>Data Security</h2>
+            <p>OpenMiniCrew implements the following security measures:</p>
+            <ul>
+                <li>Sensitive identifiers (phone numbers, national IDs) are encrypted at rest using field-level encryption.</li>
+                <li>Google OAuth tokens are encrypted at rest in per-user credential files.</li>
+                <li>Per-user API keys are encrypted before storage.</li>
+                <li>Operational logs use minimized metadata (hashes and sizes) instead of raw content.</li>
+                <li>The Telegram webhook endpoint is protected by a secret token verified on every request.</li>
+            </ul>
+
+            <h2>Data Retention</h2>
+            <p>
+                Data is not kept indefinitely. The bot operator configures retention periods for chat history,
+                operational logs, and other temporary data. Automated cleanup jobs remove expired data on a daily schedule.
+                Location data has an independent time-to-live setting and expires automatically.
+            </p>
+
+            <h2>Your Rights and Controls</h2>
+            <p>You have full control over your data through the following commands:</p>
+            <ul>
+                <li><code>/privacy</code> &mdash; View a summary of your consent state and data status.</li>
+                <li><code>/consent gmail off</code> &mdash; Revoke Gmail access consent.</li>
+                <li><code>/consent location off</code> &mdash; Revoke location consent and delete saved location.</li>
+                <li><code>/consent chat off</code> &mdash; Stop chat history storage and delete existing history.</li>
+                <li><code>/disconnectgmail</code> &mdash; Remove Gmail authorization and delete the stored token.</li>
+                <li><code>/clearlocation</code> &mdash; Delete your saved location immediately.</li>
+                <li><code>/delete_my_data confirm</code> &mdash; Permanently delete your user-linked operational data while intentionally retaining a minimal governance audit trail.</li>
+            </ul>
+            <p>
+                You can also revoke OpenMiniCrew's access to your Google account at any time through your
+                <a href="https://myaccount.google.com/permissions">Google Account permissions page</a>.
+            </p>
+
+            <h2>Third-Party Services</h2>
+            <p>OpenMiniCrew integrates with the following third-party services to provide its features:</p>
+            <ul>
+                <li>Telegram Bot API (message delivery)</li>
+                <li>Google APIs: Gmail and Calendar (email and calendar features)</li>
+                <li>Google Gemini or Anthropic Claude (AI language processing)</li>
+                <li>Google Maps Platform (places and traffic)</li>
+                <li>Tavily or DuckDuckGo (web search)</li>
+                <li>Bank of Thailand API (exchange rates)</li>
+            </ul>
+            <p>Each service is governed by its own privacy policy. Data sent to these services is limited to what is necessary for the specific feature.</p>
+
+            <h2>Open Source</h2>
+            <p>
+                OpenMiniCrew is open-source software. The full source code is available at
+                <a href="https://github.com/kaebmoo/openminicrew">github.com/kaebmoo/openminicrew</a>.
+                You can inspect exactly how data is handled.
+            </p>
+
+            <h2>Contact</h2>
+            <p>
+                If you have questions about this privacy policy or your data, contact the project maintainer
+                at <a href="mailto:kaebmoo@gmail.com">kaebmoo@gmail.com</a>.
+            </p>
+        </div>
+
+        <footer>
+            <p>&copy; 2025 OpenMiniCrew Project. Open-source under MIT License.</p>
+        </footer>
+    </div>
+</body>
+</html>

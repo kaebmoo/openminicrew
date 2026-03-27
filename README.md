@@ -11,10 +11,12 @@
 - [docs/en/ARCHITECTURE.md](docs/en/ARCHITECTURE.md)
 - [docs/en/DATABASE.md](docs/en/DATABASE.md)
 - [docs/en/PRIVACY_SECURITY.md](docs/en/PRIVACY_SECURITY.md)
+- [docs/en/ADMIN_RUNBOOK.md](docs/en/ADMIN_RUNBOOK.md)
 - [docs/th/CONFIGURATION.md](docs/th/CONFIGURATION.md)
 - [docs/th/ARCHITECTURE.md](docs/th/ARCHITECTURE.md)
 - [docs/th/DATABASE.md](docs/th/DATABASE.md)
 - [docs/th/PRIVACY_SECURITY.md](docs/th/PRIVACY_SECURITY.md)
+- [docs/th/ADMIN_RUNBOOK.md](docs/th/ADMIN_RUNBOOK.md)
 
 ## คุณสมบัติ
 

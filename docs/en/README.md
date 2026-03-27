@@ -37,6 +37,7 @@ Use `/help` in Telegram for the live command list.
 - [Architecture](ARCHITECTURE.md)
 - [Database](DATABASE.md)
 - [Privacy, Consent, and Security](PRIVACY_SECURITY.md)
+- [Admin Operations Runbook](ADMIN_RUNBOOK.md)
 
 ## Installation
 
@@ -209,7 +210,7 @@ BOT_MODE=webhook python main.py
 | `/consent [gmail\|location\|chat] [on\|off]` | View or change explicit consent state |
 | `/privacy` | Show retention, consent, and private data handling summary |
 | `/clearlocation` | Delete the last saved location |
-| `/delete_my_data confirm` | Permanently purge user-linked data |
+| `/delete_my_data confirm` | Permanently purge user-linked operational data |
 | `/setkey <service> <value>` | Save a personal API key |
 | `/mykeys` | List saved keys |
 | `/removekey <service>` | Remove a saved key |
@@ -224,7 +225,7 @@ The current rollout adds explicit privacy controls for sensitive features.
 - Location storage requires explicit consent through `/consent location on`
 - Gmail access can be revoked with `/disconnectgmail`
 - `/privacy` shows retention settings, consent state, and advisory API key hygiene information
-- `/delete_my_data confirm` hard-purges user-linked records and credential artifacts
+- `/delete_my_data confirm` hard-purges user-linked records and credential artifacts, while intentionally retaining a minimal governance audit trail
 
 Consent and data lifecycle behavior:
 

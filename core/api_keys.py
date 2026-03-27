@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from core import db
 from core import config
 from core.logger import get_logger
+from core.security import get_encryption_keyring
 
 log = get_logger(__name__)
 
@@ -52,9 +53,13 @@ def normalize_service(service: str) -> str:
 
 
 def _get_fernet() -> Fernet | None:
-    if not config.ENCRYPTION_KEY:
-        return None
-    return Fernet(config.ENCRYPTION_KEY.encode())
+    primary, _ = get_encryption_keyring()
+    return primary
+
+
+def _get_fernet_chain() -> list[Fernet]:
+    _, chain = get_encryption_keyring()
+    return chain
 
 
 def _require_encryption_key():
@@ -147,7 +152,25 @@ def get_api_key(user_id: str, service: str) -> str | None:
                 "Stored private key for service %s is unavailable because it could not be decrypted",
                 normalized_service,
             )
+            _log_security_audit_best_effort(
+                actor_user_id=str(user_id),
+                target_user_id=str(user_id),
+                action="read_private_api_key",
+                resource_type="user_api_keys",
+                resource_id=normalized_service,
+                outcome="denied",
+                detail="decryption_unavailable",
+            )
             return None
+        _log_security_audit_best_effort(
+            actor_user_id=str(user_id),
+            target_user_id=str(user_id),
+            action="read_private_api_key",
+            resource_type="user_api_keys",
+            resource_id=normalized_service,
+            outcome="success",
+            detail="user_scope",
+        )
         return decrypted_value
 
     if normalized_service in PRIVATE_ONLY_SERVICES:
@@ -173,6 +196,15 @@ def set_api_key(user_id: str, service: str, api_key: str):
         raise ValueError(f"API key/value for {normalized_service} looks weak or placeholder-like: {reasons}")
 
     db.upsert_user_api_key(user_id, normalized_service, _encrypt(api_key.strip()))
+    _log_security_audit_best_effort(
+        actor_user_id=str(user_id),
+        target_user_id=str(user_id),
+        action="update_private_api_key",
+        resource_type="user_api_keys",
+        resource_id=normalized_service,
+        outcome="success",
+        detail="set_api_key",
+    )
 
 
 def remove_api_key(user_id: str, service: str) -> bool:
@@ -370,16 +402,68 @@ def _decrypt(value: str) -> str | None:
     if not normalized:
         return ""
 
-    fernet = _get_fernet()
-    if fernet is None:
+    fernet_chain = _get_fernet_chain()
+    if not fernet_chain:
         if _looks_encrypted(normalized):
             log.warning("ENCRYPTION_KEY not set while reading encrypted stored private key")
             return None
         return normalized
+
+    for fernet in fernet_chain:
+        try:
+            return fernet.decrypt(normalized.encode()).decode()
+        except InvalidToken:
+            continue
+
+    if _looks_encrypted(normalized):
+        log.warning("Stored private key could not be decrypted with configured encryption keyring")
+        return None
+    return normalized
+
+
+def _log_security_audit_best_effort(**kwargs):
     try:
-        return fernet.decrypt(normalized.encode()).decode()
-    except InvalidToken:
-        if _looks_encrypted(normalized):
-            log.warning("Stored private key could not be decrypted with the current ENCRYPTION_KEY")
-            return None
-        return normalized
+        db.log_security_audit(**kwargs)
+    except Exception:
+        # Do not block auth/runtime flows if audit write fails.
+        pass
+
+
+def rotate_user_api_key_encryption() -> dict:
+    """Re-encrypt all private API key rows using the current primary ENCRYPTION_KEY."""
+    primary = _get_fernet()
+    if primary is None:
+        raise RuntimeError("ENCRYPTION_KEY is required for private key rotation")
+
+    items = db.get_all_user_api_keys()
+    rotated_rows = 0
+    skipped_rows = 0
+
+    with db.get_conn() as conn:
+        for item in items:
+            stored = (item.get("api_key") or "").strip()
+            if not stored:
+                skipped_rows += 1
+                continue
+
+            plain = _decrypt(stored)
+            if plain is None:
+                skipped_rows += 1
+                continue
+
+            new_cipher = _encrypt(plain)
+            if new_cipher == stored:
+                skipped_rows += 1
+                continue
+
+            conn.execute(
+                "UPDATE user_api_keys SET api_key = ?, updated_at = ? WHERE user_id = ? AND service = ?",
+                (new_cipher, datetime.now().isoformat(), str(item["user_id"]), item["service"]),
+            )
+            rotated_rows += 1
+
+    return {
+        "total_rows": len(items),
+        "rotated_rows": rotated_rows,
+        "skipped_rows": skipped_rows,
+    }

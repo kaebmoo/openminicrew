@@ -55,7 +55,7 @@ By initiating the Service (sending the /start command), you agree to all terms i
 ### 1.6 Suspension and Termination
 
 1. The Operator reserves the right to suspend or terminate any user's access at any time, with or without cause.
-2. Users may stop using the Service at any time and may delete all their data using `/delete_my_data confirm`.
+2. Users may stop using the Service at any time and may use `/delete_my_data confirm` to permanently delete their user-linked operational data. Minimal governance audit records may be retained for accountability and incident investigation.
 3. The Operator reserves the right to modify features or discontinue the Service entirely without prior notice.
 
 ### 1.7 Changes to Terms
@@ -220,7 +220,9 @@ In the event of a high-impact data breach, the Operator will notify affected use
 
 ### 3.3 Permanent Deletion (Hard Purge)
 
-The `/delete_my_data confirm` command permanently deletes data from all database tables: users, chat_history, conversations, processed_emails, tool_logs, reminders, todos, expenses, user_locations, oauth_states, user_consents, user_api_keys, pending_messages, schedules, and job_runs. It also deletes the Gmail token file from disk.
+The `/delete_my_data confirm` command permanently deletes data from user-linked operational tables: users, chat_history, conversations, processed_emails, tool_logs, reminders, todos, expenses, user_locations, oauth_states, user_consents, user_api_keys, pending_messages, schedules, and job_runs. It also deletes the Gmail token file from disk.
+
+Minimal records in `security_audit_logs` are intentionally retained for governance, accountability, and incident investigation.
 
 This deletion is permanent and irreversible.
 

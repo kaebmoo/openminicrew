@@ -55,7 +55,7 @@ OpenMiniCrew เป็นผู้ช่วยส่วนตัวผ่าน 
 ### 1.6 การระงับและยกเลิกบริการ
 
 1. ผู้ให้บริการสงวนสิทธิ์ในการระงับหรือยกเลิกการเข้าถึงของผู้ใช้ได้ตลอดเวลา โดยมีหรือไม่มีเหตุผล
-2. ผู้ใช้สามารถหยุดใช้บริการได้ตลอดเวลา และสามารถลบข้อมูลทั้งหมดด้วยคำสั่ง `/delete_my_data confirm`
+2. ผู้ใช้สามารถหยุดใช้บริการได้ตลอดเวลา และสามารถใช้คำสั่ง `/delete_my_data confirm` เพื่อลบข้อมูลการใช้งานที่ผูกกับบัญชีแบบถาวรได้ โดยระบบอาจเก็บ governance audit records ขั้นต่ำไว้เพื่อ accountability และการสืบสวนเหตุการณ์
 3. ผู้ให้บริการสงวนสิทธิ์ในการเปลี่ยนแปลง feature หรือยุติบริการทั้งหมดโดยไม่จำเป็นต้องแจ้งล่วงหน้า
 
 ### 1.7 การเปลี่ยนแปลงข้อกำหนด
@@ -220,7 +220,9 @@ OpenMiniCrew เป็นผู้ช่วยส่วนตัวผ่าน 
 
 ### 3.3 การลบข้อมูลถาวร (Hard Purge)
 
-คำสั่ง `/delete_my_data confirm` จะลบข้อมูลจากทุกตารางในฐานข้อมูล ได้แก่: users, chat_history, conversations, processed_emails, tool_logs, reminders, todos, expenses, user_locations, oauth_states, user_consents, user_api_keys, pending_messages, schedules, job_runs รวมถึงลบ Gmail token file บนดิสก์
+คำสั่ง `/delete_my_data confirm` จะลบข้อมูลจากตารางปฏิบัติการที่ผูกกับผู้ใช้ ได้แก่: users, chat_history, conversations, processed_emails, tool_logs, reminders, todos, expenses, user_locations, oauth_states, user_consents, user_api_keys, pending_messages, schedules, job_runs รวมถึงลบ Gmail token file บนดิสก์
+
+อย่างไรก็ตาม ระบบจะเก็บข้อมูลขั้นต่ำใน `security_audit_logs` ต่อไว้โดยตั้งใจ เพื่อ governance, accountability และการสืบสวนเหตุการณ์
 
 การลบนี้เป็นการลบถาวร ไม่สามารถกู้คืนได้
 

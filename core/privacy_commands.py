@@ -118,7 +118,8 @@ def build_privacy_summary(user_id: str, user: dict) -> str:
     lines.append("• consent controls: /consent, /consent chat off, /consent location off")
     lines.append("• revoke Gmail access: /disconnectgmail")
     lines.append("• ลบตำแหน่งล่าสุด: /clearlocation")
-    lines.append("• ลบข้อมูลทั้งหมดถาวร: /delete_my_data confirm")
+    lines.append("• ลบข้อมูลการใช้งานที่ผูกกับบัญชีแบบถาวร: /delete_my_data confirm")
+    lines.append("• hard purge จะคง governance audit trail ขั้นต่ำไว้โดยตั้งใจ")
     lines.append("• deactivate account: คำสั่งฝั่ง owner เท่านั้น และไม่ใช่การ purge ข้อมูล")
     return "\n".join(lines)
 
@@ -204,8 +205,8 @@ async def handle_privacy(user_id: str, user: dict, args: str, **kw) -> _RESULT:
 async def handle_delete_my_data(user_id: str, user: dict, args: str, **kw) -> _RESULT:
     if args.strip().lower() != "confirm":
         return _ok(
-            "⚠️ คำสั่งนี้จะลบข้อมูลของคุณแบบถาวร รวมถึงประวัติแชต, schedules, logs, API keys, "
-            "ตำแหน่งล่าสุด และ Gmail token\n\n"
+            "⚠️ คำสั่งนี้จะลบข้อมูลการใช้งานที่ผูกกับบัญชีของคุณแบบถาวร รวมถึงประวัติแชต, schedules, logs, API keys, "
+            "ตำแหน่งล่าสุด และ Gmail token โดยระบบจะคง governance audit trail ขั้นต่ำไว้โดยตั้งใจ\n\n"
             "หากต้องการดำเนินการจริง ให้ใช้: /delete_my_data confirm"
         )
 
@@ -220,14 +221,16 @@ async def handle_delete_my_data(user_id: str, user: dict, args: str, **kw) -> _R
 
     total_rows = sum(
         value for key, value in summary.items()
-        if key not in {"user_found", "gmail_token_deleted"} and isinstance(value, int)
+        if key not in {"user_found", "gmail_token_deleted", "security_audit_logs_retained"} and isinstance(value, int)
     )
     token_status = "ลบแล้ว" if summary.get("gmail_token_deleted") else "ไม่มีหรือไม่ได้ลบ"
+    audit_status = summary.get("security_audit_logs_retained", 0)
     log.info("User %s purged their data (rows=%s, gmail_token=%s)", user_id, total_rows, token_status)
     return _ok(
-        "✅ ลบข้อมูลของคุณแบบถาวรแล้ว\n"
+        "✅ ลบข้อมูลการใช้งานที่ผูกกับบัญชีของคุณแบบถาวรแล้ว\n"
         f"- rows affected: {total_rows}\n"
         f"- Gmail token: {token_status}\n"
+        f"- governance audit trail retained: {audit_status}\n"
         "หากต้องการใช้งานอีกครั้ง อาจต้องลงทะเบียน/ตั้งค่าใหม่บางส่วน"
     )
 

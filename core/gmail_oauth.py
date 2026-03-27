@@ -54,7 +54,7 @@ def generate_auth_url(user_id: str, chat_id: str) -> str | None:
     )
 
     # บันทึก PKCE code_verifier เพื่อใช้ตอน token exchange
-    code_verifier = flow.code_verifier or ""
+    code_verifier = getattr(flow, "code_verifier", "") or ""
     db.save_oauth_state(state, user_id, str(chat_id), expires_at, code_verifier=code_verifier)
 
     return auth_url

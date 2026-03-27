@@ -110,7 +110,7 @@ class ToolRegistry:
         lines.append("  /clearlocation — ลบตำแหน่งล่าสุดที่บันทึกไว้")
         lines.append("  /consent [gmail|location|chat] [on|off] — จัดการ consent แบบ explicit")
         lines.append("  /privacy — ดู retention และตัวเลือกด้านข้อมูลส่วนบุคคล")
-        lines.append("  /delete_my_data confirm — ลบข้อมูลทั้งหมดแบบถาวร")
+        lines.append("  /delete_my_data confirm — ลบข้อมูลการใช้งานที่ผูกกับบัญชีแบบถาวร (คง audit trail ขั้นต่ำไว้)")
         lines.append("  /model — ดู/เปลี่ยน LLM (claude, gemini, matcha)")
         lines.append("  /setkey <service> <value> — บันทึก API key ของตัวเอง")
         lines.append("  /mykeys — ดูรายการ key ของตัวเอง")

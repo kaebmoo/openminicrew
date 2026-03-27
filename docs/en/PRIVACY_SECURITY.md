@@ -5,6 +5,8 @@
 This document explains how OpenMiniCrew currently handles privacy, consent, and security.
 It is written as an implementation guide for operators and contributors, not as formal legal advice.
 
+For daily operations and incident procedures, use the dedicated admin runbook: [Admin Operations Runbook](ADMIN_RUNBOOK.md).
+
 ## Scope
 
 OpenMiniCrew handles several classes of sensitive or private data:
@@ -155,6 +157,10 @@ Current hard-purge coverage includes user-linked records in:
 - `job_runs` for the user-owned schedules
 - Gmail token file under `credentials/gmail_{user_id}.json`
 
+Intentional exception:
+
+- `security_audit_logs` is retained for governance, accountability, and incident investigation; the purge flow writes and preserves a minimal audit record instead of deleting that trail
+
 ## Gmail and Google OAuth Security
 
 The Gmail and Calendar integration uses two different secret classes:
@@ -202,6 +208,61 @@ Operators should treat the following as mandatory operational controls:
 4. Protect the deployment host, filesystem permissions, and backups.
 5. Review `/privacy`, `/mykeys`, and `/health` during support or security checks.
 6. Use hard purge when a user requests full deletion instead of relying on deactivation alone.
+
+## Security Audit Trail
+
+The system keeps a governance-focused audit trail in `security_audit_logs` for sensitive operations.
+
+Current high-value audit events include:
+
+- sensitive profile field reads on user-facing settings paths
+- private API key read/update events
+- hard purge events (`/delete_my_data confirm` path)
+- Gmail revoke/disconnect events
+
+Operator note:
+
+- this audit trail is designed to support incident investigation and accountability, not to store secret payloads
+- check `/health` for recent audit event counts as part of regular operations
+
+## Key Management and Rotation Runbook
+
+OpenMiniCrew supports a keyring model:
+
+- `ENCRYPTION_KEY` is the active primary key used for new encryption writes
+- `ENCRYPTION_KEY_PREVIOUS` and `ENCRYPTION_KEY_PREVIOUS_LIST` are decrypt-only compatibility keys during migration windows
+
+Recommended rotation sequence:
+
+1. Generate and deploy the new `ENCRYPTION_KEY`.
+2. Move the old primary key into `ENCRYPTION_KEY_PREVIOUS` (or append in `ENCRYPTION_KEY_PREVIOUS_LIST`).
+3. Run `python main.py --rotate-encryption` to re-encrypt sensitive artifacts with the new primary key.
+4. Verify `/health`, `/mykeys`, and key-dependent features.
+5. Remove previous keys from config after validation and stabilization.
+
+This sequence avoids lockout while preserving data readability during rollout.
+
+## Incident Response (Suspected Data Exposure)
+
+When exposure is suspected:
+
+1. Contain: restrict host/operator access and pause non-essential automation.
+2. Assess: inspect `security_audit_logs`, tool logs, and deployment logs for scope.
+3. Revoke: disconnect affected Gmail/OAuth access and rotate compromised keys.
+4. Eradicate: run hard purge/export workflows where required by policy and user requests.
+5. Recover: restore service with rotated keys and verified permissions.
+6. Review: document root cause and corrective actions.
+
+## Export, Purge, and Backup Handling
+
+Operational rules:
+
+- treat exported reports and database snapshots as sensitive data at rest
+- apply restricted filesystem permissions and access control to backup/export artifacts
+- enforce retention and deletion schedules for backup/export copies
+- include backup and restore paths in periodic security reviews
+
+Hard purge in the primary database is necessary but not sufficient if backups or exports still retain user data outside policy.
 
 ## Summary
 

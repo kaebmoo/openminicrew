@@ -179,6 +179,8 @@ Production notes:
 | `OWNER_DISPLAY_NAME` | `Owner` | Display name for the owner user |
 | `LOCATION_TTL_MINUTES` | `60` | GPS location cache TTL (0 = never expires) |
 | `ENCRYPTION_KEY` | `(none)` | Fernet key for encrypting per-user API keys |
+| `ENCRYPTION_KEY_PREVIOUS` | `(none)` | Previous Fernet key kept for decrypt-only compatibility during key rollover |
+| `ENCRYPTION_KEY_PREVIOUS_LIST` | `(none)` | Comma-separated additional previous Fernet keys for staged migrations |
 | `API_KEY_ROTATION_DAYS_DEFAULT` | `180` | Advisory rotation period for most per-user API keys |
 | `WORK_IMAP_PASSWORD_ROTATION_DAYS` | `90` | Advisory rotation period for stored IMAP passwords |
 | `WORK_IMAP_USER_ROTATION_DAYS` | `180` | Advisory rotation period for stored IMAP usernames |
@@ -188,3 +190,10 @@ Production notes:
 | `DB_PATH` | `data/openminicrew.db` | Override database file location |
 
 API key rotation reporting is advisory only in the current rollout. Overdue keys are reported in `/mykeys`, `/privacy`, and `/health`, but existing keys are not blocked automatically.
+
+For encryption key rollover:
+
+1. Set a new `ENCRYPTION_KEY`.
+2. Keep old key(s) in `ENCRYPTION_KEY_PREVIOUS` or `ENCRYPTION_KEY_PREVIOUS_LIST`.
+3. Run `python main.py --rotate-encryption` to re-encrypt stored artifacts with the new primary key.
+4. Remove old keys from config after validation.

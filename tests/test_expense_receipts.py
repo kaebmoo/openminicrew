@@ -3,6 +3,7 @@ import sys
 import types
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from cryptography.fernet import Fernet
@@ -19,6 +20,11 @@ sys.modules.setdefault("google_auth_oauthlib.flow", fake_google_auth_oauthlib_fl
 from core import db
 from core import security
 from tools.expense import ExpenseTool
+
+
+class _ExpenseToolForTest(ExpenseTool):
+    async def extract_for_test(self, image_bytes: bytes, hint: str = ""):
+        return await self._extract_expense_from_image(image_bytes, hint)
 
 
 def _reset_db_connection():
@@ -148,3 +154,51 @@ def test_pending_expense_split_persists_source_hash_for_all_rows(tmp_path, monke
     assert len(rows) == 2
     assert rows[0]["note"]
     assert rows[1]["note"]
+
+
+def test_extract_expense_from_image_does_not_log_plaintext_response(monkeypatch):
+    monkeypatch.setattr("core.config.GEMINI_API_KEY", "test-gemini-key")
+
+    response_text = '{"store":"Secret Shop","items":[{"amount":120,"category":"อาหาร","note":"เลขบัตร 1234"}]}'
+    def _build_content(**kwargs):
+        return SimpleNamespace(**kwargs)
+
+    fake_response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[SimpleNamespace(text=response_text)]
+                )
+            )
+        ]
+    )
+    fake_client = SimpleNamespace(
+        aio=SimpleNamespace(
+            models=SimpleNamespace(
+                generate_content=AsyncMock(return_value=fake_response)
+            )
+        )
+    )
+    fake_part = SimpleNamespace(
+        from_bytes=lambda **kwargs: SimpleNamespace(),
+        from_text=lambda **kwargs: SimpleNamespace(),
+    )
+    fake_types = SimpleNamespace(
+        Part=fake_part,
+        Content=_build_content,
+    )
+    fake_genai = SimpleNamespace(Client=lambda **kwargs: fake_client)
+
+    tool = _ExpenseToolForTest()
+    with patch.dict(sys.modules, {"google": SimpleNamespace(genai=fake_genai), "google.genai": SimpleNamespace(types=fake_types)}), \
+         patch("tools.expense.log.info") as mock_log_info, \
+         patch("tools.expense.log.warning") as mock_log_warning:
+        result = asyncio.run(tool.extract_for_test(b"fake-image-bytes"))
+
+    assert result == [{"amount": 120.0, "category": "อาหาร", "note": "เลขบัตร 1234", "store": "Secret Shop"}]
+    info_messages = " ".join(str(call.args) for call in mock_log_info.call_args_list)
+    warning_messages = " ".join(str(call.args) for call in mock_log_warning.call_args_list)
+    assert response_text not in info_messages
+    assert response_text not in warning_messages
+    assert "Secret Shop" not in info_messages
+    assert "เลขบัตร 1234" not in info_messages

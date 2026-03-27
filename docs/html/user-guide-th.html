@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>คู่มือการใช้งาน OpenMiniCrew</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+            color: #1a1a2e;
+            background: #f8f9fa;
+            line-height: 1.8;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 4px;
+            color: #1a1a2e;
+        }
+
+        h1+blockquote {
+            color: #555;
+            font-style: normal;
+            border: none;
+            padding: 0;
+            margin-bottom: 8px;
+        }
+
+        h2 {
+            font-size: 1.4rem;
+            margin: 36px 0 16px;
+            padding-top: 20px;
+            border-top: 2px solid #e0e0e0;
+            color: #2d3436;
+        }
+
+        h3 {
+            font-size: 1.15rem;
+            margin: 24px 0 10px;
+            color: #444;
+        }
+
+        h4 {
+            font-size: 1.05rem;
+            margin: 18px 0 8px;
+            color: #555;
+        }
+
+        p {
+            margin-bottom: 12px;
+            color: #444;
+        }
+
+        li {
+            color: #444;
+            margin-bottom: 4px;
+        }
+
+        ul,
+        ol {
+            padding-left: 24px;
+            margin-bottom: 16px;
+        }
+
+        .section {
+            background: #fff;
+            border-radius: 12px;
+            padding: 28px 32px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0 20px;
+            font-size: 0.92em;
+        }
+
+        th {
+            background: #f0f4f8;
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 2px solid #d0d7de;
+            font-weight: 600;
+        }
+
+        td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #e8ecf0;
+            vertical-align: top;
+        }
+
+        tr:hover td {
+            background: #f8fafe;
+        }
+
+        code {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.88em;
+            font-family: "SF Mono", "Fira Code", monospace;
+        }
+
+        pre {
+            background: #f6f8fa;
+            border: 1px solid #e1e4e8;
+            border-radius: 8px;
+            padding: 14px 18px;
+            overflow-x: auto;
+            margin: 12px 0 16px;
+            font-size: 0.88em;
+            line-height: 1.5;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            border-radius: 0;
+        }
+
+        a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        strong {
+            color: #2d3436;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid #e0e0e0;
+            margin: 24px 0;
+        }
+
+        blockquote {
+            border-left: 3px solid #d0d7de;
+            padding-left: 16px;
+            color: #666;
+            margin: 12px 0;
+        }
+
+        .back {
+            margin-bottom: 24px;
+        }
+
+        .updated {
+            color: #888;
+            font-size: 0.9rem;
+            margin-bottom: 32px;
+        }
+
+        footer {
+            margin-top: 48px;
+            padding-top: 24px;
+            border-top: 1px solid #e0e0e0;
+            color: #888;
+            font-size: 0.85rem;
+        }
+
+        footer a {
+            margin-right: 20px;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px 16px;
+            }
+
+            .section {
+                padding: 20px 16px;
+            }
+
+            table {
+                font-size: 0.82em;
+            }
+
+            th,
+            td {
+                padding: 6px 8px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <p class="back"><a href="index.html">&larr; กลับหน้าหลัก OpenMiniCrew</a></p>
+        <div class="section">
+            <h1 id="openminicrew">คู่มือการใช้งาน OpenMiniCrew</h1>
+            <blockquote>
+                <p>AI-Powered Personal Assistant Telegram Bot</p>
+            </blockquote>
+            <p><strong>เวอร์ชัน:</strong> 1.0 | <strong>อัปเดตล่าสุด:</strong> มีนาคม 2569</p>
+            <hr />
+            <h2 id="_1">สารบัญ</h2>
+            <ol>
+                <li><a href="#เริ่มต้นใช้งาน">เริ่มต้นใช้งาน</a></li>
+                <li><a href="#วิธีสั่งงาน">วิธีสั่งงาน</a></li>
+                <li><a href="#อีเมล">อีเมล</a></li>
+                <li><a href="#การเงิน">การเงิน</a></li>
+                <li><a href="#qr-code-และ-promptpay">QR Code และ PromptPay</a></li>
+                <li><a href="#สถานที่และการเดินทาง">สถานที่และการเดินทาง</a></li>
+                <li><a href="#ข่าวสารและค้นหาเว็บ">ข่าวสารและค้นหาเว็บ</a></li>
+                <li><a href="#ตรวจหวย">ตรวจหวย</a></li>
+                <li><a href="#อัตราแลกเปลี่ยน">อัตราแลกเปลี่ยน</a></li>
+                <li><a href="#งานและนัดหมาย">งานและนัดหมาย</a></li>
+                <li><a href="#ตั้งเวลาอัตโนมัติ">ตั้งเวลาอัตโนมัติ</a></li>
+                <li><a href="#แปลงหน่วย">แปลงหน่วย</a></li>
+                <li><a href="#ตั้งค่าส่วนตัว">ตั้งค่าส่วนตัว</a></li>
+                <li><a href="#ความเป็นส่วนตัวและความปลอดภัย">ความเป็นส่วนตัวและความปลอดภัย</a></li>
+                <li><a href="#คำสั่งระบบ">คำสั่งระบบ</a></li>
+            </ol>
+            <hr />
+            <h2 id="_2">เริ่มต้นใช้งาน</h2>
+            <h3 id="_3">ลงทะเบียน</h3>
+            <p>พิมพ์ <code>/start</code> เพื่อลงทะเบียนและเริ่มใช้งาน Bot จะแนะนำขั้นตอนการตั้งค่าเบื้องต้น</p>
+            <h3 id="_4">ตั้งค่าข้อมูลพื้นฐาน (แนะนำ)</h3>
+            <ul>
+                <li><code>/setname &lt;ชื่อ&gt;</code> — ตั้งชื่อที่แสดง</li>
+                <li><code>/setphone &lt;เบอร์โทร&gt;</code> — บันทึกเบอร์โทรสำหรับ PromptPay QR</li>
+                <li><code>/setid &lt;เลขบัตร 13 หลัก&gt;</code> — บันทึกเลขบัตรประชาชนสำหรับ PromptPay QR</li>
+            </ul>
+            <h3 id="gmail">เชื่อมต่อ Gmail (สำหรับฟีเจอร์อีเมลและปฏิทิน)</h3>
+            <p>พิมพ์ <code>/authgmail</code> แล้วกดลิงก์เพื่อ authorize ผ่าน Google OAuth</p>
+            <hr />
+            <h2 id="_5">วิธีสั่งงาน</h2>
+            <p>OpenMiniCrew รองรับ 2 วิธีในการสั่งงาน:</p>
+            <p><strong>1. พิมพ์คำสั่งตรง</strong> — ขึ้นต้นด้วย <code>/</code> เช่น <code>/email</code>,
+                <code>/fx USD</code> ไม่เสีย LLM token
+            </p>
+            <p><strong>2. พิมพ์อิสระ</strong> — พิมพ์ภาษาธรรมชาติ AI จะเลือก tool ที่เหมาะสมให้อัตโนมัติ เช่น
+                "สรุปเมลให้หน่อย", "เงินดอลลาร์วันนี้เท่าไหร่", "รถติดไหม สยามไปสีลม"</p>
+            <p><strong>3. ส่งรูปถ่าย</strong> — ถ่ายรูปบิล ใบเสร็จ หรือ slip ส่งมา Bot จะอ่านและบันทึกรายจ่ายอัตโนมัติ
+            </p>
+            <hr />
+            <h2 id="_6">อีเมล</h2>
+            <h3 id="gmail_1">Gmail ส่วนตัว</h3>
+            <p>คำสั่ง: <code>/gmail</code> หรือ <code>/email</code></p>
+            <p>ต้องเชื่อมต่อ Gmail ก่อนด้วย <code>/authgmail</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/email</code></td>
+                        <td>สรุปอีเมลที่ยังไม่ได้อ่านวันนี้</td>
+                    </tr>
+                    <tr>
+                        <td><code>/email 3d</code></td>
+                        <td>สรุปอีเมลย้อนหลัง 3 วัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/email 7d</code></td>
+                        <td>สรุปอีเมลย้อนหลัง 7 วัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/email 30d</code></td>
+                        <td>สรุปอีเมลย้อนหลัง 30 วัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/email force</code></td>
+                        <td>สรุปใหม่ทั้งหมด (รวมที่เคยสรุปแล้ว)</td>
+                    </tr>
+                    <tr>
+                        <td><code>/email บัตรเครดิต</code></td>
+                        <td>ค้นหาอีเมลเกี่ยวกับบัตรเครดิต</td>
+                    </tr>
+                    <tr>
+                        <td><code>/email from:ktc.co.th 7d</code></td>
+                        <td>ค้นหาอีเมลจาก KTC ย้อนหลัง 7 วัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/email force from:grab.com 30d</code></td>
+                        <td>สรุปใหม่เฉพาะอีเมลจาก Grab 30 วัน</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>สามารถใช้ร่วมกันได้ เช่น ค้นหา + ช่วงเวลา + force</p>
+            <h3 id="imap">อีเมลที่ทำงาน (IMAP)</h3>
+            <p>คำสั่ง: <code>/wm</code> หรือ <code>/workmail</code></p>
+            <p>ต้องตั้งค่า IMAP ก่อน:
+                - <code>/setkey work_imap_host &lt;host&gt;</code> — เช่น mail.company.com
+                - <code>/setkey work_imap_user &lt;email&gt;</code> — เช่น yourname@company.com
+                - <code>/setkey work_imap_password &lt;password&gt;</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/wm</code></td>
+                        <td>สรุปอีเมลงานวันนี้</td>
+                    </tr>
+                    <tr>
+                        <td><code>/wm 7d</code></td>
+                        <td>ย้อนหลัง 7 วัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/wm from:boss@company.com</code></td>
+                        <td>เฉพาะจากหัวหน้า</td>
+                    </tr>
+                    <tr>
+                        <td><code>/wm subject:ประชุม</code></td>
+                        <td>เฉพาะเรื่องประชุม</td>
+                    </tr>
+                    <tr>
+                        <td><code>/wm force 3d</code></td>
+                        <td>สรุปใหม่ย้อนหลัง 3 วัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/wm folder:Sent</code></td>
+                        <td>ดูโฟลเดอร์อื่น</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>รองรับไฟล์แนบ: PDF, DOCX, XLSX, CSV, TXT (สูงสุด 5 MB ต่อไฟล์, อ่านเนื้อหาสูงสุด 3 ไฟล์แนบต่ออีเมล)</p>
+            <h4 id="imap-nt">ตัวอย่าง: ตั้งค่าอีเมลที่ทำงาน (IMAP) สำหรับ NT</h4>
+            <p>สำหรับผู้ใช้อีเมล NT (National Telecom) <code>@ntplc.co.th</code> ให้ตั้งค่าทีละบรรทัดดังนี้:</p>
+            <pre><code>/setkey work_imap_host mail.ntplc.co.th
+/setkey work_imap_user yourname@ntplc.co.th
+/setkey work_imap_password รหัสผ่านของคุณ
+</code></pre>
+            <p>เปลี่ยน <code>yourname</code> เป็นชื่อบัญชีอีเมลจริงของคุณ และใส่รหัสผ่านจริง
+                (ข้อความจะถูกลบจากแชทอัตโนมัติ)</p>
+            <p>เมื่อตั้งค่าครบทั้ง 3 รายการแล้ว ใช้ <code>/wm</code> เพื่อสรุปอีเมลงานได้ทันที</p>
+            <p>สำหรับองค์กรอื่นที่ใช้ IMAP ให้เปลี่ยน host, user, password ตามข้อมูลของ mail server ขององค์กร (port 993
+                SSL เป็นค่าเริ่มต้น)</p>
+
+            <h3 id="smart-inbox-action-items">Smart Inbox — หา Action Items จากอีเมล</h3>
+
+            <p>คำสั่ง: <code>/inbox</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/inbox</code></td>
+                        <td>วิเคราะห์อีเมลล่าสุดหา action items</td>
+                    </tr>
+                    <tr>
+                        <td><code>/inbox mode auto</code></td>
+                        <td>เปลี่ยนเป็น auto — สร้าง todo อัตโนมัติ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/inbox mode confirm</code></td>
+                        <td>เปลี่ยนเป็น confirm (ค่าเริ่มต้น) — แสดงผลแต่ไม่สร้าง todo</td>
+                    </tr>
+                </tbody>
+            </table>
+            <hr />
+            <h2 id="_7">การเงิน</h2>
+            <h3 id="_8">บันทึกรายจ่าย</h3>
+            <p>คำสั่ง: <code>/exp</code> หรือ <code>/expense</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/expense 120 อาหาร ก๋วยเตี๋ยว</code></td>
+                        <td>บันทึก 120 บาท หมวดอาหาร หมายเหตุ ก๋วยเตี๋ยว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense 65 เครื่องดื่ม เบียร์</code></td>
+                        <td>บันทึก 65 บาท หมวดเครื่องดื่ม</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense 350 บันเทิง</code></td>
+                        <td>บันทึก 350 บาท หมวดบันเทิง</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense list</code></td>
+                        <td>ดูรายจ่ายล่าสุด</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense summary month</code></td>
+                        <td>สรุปรายจ่ายเดือนนี้</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense summary today</code></td>
+                        <td>สรุปรายจ่ายวันนี้</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense summary 7d</code></td>
+                        <td>สรุปรายจ่าย 7 วันล่าสุด</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense summary month เครื่องดื่ม</code></td>
+                        <td>สรุปเฉพาะหมวดเครื่องดื่ม</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense summary month กาแฟ</code></td>
+                        <td>ค้นหาคำว่า "กาแฟ" ในหมายเหตุ</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p><strong>หมวดหมู่ที่ใช้ได้:</strong> อาหาร, เครื่องดื่ม, เดินทาง, ช็อปปิ้ง, ของใช้, สาธารณูปโภค, สุขภาพ,
+                บันเทิง, การศึกษา, โอนเงิน, ทั่วไป</p>
+            <p><strong>บันทึกจากรูปถ่าย:</strong> ถ่ายรูปบิล ใบเสร็จ หรือ slip ส่งมาเลย Bot จะใช้ Gemini Vision
+                วิเคราะห์และบันทึกให้อัตโนมัติ ถ้ามีหลายรายการในใบเสร็จ Bot จะถามว่าจะแยกรายการหรือรวมเป็นรายการเดียว
+                สามารถใส่ caption กำกับรูปได้ เช่น "กินข้าวกับเพื่อน"</p>
+            <hr />
+            <h2 id="qr-code-promptpay">QR Code และ PromptPay</h2>
+            <h3 id="promptpay-qr">สร้าง PromptPay QR (รับเงิน)</h3>
+            <p>คำสั่ง: <code>/pay</code> หรือ <code>/promptpay</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/pay 150</code></td>
+                        <td>สร้าง QR รับเงิน 150 บาท (ใช้เบอร์/เลขบัตรที่บันทึกไว้)</td>
+                    </tr>
+                    <tr>
+                        <td><code>/pay 200 0891234567</code></td>
+                        <td>สร้าง QR 200 บาท ด้วยเบอร์ที่ระบุ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/pay 500 1-2345-67890-12-1</code></td>
+                        <td>สร้าง QR 500 บาท ด้วยเลขบัตรประชาชน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/pay</code></td>
+                        <td>สร้าง QR ไม่ระบุจำนวนเงิน (ผู้จ่ายกรอกเอง)</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>รองรับทั้งเบอร์มือถือและเลขบัตรประชาชน 13 หลัก ถ้าไม่ระบุจะใช้ข้อมูลจาก <code>/setphone</code> หรือ
+                <code>/setid</code>
+            </p>
+            <h3 id="qr-code">สร้าง QR Code ทั่วไป</h3>
+            <p>คำสั่ง: <code>/qr</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/qr https://example.com</code></td>
+                        <td>สร้าง QR จาก URL</td>
+                    </tr>
+                    <tr>
+                        <td><code>/qr Hello World</code></td>
+                        <td>สร้าง QR จากข้อความ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/qr WiFi:mynetwork</code></td>
+                        <td>สร้าง QR สำหรับ WiFi</td>
+                    </tr>
+                </tbody>
+            </table>
+            <hr />
+            <h2 id="_9">สถานที่และการเดินทาง</h2>
+            <h3 id="_10">ค้นหาสถานที่</h3>
+            <p>คำสั่ง: <code>/places</code> หรือ <code>/nearby</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/places ร้านกาแฟแถวสยาม</code></td>
+                        <td>ค้นหาร้านกาแฟแถวสยาม</td>
+                    </tr>
+                    <tr>
+                        <td><code>/places ร้านอาหารแถวนี้</code></td>
+                        <td>ค้นหาใกล้ตำแหน่ง GPS ของคุณ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/places โรงพยาบาลใกล้ลาดพร้าว</code></td>
+                        <td>ค้นหาโรงพยาบาล</td>
+                    </tr>
+                    <tr>
+                        <td><code>/places ร้านอาหารเปิดอยู่</code></td>
+                        <td>เฉพาะร้านที่เปิด</td>
+                    </tr>
+                    <tr>
+                        <td><code>/places กาแฟ 4.5 ดาวขึ้นไป</code></td>
+                        <td>กรองตาม rating</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>ส่งตำแหน่ง GPS มาก่อนเพื่อค้นหาใกล้ตัว: กดปุ่ม 📎 (แนบไฟล์) &gt; เลือก Location ผลลัพธ์แสดง rating รีวิว
+                เวลาเปิด-ปิด เบอร์โทร และลิงก์ Google Maps</p>
+            <h3 id="_11">เช็คเส้นทางและจราจร</h3>
+            <p>คำสั่ง: <code>/traffic</code> หรือ <code>/route</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/traffic สยาม ไป สีลม</code></td>
+                        <td>เช็คเส้นทาง สยาม → สีลม</td>
+                    </tr>
+                    <tr>
+                        <td><code>/traffic MBK to Asiatique</code></td>
+                        <td>เช็คเส้นทางภาษาอังกฤษ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/traffic สยาม → อโศก</code></td>
+                        <td>ใช้ลูกศรแทน "ไป" ได้</td>
+                    </tr>
+                    <tr>
+                        <td><code>/traffic ไปสนามบิน</code></td>
+                        <td>ต้นทาง = ตำแหน่ง GPS ปัจจุบัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/traffic สยาม ไป สีลม ไม่ขึ้นทางด่วน</code></td>
+                        <td>หลีกเลี่ยงทางด่วนทั้งหมด</td>
+                    </tr>
+                    <tr>
+                        <td><code>/traffic จันทน์ ไป แจ้งวัฒนะ ไม่ขึ้น ดอนเมืองโทลเวย์</code></td>
+                        <td>หลีกเลี่ยงเฉพาะทางด่วนที่ระบุ</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p><strong>โหมดการเดินทาง:</strong> Bot เลือกอัตโนมัติจากคำที่พิมพ์ หรือใช้คำต่อท้าย:
+                - ขับรถ (ค่าเริ่มต้น)
+                - <code>มอไซค์</code> / <code>มอเตอร์ไซค์</code> — มอเตอร์ไซค์
+                - <code>เดิน</code> — เดินเท้า
+                - <code>รถเมล์</code> / <code>BTS</code> / <code>MRT</code> / <code>รถไฟฟ้า</code> — ขนส่งสาธารณะ</p>
+            <p>แสดงระยะทาง เวลาปกติ เวลาจริงรวม traffic เส้นทางโดยย่อ และลิงก์เปิดใน Google Maps</p>
+            <hr />
+            <h2 id="_12">ข่าวสารและค้นหาเว็บ</h2>
+            <h3 id="_13">สรุปข่าว</h3>
+            <p>คำสั่ง: <code>/news</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/news</code></td>
+                        <td>ข่าวเด่นวันนี้</td>
+                    </tr>
+                    <tr>
+                        <td><code>/news เทคโนโลยี</code></td>
+                        <td>ข่าวเทคโนโลยี</td>
+                    </tr>
+                    <tr>
+                        <td><code>/news การเมือง</code></td>
+                        <td>ข่าวการเมือง</td>
+                    </tr>
+                    <tr>
+                        <td><code>/news หุ้น</code></td>
+                        <td>ข่าวหุ้น</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>ดึงข่าวจาก Google News แล้วสรุปด้วย AI พร้อมลิงก์อ้างอิง</p>
+            <h3 id="_14">ค้นหาเว็บ</h3>
+            <p>คำสั่ง: <code>/search</code> หรือ <code>/google</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/search AI คืออะไร</code></td>
+                        <td>ค้นหาข้อมูลทั่วไป</td>
+                    </tr>
+                    <tr>
+                        <td><code>/search รีวิว iPhone 16</code></td>
+                        <td>ค้นหารีวิว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/search วิธีทำผัดไทย</code></td>
+                        <td>ค้นหาสูตรอาหาร</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>ใช้ Tavily (ถ้ามี key) หรือ DuckDuckGo เป็นตัวสำรอง พร้อมสรุปเร็วสำหรับคำถามที่ต้องการคำตอบตรง</p>
+            <hr />
+            <h2 id="_15">ตรวจหวย</h2>
+            <p>คำสั่ง: <code>/lotto</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/lotto</code></td>
+                        <td>ผลสลากงวดล่าสุด (รางวัลที่ 1-3 + เลขท้าย)</td>
+                    </tr>
+                    <tr>
+                        <td><code>/lotto check 820866</code></td>
+                        <td>ตรวจเลข 6 หลักกับงวดล่าสุด</td>
+                    </tr>
+                    <tr>
+                        <td><code>/lotto check 66</code></td>
+                        <td>ตรวจเลขท้าย 2 ตัว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/lotto check 866</code></td>
+                        <td>ตรวจเลขท้าย 3 ตัว / เลขหน้า 3 ตัว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/lotto 02012569</code></td>
+                        <td>ดูผลงวดที่ระบุ (DDMMYYYY พ.ศ.)</td>
+                    </tr>
+                    <tr>
+                        <td><code>/lotto check 820866 02012569</code></td>
+                        <td>ตรวจเลขกับงวดที่ระบุ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/lotto list</code></td>
+                        <td>ดูรายการงวดที่มีผล</td>
+                    </tr>
+                    <tr>
+                        <td><code>/lotto month 022569</code></td>
+                        <td>ดูผลทุกงวดในเดือน ก.พ. 2569</td>
+                    </tr>
+                    <tr>
+                        <td><code>/lotto check_month 820866 022569</code></td>
+                        <td>ตรวจเลขกับทุกงวดในเดือน</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>สลากออกทุกวันที่ 1 และ 16 ของเดือน (อาจเลื่อนถ้าตรงวันหยุด)</p>
+            <hr />
+            <h2 id="_16">อัตราแลกเปลี่ยน</h2>
+            <p>คำสั่ง: <code>/fx</code>, <code>/rate</code> หรือ <code>/exchange</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/fx</code></td>
+                        <td>แสดงอัตราแลกเปลี่ยน USD, GBP, EUR, JPY, CNY</td>
+                    </tr>
+                    <tr>
+                        <td><code>/fx USD</code></td>
+                        <td>เฉพาะ USD</td>
+                    </tr>
+                    <tr>
+                        <td><code>/fx USD EUR JPY</code></td>
+                        <td>หลายสกุลพร้อมกัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/fx list</code></td>
+                        <td>ดูสกุลเงินทั้งหมดที่รองรับ</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p><strong>สกุลเงินที่รองรับ:</strong> USD, GBP, EUR, JPY, HKD, MYR, SGD, BND, PHP, IDR, INR, CHF, AUD, NZD,
+                CAD, SEK, DKK, NOK, CNY</p>
+            <p>ข้อมูลจากธนาคารแห่งประเทศไทย (BOT) แสดงราคาซื้อตั๋วเงิน ซื้อโอน และขาย
+                วันหยุดจะใช้ข้อมูลวันทำการก่อนหน้าอัตโนมัติ</p>
+            <hr />
+            <h2 id="_17">งานและนัดหมาย</h2>
+            <h3 id="to-do-list">To-Do List</h3>
+            <p>คำสั่ง: <code>/todo</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/todo ซื้อของที่ตลาด</code></td>
+                        <td>เพิ่ม todo</td>
+                    </tr>
+                    <tr>
+                        <td><code>/todo ส่งรายงาน !high</code></td>
+                        <td>เพิ่ม todo priority สูง</td>
+                    </tr>
+                    <tr>
+                        <td><code>/todo ส่งรายงาน due:2026-04-01</code></td>
+                        <td>เพิ่ม todo มี due date</td>
+                    </tr>
+                    <tr>
+                        <td><code>/todo</code></td>
+                        <td>ดูรายการ todo ที่ยังเปิดอยู่</td>
+                    </tr>
+                    <tr>
+                        <td><code>/todo list all</code></td>
+                        <td>ดูทั้งหมดรวมที่เสร็จแล้ว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/todo done 3</code></td>
+                        <td>เปลี่ยนสถานะ #3 เป็นเสร็จ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/todo remove 3</code></td>
+                        <td>ลบ todo #3</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>Priority: <code>!high</code> (สูง), <code>!low</code> (ต่ำ), ไม่ใส่ = medium</p>
+            <h3 id="reminder">ตั้งเตือน (Reminder)</h3>
+            <p>คำสั่ง: <code>/remind</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/remind 2026-03-30 09:00 ประชุมทีม</code></td>
+                        <td>ตั้งเตือนครั้งเดียว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/remind list</code></td>
+                        <td>ดู reminder ที่รออยู่</td>
+                    </tr>
+                    <tr>
+                        <td><code>/remind remove 1</code></td>
+                        <td>ลบ reminder #1</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>Bot จะส่งข้อความเตือนเมื่อถึงเวลาที่กำหนด</p>
+            <h3 id="google-calendar">Google Calendar</h3>
+            <p>คำสั่ง: <code>/cal</code> หรือ <code>/calendar</code></p>
+            <p>ต้องเชื่อมต่อ Gmail ก่อนด้วย <code>/authgmail</code></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/calendar</code></td>
+                        <td>ดูนัดหมาย 30 วันข้างหน้า</td>
+                    </tr>
+                    <tr>
+                        <td><code>/calendar list</code></td>
+                        <td>เหมือนด้านบน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/calendar add 2026-04-01 09:00 10:00 ประชุมทีม</code></td>
+                        <td>เพิ่มนัดหมาย</td>
+                    </tr>
+                    <tr>
+                        <td><code>/calendar delete 1</code></td>
+                        <td>ลบนัดหมายลำดับที่ 1</td>
+                    </tr>
+                    <tr>
+                        <td><code>/calendar delete &lt;event_id&gt;</code></td>
+                        <td>ลบด้วย event ID</td>
+                    </tr>
+                </tbody>
+            </table>
+            <hr />
+            <h2 id="_18">ตั้งเวลาอัตโนมัติ</h2>
+            <p>คำสั่ง: <code>/schedule</code></p>
+            <p>ตั้งให้ Bot รัน tool อัตโนมัติตามเวลาที่กำหนด</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/schedule</code></td>
+                        <td>ดูรายการ schedule ทั้งหมด</td>
+                    </tr>
+                    <tr>
+                        <td><code>/schedule add 07:00 gmail_summary</code></td>
+                        <td>ทุกวัน 7 โมง สรุปอีเมล</td>
+                    </tr>
+                    <tr>
+                        <td><code>/schedule add weekday 08:30 traffic สุขุมวิท</code></td>
+                        <td>จ-ศ 8:30 เช็คจราจร</td>
+                    </tr>
+                    <tr>
+                        <td><code>/schedule add weekly mon 09:00 news_summary</code></td>
+                        <td>ทุกจันทร์ 9 โมง สรุปข่าว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/schedule add monthly 1 07:00 exchange_rate</code></td>
+                        <td>ทุกวันที่ 1 เช็คอัตราแลกเปลี่ยน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/schedule add once 2026-03-30 09:00 gmail_summary</code></td>
+                        <td>ครั้งเดียว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/schedule remove 3</code></td>
+                        <td>ลบ schedule ID 3</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p><strong>ความถี่ที่ใช้ได้:</strong> daily (ทุกวัน), weekday (จ-ศ), weekly (ทุกสัปดาห์ ระบุวัน), monthly
+                (ทุกเดือน ระบุวันที่), once (ครั้งเดียว ระบุวันที่)</p>
+            <p><strong>Tool ที่ schedule ได้:</strong> gmail_summary, work_email, news_summary, exchange_rate, traffic,
+                lotto, places และ tool อื่นทุกตัว</p>
+            <hr />
+            <h2 id="_19">แปลงหน่วย</h2>
+            <p>คำสั่ง: <code>/convert</code> หรือ <code>/unit</code></p>
+            <h3 id="_20">ตัวอย่างการแปลง</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ผลลัพธ์</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/convert 10 km to mi</code></td>
+                        <td>10 กม. เป็นไมล์</td>
+                    </tr>
+                    <tr>
+                        <td><code>/convert 30 c to f</code></td>
+                        <td>30 องศาเซลเซียส เป็นฟาเรนไฮต์</td>
+                    </tr>
+                    <tr>
+                        <td><code>/convert 2 ไร่ เป็น ตารางเมตร</code></td>
+                        <td>2 ไร่ = 3,200 ตร.ม.</td>
+                    </tr>
+                    <tr>
+                        <td><code>/convert 3 บาททอง เป็น g</code></td>
+                        <td>3 บาททอง = 45.732 กรัม</td>
+                    </tr>
+                    <tr>
+                        <td><code>/convert 1-2-30 เป็น ตารางเมตร</code></td>
+                        <td>1 ไร่ 2 งาน 30 ตร.ว. เป็น ตร.ม.</td>
+                    </tr>
+                    <tr>
+                        <td><code>/convert 5 สลึง เป็น g</code></td>
+                        <td>5 สลึง เป็นกรัม</td>
+                    </tr>
+                    <tr>
+                        <td><code>/convert 100 ถัง เป็น l</code></td>
+                        <td>100 ถัง เป็นลิตร</td>
+                    </tr>
+                    <tr>
+                        <td><code>/convert 10 วา เป็น m</code></td>
+                        <td>10 วา เป็นเมตร</td>
+                    </tr>
+                </tbody>
+            </table>
+            <h3 id="_21">หน่วยที่รองรับ</h3>
+            <p><strong>ความยาว:</strong> mm, cm, m, km, inch, ft, yd, mi, วา, ศอก, คืบ, นิ้วไทย
+                <strong>น้ำหนัก:</strong> g, kg, lb, oz, สลึง, บาททอง, ตำลึง, ชั่ง
+                <strong>ปริมาตร:</strong> ml, l, ทะนาน, ถัง, เกวียน
+                <strong>พื้นที่:</strong> m2, ตร.ว., ตารางวา, งาน, ไร่
+                <strong>อุณหภูมิ:</strong> C, F, K
+                <strong>พื้นที่ (รูปแบบไทย):</strong> X-Y-Z (ไร่-งาน-ตารางวา) เช่น 3-2-50
+            </p>
+            <hr />
+            <h2 id="_22">ตั้งค่าส่วนตัว</h2>
+            <h3 id="_23">ข้อมูลส่วนตัว</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/setname &lt;ชื่อ&gt;</code></td>
+                        <td>ตั้งชื่อที่แสดง</td>
+                    </tr>
+                    <tr>
+                        <td><code>/setname</code></td>
+                        <td>ดูชื่อปัจจุบัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/setphone &lt;เบอร์โทร&gt;</code></td>
+                        <td>บันทึกเบอร์โทร (เข้ารหัส)</td>
+                    </tr>
+                    <tr>
+                        <td><code>/setphone</code></td>
+                        <td>ดูเบอร์ปัจจุบัน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/setid &lt;เลขบัตร 13 หลัก&gt;</code></td>
+                        <td>บันทึกเลขบัตรประชาชน (เข้ารหัส)</td>
+                    </tr>
+                    <tr>
+                        <td><code>/setid</code></td>
+                        <td>ดูเลขบัตรปัจจุบัน (แสดงเฉพาะ 4 หลักท้าย)</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>ข้อความที่มีเบอร์โทรและเลขบัตรจะถูกลบจากแชทอัตโนมัติเพื่อความปลอดภัย</p>
+            <h3 id="api-keys">API Keys</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/setkey &lt;service&gt; &lt;key&gt;</code></td>
+                        <td>เพิ่ม/อัปเดต API key</td>
+                    </tr>
+                    <tr>
+                        <td><code>/mykeys</code></td>
+                        <td>ดู keys ที่บันทึกไว้</td>
+                    </tr>
+                    <tr>
+                        <td><code>/removekey &lt;service&gt;</code></td>
+                        <td>ลบ key</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>ข้อความที่มี API key จะถูกลบจากแชทอัตโนมัติเพื่อความปลอดภัย</p>
+            <p><strong>Service ที่รองรับ:</strong> gemini, anthropic (Claude), tavily, tmd, google_maps, work_imap_host,
+                work_imap_user, work_imap_password และอื่นๆ</p>
+            <h4 id="api-key-llm">ตัวอย่าง: ตั้งค่า API Key สำหรับ LLM</h4>
+            <p><strong>Gemini (Google AI Studio):</strong>
+                1. ไปที่ https://aistudio.google.com/apikey
+                2. กด "Create API Key"
+                3. copy key ที่ได้ แล้วพิมพ์ใน bot:</p>
+            <pre><code>/setkey gemini AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+</code></pre>
+            <p><strong>Claude (Anthropic):</strong>
+                1. ไปที่ https://console.anthropic.com/settings/keys
+                2. กด "Create Key"
+                3. copy key ที่ได้ แล้วพิมพ์ใน bot:</p>
+            <pre><code>/setkey anthropic sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+</code></pre>
+            <p>หลังตั้งค่าแล้ว เปลี่ยน LLM ที่ใช้งานด้วย <code>/model gemini</code> หรือ <code>/model claude</code></p>
+
+            <h3 id="llm">เลือก LLM</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/model</code></td>
+                        <td>ดู LLM ที่ใช้อยู่</td>
+                    </tr>
+                    <tr>
+                        <td><code>/model gemini</code></td>
+                        <td>เปลี่ยนเป็น Gemini</td>
+                    </tr>
+                    <tr>
+                        <td><code>/model claude</code></td>
+                        <td>เปลี่ยนเป็น Claude</td>
+                    </tr>
+                    <tr>
+                        <td><code>/model matcha</code></td>
+                        <td>เปลี่ยนเป็น Matcha (ถ้ามี)</td>
+                    </tr>
+                </tbody>
+            </table>
+            <hr />
+            <h2 id="_24">ความเป็นส่วนตัวและความปลอดภัย</h2>
+            <h3 id="consent">จัดการ Consent</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/consent gmail on</code></td>
+                        <td>อนุญาตเข้าถึง Gmail</td>
+                    </tr>
+                    <tr>
+                        <td><code>/consent gmail off</code></td>
+                        <td>เพิกถอนสิทธิ์ Gmail</td>
+                    </tr>
+                    <tr>
+                        <td><code>/consent location on</code></td>
+                        <td>อนุญาตบันทึกตำแหน่ง</td>
+                    </tr>
+                    <tr>
+                        <td><code>/consent location off</code></td>
+                        <td>เพิกถอน + ลบตำแหน่งที่บันทึก</td>
+                    </tr>
+                    <tr>
+                        <td><code>/consent chat on</code></td>
+                        <td>อนุญาตบันทึกประวัติแชท</td>
+                    </tr>
+                    <tr>
+                        <td><code>/consent chat off</code></td>
+                        <td>เพิกถอน + ลบประวัติแชททั้งหมด</td>
+                    </tr>
+                </tbody>
+            </table>
+            <h3 id="_25">คำสั่งความเป็นส่วนตัว</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/privacy</code></td>
+                        <td>ดูสถานะ consent, retention, ตำแหน่ง, API keys</td>
+                    </tr>
+                    <tr>
+                        <td><code>/disconnectgmail</code></td>
+                        <td>ยกเลิกการเชื่อมต่อ Gmail (ลบ token)</td>
+                    </tr>
+                    <tr>
+                        <td><code>/clearlocation</code></td>
+                        <td>ลบตำแหน่งล่าสุด</td>
+                    </tr>
+                    <tr>
+                        <td><code>/delete_my_data confirm</code></td>
+                        <td>ลบข้อมูลการใช้งานที่ผูกกับบัญชีแบบถาวร</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>คำสั่ง <code>/delete_my_data confirm</code> จะลบข้อมูลการใช้งานที่ผูกกับบัญชีของคุณ เช่น ข้อมูลผู้ใช้,
+                ประวัติแชท, อีเมลที่ประมวลผล, expenses, todos, reminders, schedules, locations, API keys และ Gmail
+                token โดยระบบจะเก็บ governance audit trail ขั้นต่ำไว้โดยตั้งใจเพื่อ accountability และการสืบสวนเหตุการณ์</p>
+            <hr />
+            <h2 id="_26">คำสั่งระบบ</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/start</code></td>
+                        <td>ลงทะเบียนและดู onboarding</td>
+                    </tr>
+                    <tr>
+                        <td><code>/help</code></td>
+                        <td>แสดงรายการคำสั่งทั้งหมด</td>
+                    </tr>
+                    <tr>
+                        <td><code>/new</code></td>
+                        <td>เริ่มสนทนาใหม่ (ล้าง context)</td>
+                    </tr>
+                    <tr>
+                        <td><code>/history</code></td>
+                        <td>ดูประวัติสนทนา</td>
+                    </tr>
+                    <tr>
+                        <td><code>/authgmail</code></td>
+                        <td>เชื่อมต่อ Gmail / Google Calendar</td>
+                    </tr>
+                </tbody>
+            </table>
+            <h3 id="owner-only">คำสั่งสำหรับเจ้าของ (Owner Only)</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>ความหมาย</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/adduser &lt;chat_id&gt; [ชื่อ]</code></td>
+                        <td>เพิ่มผู้ใช้ใหม่</td>
+                    </tr>
+                    <tr>
+                        <td><code>/removeuser &lt;chat_id&gt;</code></td>
+                        <td>ลบผู้ใช้</td>
+                    </tr>
+                    <tr>
+                        <td><code>/listusers</code></td>
+                        <td>ดูรายชื่อผู้ใช้ทั้งหมด</td>
+                    </tr>
+                    <tr>
+                        <td><code>/keyaudit</code></td>
+                        <td>ตรวจสอบ API keys ที่ยังเป็น plaintext</td>
+                    </tr>
+                </tbody>
+            </table>
+            <hr />
+            <h2 id="_27">ตารางสรุปคำสั่งทั้งหมด</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>คำสั่ง</th>
+                        <th>Tool</th>
+                        <th>หมวด</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>/email</code>, <code>/gmail</code></td>
+                        <td>Gmail Summary</td>
+                        <td>อีเมล</td>
+                    </tr>
+                    <tr>
+                        <td><code>/wm</code>, <code>/workmail</code></td>
+                        <td>Work Email (IMAP)</td>
+                        <td>อีเมล</td>
+                    </tr>
+                    <tr>
+                        <td><code>/inbox</code></td>
+                        <td>Smart Inbox</td>
+                        <td>อีเมล</td>
+                    </tr>
+                    <tr>
+                        <td><code>/exp</code>, <code>/expense</code></td>
+                        <td>Expense Tracker</td>
+                        <td>การเงิน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/pay</code>, <code>/promptpay</code></td>
+                        <td>PromptPay QR</td>
+                        <td>การเงิน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/qr</code></td>
+                        <td>QR Code Generator</td>
+                        <td>QR</td>
+                    </tr>
+                    <tr>
+                        <td><code>/fx</code>, <code>/rate</code>, <code>/exchange</code></td>
+                        <td>Exchange Rate</td>
+                        <td>การเงิน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/places</code>, <code>/nearby</code></td>
+                        <td>Places Search</td>
+                        <td>สถานที่</td>
+                    </tr>
+                    <tr>
+                        <td><code>/traffic</code>, <code>/route</code></td>
+                        <td>Traffic &amp; Route</td>
+                        <td>การเดินทาง</td>
+                    </tr>
+                    <tr>
+                        <td><code>/news</code></td>
+                        <td>News Summary</td>
+                        <td>ข่าวสาร</td>
+                    </tr>
+                    <tr>
+                        <td><code>/search</code>, <code>/google</code></td>
+                        <td>Web Search</td>
+                        <td>ค้นหา</td>
+                    </tr>
+                    <tr>
+                        <td><code>/lotto</code></td>
+                        <td>Lotto Check</td>
+                        <td>หวย</td>
+                    </tr>
+                    <tr>
+                        <td><code>/todo</code></td>
+                        <td>To-Do List</td>
+                        <td>งาน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/remind</code></td>
+                        <td>Reminder</td>
+                        <td>เตือน</td>
+                    </tr>
+                    <tr>
+                        <td><code>/cal</code>, <code>/calendar</code></td>
+                        <td>Google Calendar</td>
+                        <td>นัดหมาย</td>
+                    </tr>
+                    <tr>
+                        <td><code>/schedule</code></td>
+                        <td>Schedule</td>
+                        <td>ตั้งเวลา</td>
+                    </tr>
+                    <tr>
+                        <td><code>/convert</code>, <code>/unit</code></td>
+                        <td>Unit Converter</td>
+                        <td>แปลงหน่วย</td>
+                    </tr>
+                    <tr>
+                        <td><code>/setname</code>, <code>/setphone</code>, <code>/setid</code></td>
+                        <td>Settings</td>
+                        <td>ตั้งค่า</td>
+                    </tr>
+                    <tr>
+                        <td><code>/setkey</code>, <code>/mykeys</code>, <code>/removekey</code></td>
+                        <td>API Keys</td>
+                        <td>ตั้งค่า</td>
+                    </tr>
+                    <tr>
+                        <td><code>/start</code></td>
+                        <td>—</td>
+                        <td>ระบบ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/help</code></td>
+                        <td>—</td>
+                        <td>ระบบ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/new</code></td>
+                        <td>—</td>
+                        <td>ระบบ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/history</code></td>
+                        <td>—</td>
+                        <td>ระบบ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/model</code></td>
+                        <td>—</td>
+                        <td>ระบบ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/authgmail</code></td>
+                        <td>—</td>
+                        <td>ระบบ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/disconnectgmail</code></td>
+                        <td>—</td>
+                        <td>ความเป็นส่วนตัว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/clearlocation</code></td>
+                        <td>—</td>
+                        <td>ความเป็นส่วนตัว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/consent</code></td>
+                        <td>—</td>
+                        <td>ความเป็นส่วนตัว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/privacy</code></td>
+                        <td>—</td>
+                        <td>ความเป็นส่วนตัว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/delete_my_data</code></td>
+                        <td>—</td>
+                        <td>ความเป็นส่วนตัว</td>
+                    </tr>
+                    <tr>
+                        <td><code>/adduser</code></td>
+                        <td>—</td>
+                        <td>เจ้าของ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/removeuser</code></td>
+                        <td>—</td>
+                        <td>เจ้าของ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/listusers</code></td>
+                        <td>—</td>
+                        <td>เจ้าของ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/keyaudit</code></td>
+                        <td>—</td>
+                        <td>เจ้าของ</td>
+                    </tr>
+                </tbody>
+            </table>
+            <hr />
+            <p><em>OpenMiniCrew — Open-source AI Telegram Bot</em>
+                <em><a href="https://github.com/kaebmoo/openminicrew">GitHub</a> | <a
+                        href="https://centraldigital.cattelecom.com/openminicrew/privacy.html">Privacy Policy</a></em>
+            </p>
+        </div>
+        <footer>
+            <a href="index.html">OpenMiniCrew</a>
+            <a href="privacy.html">Privacy Policy</a>
+            <a href="https://github.com/kaebmoo/openminicrew">GitHub</a>
+            <p style="margin-top: 12px;">&copy; 2025 OpenMiniCrew Project. Open-source under MIT License.</p>
+        </footer>
+    </div>
+</body>
+
+</html>

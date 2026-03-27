@@ -44,6 +44,7 @@ async def test_delete_my_data_confirm_purges_and_reloads_scheduler():
         "job_runs": 1,
         "users": 1,
         "gmail_token_deleted": True,
+        "security_audit_logs_retained": 1,
     }
 
     with patch("core.privacy_commands.db.purge_user_data", return_value=purge_summary) as mock_purge, \
@@ -56,7 +57,8 @@ async def test_delete_my_data_confirm_purges_and_reloads_scheduler():
 
     mock_purge.assert_called_once_with("u1")
     mock_reload.assert_called_once()
-    assert "ลบข้อมูลของคุณแบบถาวรแล้ว" in response
+    assert "ลบข้อมูลการใช้งานที่ผูกกับบัญชีของคุณแบบถาวรแล้ว" in response
+    assert "governance audit trail retained: 1" in response
 
 
 @pytest.mark.asyncio

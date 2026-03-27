@@ -331,7 +331,7 @@ class ExpenseTool(BaseTool):
                     response_text += part.text
 
             response_text = response_text.strip()
-            log.info("Gemini Vision response: %s", response_text[:500])
+            log.info("Gemini Vision response received for receipt image: text_len=%s", len(response_text))
 
             if not response_text or response_text == "null":
                 return None
@@ -345,7 +345,7 @@ class ExpenseTool(BaseTool):
                     data = json.loads(array_match.group())
                     if isinstance(data, list):
                         return [it for it in (self._normalize_item(d) for d in data if isinstance(d, dict)) if it]
-                log.warning("Gemini Vision response has no JSON: %s", response_text[:200])
+                log.warning("Gemini Vision response has no JSON payload for receipt image: text_len=%s", len(response_text))
                 return None
 
             data = json.loads(json_match.group())

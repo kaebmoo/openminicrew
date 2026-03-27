@@ -12,6 +12,7 @@ Usage:
     python main.py --auth-gmail              # authorize Gmail สำหรับ owner แล้วออก
     python main.py --auth-gmail <chat_id>    # authorize Gmail สำหรับ user ที่ระบุ
     python main.py --import-gmail-client-secrets <path>  # import client secrets แล้วเข้ารหัสเก็บ
+    python main.py --rotate-encryption       # re-encrypt sensitive data with current ENCRYPTION_KEY
     python main.py --list-gmail              # ดูว่า user ไหนมี Gmail token แล้วบ้าง
     python main.py --revoke-gmail <chat_id>  # ลบ Gmail token ของ user
 """
@@ -27,9 +28,24 @@ from core.db import init_db
 from core.user_manager import init_owner
 from core.logger import get_logger
 from core.readiness import STATUS_FAIL, STATUS_WARN, collect_startup_readiness, summarize_startup_readiness
-from core.security import authorize_gmail_interactive, get_gmail_token_path, import_gmail_client_secrets
+from core.security import (
+    authorize_gmail_interactive,
+    get_gmail_token_path,
+    import_gmail_client_secrets,
+    rotate_encrypted_security_artifacts,
+)
+from core.api_keys import rotate_user_api_key_encryption
 from tools.registry import registry
-from scheduler import init_scheduler, stop_scheduler
+
+try:
+    from scheduler import init_scheduler, stop_scheduler
+except ModuleNotFoundError:
+    # Some test environments import main without scheduler dependencies installed.
+    def init_scheduler():
+        raise RuntimeError("scheduler dependencies are not installed")
+
+    def stop_scheduler():
+        return None
 
 log = get_logger("OpenMiniCrew")
 
@@ -147,6 +163,24 @@ def main():
                 label = " (owner)" if user_id == OWNER_TELEGRAM_CHAT_ID else ""
                 print(f"  • {user_id}{label}")
         sys.exit(0)
+
+    # --rotate-encryption
+    if "--rotate-encryption" in args:
+        init_db()
+        try:
+            artifact_summary = rotate_encrypted_security_artifacts()
+            api_key_summary = rotate_user_api_key_encryption()
+            print("✅ Encryption rotation completed")
+            print(f"- users_profile_fields: {artifact_summary['users_profile_fields']}")
+            print(f"- expenses_notes: {artifact_summary['expenses_notes']}")
+            print(f"- gmail_token_files: {artifact_summary['gmail_token_files']}")
+            print(f"- gmail_client_secret: {artifact_summary['gmail_client_secret']}")
+            print(f"- api_key_rows_rotated: {api_key_summary['rotated_rows']}")
+            print(f"- errors: {artifact_summary['errors']}")
+            sys.exit(0)
+        except RuntimeError as err:
+            print(f"❌ Encryption rotation failed: {err}")
+            sys.exit(1)
 
     # --revoke-gmail <chat_id>
     if "--revoke-gmail" in args:
