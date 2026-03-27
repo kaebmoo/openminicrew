@@ -12,6 +12,7 @@ LENGTH_TO_M = {
     "mm": 0.001, "cm": 0.01, "m": 1.0, "km": 1000.0,
     "in": 0.0254, "inch": 0.0254, "ft": 0.3048, "yd": 0.9144, "mi": 1609.344,
     "วา": 2.0, "ศอก": 0.5, "คืบ": 0.25, "นิ้วไทย": 0.0208333333,
+    "เส้น": 80.0,
 }
 WEIGHT_TO_G = {
     "g": 1.0, "kg": 1000.0, "lb": 453.59237, "oz": 28.349523125,
@@ -22,23 +23,52 @@ VOLUME_TO_L = {
     "ทะนาน": 1.0, "ถัง": 20.0, "เกวียน": 2000.0,
 }
 AREA_TO_M2 = {
-    "ตร.ว.": 4.0, "ตารางวา": 4.0, "งาน": 400.0, "ไร่": 1600.0, "sqm": 1.0, "m2": 1.0,
+    "ตร.ว.": 4.0, "ตารางวา": 4.0, "งาน": 400.0, "ไร่": 1600.0,
+    "sqm": 1.0, "m2": 1.0, "sqft": 0.092903,
 }
 
 UNIT_ALIASES = {
+    # English length aliases
     "meter": "m", "meters": "m", "metre": "m", "metres": "m",
     "kilometer": "km", "kilometers": "km", "kilometre": "km", "kilometres": "km",
+    "centimeter": "cm", "centimeters": "cm", "centimetre": "cm", "centimetres": "cm",
+    "millimeter": "mm", "millimeters": "mm", "millimetre": "mm", "millimetres": "mm",
     "mile": "mi", "miles": "mi",
     "inch": "inch", "inches": "inch",
     "foot": "ft", "feet": "ft",
     "yard": "yd", "yards": "yd",
+    # Thai length aliases
+    "เมตร": "m", "ม.": "m",
+    "กิโลเมตร": "km", "กม.": "km",
+    "เซนติเมตร": "cm", "ซม.": "cm",
+    "มิลลิเมตร": "mm", "มม.": "mm",
+    "ไมล์": "mi",
+    "นิ้ว": "inch",
+    "ฟุต": "ft",
+    "หลา": "yd",
+    # English weight aliases
     "gram": "g", "grams": "g",
     "kilogram": "kg", "kilograms": "kg",
     "pound": "lb", "pounds": "lb",
     "ounce": "oz", "ounces": "oz",
+    # Thai weight aliases
+    "กรัม": "g",
+    "กิโลกรัม": "kg", "กก.": "kg",
+    "ปอนด์": "lb",
+    "ออนซ์": "oz",
+    # English volume aliases
     "milliliter": "ml", "milliliters": "ml", "millilitre": "ml", "millilitres": "ml",
     "liter": "liter", "liters": "liter", "litre": "liter", "litres": "liter",
+    # Thai volume aliases
+    "มิลลิลิตร": "ml", "มล.": "ml",
+    "ลิตร": "liter",
+    # English area aliases
     "squaremeter": "m2", "squaremeters": "m2", "squaremetre": "m2", "squaremetres": "m2",
+    "sqft": "sqft",
+    # Thai area aliases
+    "ตารางเมตร": "m2", "ตร.ม.": "m2",
+    "ตารางวา": "ตารางวา", "ตร.ว.": "ตร.ว.",
+    "ตารางฟุต": "sqft",
 }
 
 
