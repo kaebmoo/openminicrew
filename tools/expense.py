@@ -300,12 +300,14 @@ class ExpenseTool(BaseTool):
             prompt = (
                 "วิเคราะห์รูปนี้ซึ่งเป็นใบเสร็จ, บิล, หรือ slip การโอนเงิน\n"
                 "ดึงรายการสินค้า/บริการ **ทุกรายการ** ออกมาเป็น JSON:\n"
-                '{"store": "<ชื่อร้าน>", "items": [\n'
-                '  {"amount": <ราคาต่อชิ้น (number)>, "category": "<หมวดหมู่>", "note": "<ชื่อรายการสั้นๆ>"},\n'
+                '{"store": "<ชื่อร้าน>", "subtotal": <ยอดรวมก่อน SC/VAT (number หรือ null)>, "grand_total": <ยอดสุทธิที่จ่ายจริง (number หรือ null)>, "items": [\n'
+                '  {"amount": <ยอดเงินรวมของบรรทัดนั้น (number)>, "qty": <จำนวน (number, default 1)>, "category": "<หมวดหมู่>", "note": "<ชื่อรายการสั้นๆ>"},\n'
                 "  ...\n"
                 "]}\n"
                 "หมวดหมู่ที่แนะนำ: อาหาร, เครื่องดื่ม, เดินทาง, ช็อปปิ้ง, ของใช้, สาธารณูปโภค, สุขภาพ, บันเทิง, การศึกษา, โอนเงิน, ทั่วไป\n"
-                "ใช้ราคาต่อชิ้นของแต่ละรายการ (ไม่ใช่ยอดรวม)\n"
+                "amount = ยอดเงินรวมของบรรทัดนั้นตามที่พิมพ์ในใบเสร็จ (ถ้า qty=2 ราคาชิ้นละ 30 แสดง 60 ให้ใส่ 60)\n"
+                "subtotal = ยอดรวมราคาอาหาร/สินค้าก่อนบวก service charge และ VAT (ถ้าไม่มีใส่ null)\n"
+                "grand_total = ยอดเงินสุทธิที่จ่ายจริงหลังรวม service charge, VAT, ส่วนลด ฯลฯ (ถ้าไม่มีใส่ null)\n"
                 "ถ้าเป็น slip โอนเงินที่มีรายการเดียว ให้คืน items เพียง 1 ตัว\n"
                 "ตอบเฉพาะ JSON เท่านั้น ไม่ต้องอธิบายเพิ่ม\n"
                 "ถ้าอ่านไม่ออกหรือไม่ใช่ใบเสร็จ/บิล/slip ให้ตอบ: null"
@@ -350,7 +352,7 @@ class ExpenseTool(BaseTool):
 
             data = json.loads(json_match.group())
 
-            # Format: {"store": "...", "items": [...]}
+            # Format: {"store": "...", "subtotal": ..., "grand_total": ..., "items": [...]}
             if "items" in data and isinstance(data["items"], list):
                 store = data.get("store", "")
                 items = []
@@ -360,7 +362,12 @@ class ExpenseTool(BaseTool):
                         if normalized:
                             normalized["store"] = store
                             items.append(normalized)
-                return items if items else None
+                if not items:
+                    return None
+
+                # Adjust for service charge / VAT: distribute proportionally
+                items = self._apply_grand_total_ratio(items, data)
+                return items
 
             # Fallback: single item {"amount": ..., "category": ..., "note": ...}
             normalized = self._normalize_item(data)
@@ -369,6 +376,31 @@ class ExpenseTool(BaseTool):
         except Exception as e:
             log.error("Failed to extract expense from image: %s", e, exc_info=True)
             return f"API_ERROR:{e}"
+
+    @staticmethod
+    def _apply_grand_total_ratio(items: list[dict], data: dict) -> list[dict]:
+        """ถ้ามี subtotal + grand_total → เฉลี่ย SC/VAT เข้าแต่ละรายการตามสัดส่วน"""
+        try:
+            subtotal = float(data.get("subtotal") or 0)
+            grand_total = float(data.get("grand_total") or 0)
+        except (ValueError, TypeError):
+            return items
+
+        if subtotal <= 0 or grand_total <= 0 or grand_total == subtotal:
+            return items
+
+        ratio = grand_total / subtotal
+        adjusted = []
+        running_total = 0.0
+        for i, item in enumerate(items):
+            if i < len(items) - 1:
+                new_amount = round(item["amount"] * ratio, 2)
+                running_total += new_amount
+            else:
+                # last item gets the remainder to avoid rounding drift
+                new_amount = round(grand_total - running_total, 2)
+            adjusted.append({**item, "amount": new_amount})
+        return adjusted
 
     @staticmethod
     def _normalize_item(data: dict) -> dict | None:

@@ -156,6 +156,44 @@ def test_pending_expense_split_persists_source_hash_for_all_rows(tmp_path, monke
     assert rows[1]["note"]
 
 
+def test_apply_grand_total_ratio_distributes_sc_vat():
+    """SC/VAT should be distributed proportionally across items"""
+    tool = ExpenseTool()
+    items = [
+        {"amount": 260.0, "category": "อาหาร", "note": "เนื้อ"},
+        {"amount": 145.0, "category": "อาหาร", "note": "ตำ"},
+        {"amount": 280.0, "category": "อาหาร", "note": "แกงส้ม"},
+        {"amount": 260.0, "category": "อาหาร", "note": "ไข่เจียว"},
+        {"amount": 60.0, "category": "อาหาร", "note": "ข้าวสวย"},
+        {"amount": 45.0, "category": "เครื่องดื่ม", "note": "Coke Light"},
+        {"amount": 45.0, "category": "เครื่องดื่ม", "note": "Soda"},
+    ]
+    data = {"subtotal": 1095.0, "grand_total": 1288.0}
+    adjusted = tool._apply_grand_total_ratio(items, data)
+
+    total = sum(it["amount"] for it in adjusted)
+    assert total == 1288.0, f"Total should equal grand_total, got {total}"
+    # Each item should be larger than original (ratio > 1)
+    for orig, adj in zip(items, adjusted):
+        assert adj["amount"] > orig["amount"]
+
+
+def test_apply_grand_total_ratio_no_change_when_missing():
+    """When subtotal/grand_total are missing, items stay unchanged"""
+    tool = ExpenseTool()
+    items = [{"amount": 100.0, "category": "อาหาร", "note": "test"}]
+    result = tool._apply_grand_total_ratio(items, {})
+    assert result[0]["amount"] == 100.0
+
+
+def test_apply_grand_total_ratio_no_change_when_equal():
+    """When subtotal == grand_total (no SC/VAT), items stay unchanged"""
+    tool = ExpenseTool()
+    items = [{"amount": 100.0, "category": "อาหาร", "note": "test"}]
+    result = tool._apply_grand_total_ratio(items, {"subtotal": 100.0, "grand_total": 100.0})
+    assert result[0]["amount"] == 100.0
+
+
 def test_extract_expense_from_image_does_not_log_plaintext_response(monkeypatch):
     monkeypatch.setattr("core.config.GEMINI_API_KEY", "test-gemini-key")
 
