@@ -77,17 +77,27 @@ class ProviderRegistry:
             elif p.is_configured():
                 return p
 
-        # ลอง configured fallback
-        from core.config import FALLBACK_LLM
+        # ลอง fallback ตามลำดับ: FALLBACK_LLM → DEFAULT_LLM → ตัวอื่น
+        from core.config import FALLBACK_LLM, DEFAULT_LLM
         fallback_provider = None
+
+        # สร้างลำดับ candidate ที่ไม่ซ้ำกัน
+        candidates = []
         if FALLBACK_LLM and FALLBACK_LLM != preferred:
-            fb = self.providers.get(FALLBACK_LLM)
+            candidates.append(FALLBACK_LLM)
+        if DEFAULT_LLM and DEFAULT_LLM != preferred and DEFAULT_LLM not in candidates:
+            candidates.append(DEFAULT_LLM)
+
+        for name in candidates:
+            fb = self.providers.get(name)
             if fb and fb.is_configured():
                 fallback_provider = fb
+                break
 
+        # ถ้ายังไม่เจอ → วนหาตัวอื่นที่ configured
         if not fallback_provider:
             for provider in self.providers.values():
-                if provider.name != preferred and provider.is_configured():
+                if provider.name != preferred and provider.name not in candidates and provider.is_configured():
                     fallback_provider = provider
                     break
 

@@ -214,6 +214,45 @@ def test_no_fallback_provider_returns_none(tmp_path, monkeypatch):
     assert result is None
 
 
+def test_fallback_prefers_default_llm_when_fallback_equals_preferred(tmp_path, monkeypatch):
+    """ถ้า FALLBACK_LLM == preferred (ทั้งคู่ gemini) → ควร fallback ไป DEFAULT_LLM (matcha) ไม่ใช่ claude"""
+    _init_db(tmp_path, monkeypatch)
+
+    # สร้าง registry ที่มี 3 providers: gemini (unavailable), claude, matcha
+    reg = ProviderRegistry()
+    reg.providers["claude"] = FakeGemini(configured=True)  # reuse FakeGemini for simplicity
+    reg.providers["claude"].name = "claude"
+    reg.providers["gemini"] = FakeGemini(configured=True)
+    reg.providers["gemini"].name = "gemini"
+    # Override is_available_for_user to return False for non-owner
+    reg.providers["gemini"].is_available_for_user = lambda uid: False
+    reg.providers["matcha"] = FakeMatcha(configured=True, available_for_user=True)
+
+    monkeypatch.setattr("core.config.FALLBACK_LLM", "gemini")  # same as preferred
+    monkeypatch.setattr("core.config.DEFAULT_LLM", "matcha")
+    monkeypatch.setattr("core.config.FALLBACK_DAILY_QUOTA", 0)
+    monkeypatch.setattr("core.config.OWNER_TELEGRAM_CHAT_ID", "owner-1")
+
+    result = reg.get_fallback("gemini", user_id="user-1")
+    assert result is not None
+    assert result.name == "matcha"  # NOT claude
+
+
+def test_fallback_uses_fallback_llm_before_default_llm(tmp_path, monkeypatch):
+    """FALLBACK_LLM ควรถูกลองก่อน DEFAULT_LLM"""
+    _init_db(tmp_path, monkeypatch)
+    reg = _make_registry(matcha_available=False)
+    monkeypatch.setattr("core.config.FALLBACK_LLM", "gemini")
+    monkeypatch.setattr("core.config.DEFAULT_LLM", "matcha")
+    monkeypatch.setattr("core.config.FALLBACK_DAILY_QUOTA", 0)
+    monkeypatch.setattr("core.config.OWNER_TELEGRAM_CHAT_ID", "owner-1")
+
+    # preferred=matcha (unavailable) → FALLBACK_LLM=gemini → should use gemini
+    result = reg.get_fallback("matcha", user_id="user-1")
+    assert result is not None
+    assert result.name == "gemini"
+
+
 def test_different_users_have_separate_quotas(tmp_path, monkeypatch):
     """user คนละคนมีโควตาแยกกัน"""
     _init_db(tmp_path, monkeypatch)

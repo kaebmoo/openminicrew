@@ -30,6 +30,15 @@ class PlacesTool(BaseTool):
     # คำที่บ่งบอกว่าผู้ใช้หมายถึง "ตรงนี้" (ต้องใช้ GPS)
     _NEARBY_KEYWORDS = re.compile(r"(แถวนี้|ใกล้นี้|ใกล้ๆนี้|ใกล้ๆ นี้|ตรงนี้|รอบๆนี้|รอบๆ นี้|nearby|near me|near here)")
 
+    # คำที่บ่งบอกว่าผู้ใช้ถามว่า "ฉันอยู่ที่ไหน" (reverse geocode)
+    _WHERE_AM_I = re.compile(
+        r"^(แถวนี้|ตรงนี้|ที่นี่|here).*(คือ|เป็น|อยู่).*(ที่ไหน|ตรงไหน|อะไร|where)|"
+        r"^(อยู่|ผมอยู่|เราอยู่|ฉันอยู่).*(ที่ไหน|ตรงไหน)|"
+        r"^(ที่นี่|ตรงนี้|แถวนี้).*(ที่ไหน|ตรงไหน|คืออะไร)|"
+        r"^where\s+(am\s+i|is\s+(this|here))",
+        re.IGNORECASE,
+    )
+
     # คำที่บ่งบอกว่าต้องการเฉพาะร้านที่เปิดอยู่
     _OPEN_NOW_KEYWORDS = re.compile(r"(เปิดอยู่|ที่เปิด|เปิดตอนนี้|open now|ยังเปิด|เปิดไหม)")
 
@@ -44,12 +53,13 @@ class PlacesTool(BaseTool):
         return {
             "name": self.name,
             "description": (
-                "ค้นหาสถานที่จริงบนแผนที่ เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล. "
-                "ใช้เมื่อ user พูดถึงร้าน/สถานที่ เช่น 'หาร้าน...', 'ร้าน...ดีๆ', 'ร้าน...ราคาถูก', 'ร้าน...4.5 ดาว'. "
-                "ต้องใช้ tool นี้เสมอเมื่อ user ถามหาร้านหรือสถานที่ ห้ามตอบจากความรู้ทั่วไป. "
+                "ค้นหาสถานที่จริงบนแผนที่ หรือบอกว่าผู้ใช้อยู่ที่ไหน. "
+                "ใช้เมื่อ: (1) user ถามหาร้าน/สถานที่ เช่น 'หาร้าน...', 'ร้าน...ดีๆ' "
+                "(2) user ถามว่าอยู่ที่ไหน เช่น 'แถวนี้คือที่ไหน', 'ที่นี่คืออะไร', 'ผมอยู่ตรงไหน'. "
+                "ต้องใช้ tool นี้เสมอ ห้ามตอบจากความรู้ทั่วไป. "
                 "ไม่ใช่สำหรับเช็คเส้นทาง/ระยะทาง/จราจร -- ให้ใช้ traffic แทน. "
-                "แม้ผู้ใช้ไม่ระบุทำเล ระบบจะใช้พิกัด GPS ปัจจุบันของผู้ใช้เป็นค่าเริ่มต้นอัตโนมัติ. "
-                "เช่น 'ร้านกาแฟแถวสยาม', 'ร้านอาหารเปิดอยู่', 'ก๋วยเตี๋ยวเรือ 4.5 ดาว ราคาไม่แพง'"
+                "ระบบจะใช้พิกัด GPS ปัจจุบันของผู้ใช้อัตโนมัติ. "
+                "เช่น 'ร้านกาแฟแถวสยาม', 'แถวนี้คือที่ไหน', 'ร้านอาหารเปิดอยู่'"
             ),
             "parameters": {
                 "type": "object",
@@ -82,8 +92,11 @@ class PlacesTool(BaseTool):
                 "4. เพิ่มใน .env: GOOGLE_MAPS_API_KEY=your_key"
             )
 
-        # 2. Parse arguments
+        # 2. ตรวจว่าถามว่า "อยู่ที่ไหน" → reverse geocode
         query = args.strip()
+        if query and self._WHERE_AM_I.search(query):
+            return self._handle_where_am_i(user_id)
+
         if not query:
             return (
                 "🔍 กรุณาระบุสิ่งที่ต้องการค้นหา\n\n"
@@ -234,6 +247,49 @@ class PlacesTool(BaseTool):
         )
 
         return output
+
+    def _handle_where_am_i(self, user_id: str) -> str:
+        """ตอบคำถาม 'ที่นี่คือที่ไหน' ด้วย reverse geocode"""
+        from interfaces.telegram_common import get_user_location
+
+        if not db.has_user_consent(user_id, db.CONSENT_LOCATION, default=False):
+            from tools.response import InlineKeyboardResponse
+            return InlineKeyboardResponse(
+                text=(
+                    "📍 ต้องใช้ตำแหน่งของคุณเพื่อบอกว่าอยู่ที่ไหน\n"
+                    "อนุญาตให้ใช้ตำแหน่งไหมครับ?"
+                ),
+                buttons=[[
+                    {"text": "✅ อนุญาต", "callback_data": "consent:location:on"},
+                    {"text": "❌ ไม่อนุญาต", "callback_data": "consent:location:off"},
+                ]],
+                memory_text="ขอ consent location สำหรับบอกตำแหน่ง",
+            )
+
+        user_loc = get_user_location(user_id)
+        if not user_loc:
+            return (
+                "📍 ยังไม่มีตำแหน่งของคุณ\n\n"
+                "กดปุ่ม 📎 (แนบไฟล์) แล้วเลือก Location เพื่อส่งตำแหน่ง\n"
+                "จากนั้นถามอีกครั้งได้เลย"
+            )
+
+        lat, lng = user_loc["lat"], user_loc["lng"]
+        area_name = self._reverse_geocode(lat, lng)
+
+        if area_name:
+            maps_url = f"https://www.google.com/maps?q={lat},{lng}"
+            return (
+                f"📍 ตำแหน่งล่าสุดของคุณ:\n"
+                f"{area_name}\n"
+                f"พิกัด: {lat:.6f}, {lng:.6f}\n"
+                f"[ดูใน Google Maps]({maps_url})"
+            )
+        return (
+            f"📍 ตำแหน่งล่าสุดของคุณ:\n"
+            f"พิกัด: {lat:.6f}, {lng:.6f}\n"
+            f"(ไม่สามารถแปลงเป็นชื่อสถานที่ได้)"
+        )
 
     def _reverse_geocode(self, lat: float, lng: float) -> str:
         """แปลง lat/lng เป็นชื่อย่าน เช่น 'แขวงทุ่งวัดดอน เขตสาทร'"""
