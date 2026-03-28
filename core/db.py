@@ -1363,6 +1363,39 @@ def list_expenses(user_id: str, limit: int = 20) -> list[dict]:
         return [_hydrate_expense_row(conn, row) for row in rows]
 
 
+def delete_expense(user_id: str, expense_id: int) -> bool:
+    """ลบรายจ่ายตาม ID — ต้องเป็นของ user_id เท่านั้น"""
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "DELETE FROM expenses WHERE id = ? AND user_id = ?",
+            (expense_id, str(user_id)),
+        )
+        return cursor.rowcount > 0
+
+
+def update_expense(user_id: str, expense_id: int, **fields) -> bool:
+    """แก้ไขรายจ่าย — รองรับ amount, category, note"""
+    allowed = {"amount", "category", "note"}
+    updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if not updates:
+        return False
+
+    # encrypt note ถ้ามี
+    if "note" in updates:
+        from core.security import encrypt_sensitive_field
+        updates["note"] = encrypt_sensitive_field(updates["note"], field_name="expense_note")
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [expense_id, str(user_id)]
+
+    with get_conn() as conn:
+        cursor = conn.execute(
+            f"UPDATE expenses SET {set_clause} WHERE id = ? AND user_id = ?",
+            values,
+        )
+        return cursor.rowcount > 0
+
+
 def get_expenses_by_source_hash(user_id: str, source_type: str, source_hash: str) -> list[dict]:
     normalized_source_type = (source_type or "").strip()
     normalized_source_hash = (source_hash or "").strip()

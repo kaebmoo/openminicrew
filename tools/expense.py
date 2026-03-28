@@ -34,6 +34,10 @@ class ExpenseTool(BaseTool):
                     sub = tokens[0].lower()
                     if sub == "list":
                         result = self._list(user_id)
+                    elif sub == "delete":
+                        result = self._delete(user_id, tokens[1:])
+                    elif sub == "edit":
+                        result = self._edit(user_id, tokens[1:])
                     elif sub == "summary":
                         period = tokens[1].lower() if len(tokens) > 1 else "month"
                         # tokens ที่เหลือหลัง period: category หรือ keyword
@@ -147,9 +151,51 @@ class ExpenseTool(BaseTool):
         if not expenses:
             return "💸 ยังไม่มีรายจ่ายที่บันทึกไว้"
         lines = ["💸 รายจ่ายล่าสุด:\n"]
-        for item in expenses:
-            lines.append(f"[{item['id']}] {item['expense_date']} — {item['category']} {item['amount']:,.2f} บาท {item['note']}")
+        for i, item in enumerate(expenses, 1):
+            lines.append(f"{i}. {item['expense_date']} — {item['category']} {item['amount']:,.2f} บาท {item['note']}")
+        lines.append("\nลบ: /expense delete <ลำดับ>  แก้ราคา: /expense edit <ลำดับ> <ราคาใหม่>")
         return "\n".join(lines)
+
+    def _delete(self, user_id: str, tokens: list[str]) -> str:
+        if not tokens:
+            return "ใช้: /expense delete <ลำดับ> เช่น /expense delete 3"
+        try:
+            index = int(tokens[0])
+        except ValueError:
+            return "❌ ระบุลำดับเป็นตัวเลข เช่น /expense delete 3"
+
+        expenses = db.list_expenses(user_id)
+        if index < 1 or index > len(expenses):
+            return f"❌ ไม่พบรายจ่ายลำดับที่ {index} (มีทั้งหมด {len(expenses)} รายการ)"
+
+        item = expenses[index - 1]
+        if db.delete_expense(user_id, item["id"]):
+            return f"🗑 ลบรายจ่ายแล้ว: {item['amount']:,.2f} บาท {item['category']} {item['note']}"
+        return "❌ ไม่สามารถลบรายจ่ายได้"
+
+    def _edit(self, user_id: str, tokens: list[str]) -> str:
+        if len(tokens) < 2:
+            return "ใช้: /expense edit <ลำดับ> <ราคาใหม่> เช่น /expense edit 3 120"
+        try:
+            index = int(tokens[0])
+        except ValueError:
+            return "❌ ระบุลำดับเป็นตัวเลข เช่น /expense edit 3 120"
+        try:
+            new_amount = float(tokens[1])
+        except ValueError:
+            return "❌ ราคาใหม่ต้องเป็นตัวเลข"
+        if new_amount <= 0:
+            return "❌ ราคาต้องมากกว่า 0"
+
+        expenses = db.list_expenses(user_id)
+        if index < 1 or index > len(expenses):
+            return f"❌ ไม่พบรายจ่ายลำดับที่ {index} (มีทั้งหมด {len(expenses)} รายการ)"
+
+        item = expenses[index - 1]
+        old_amount = item["amount"]
+        if db.update_expense(user_id, item["id"], amount=new_amount):
+            return f"✏️ แก้ไขแล้ว: {item['note']}\n{old_amount:,.2f} → {new_amount:,.2f} บาท"
+        return "❌ ไม่สามารถแก้ไขรายจ่ายได้"
 
     def _summary(self, user_id: str, period: str, category: str = "", keyword: str = "") -> str:
         today = date.today()
@@ -421,6 +467,8 @@ class ExpenseTool(BaseTool):
         return (
             "ใช้: /expense 120 อาหาร ก๋วยเตี๋ยว\n"
             "/expense list — ดูรายจ่ายล่าสุด\n"
+            "/expense delete <ลำดับ> — ลบรายจ่าย\n"
+            "/expense edit <ลำดับ> <ราคาใหม่> — แก้ราคา\n"
             "/expense summary month — สรุปรายจ่ายเดือนนี้\n"
             "📸 หรือถ่ายรูปบิล/slip ส่งมา จะบันทึกอัตโนมัติ"
         )
