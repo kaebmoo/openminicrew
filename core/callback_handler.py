@@ -230,11 +230,27 @@ def _handle_consent_callback(user_id: str, data: str) -> str:
     if not consent_type:
         return f"❌ ไม่รู้จัก consent type: {consent_type_short}"
 
-    if action == "on":
-        db.set_user_consent(user_id, consent_type, db.CONSENT_STATUS_GRANTED, source="inline_keyboard")
-        return f"✅ consent {consent_type_short} = granted\nส่งตำแหน่งได้เลย 📍"
-    elif action == "off":
-        db.set_user_consent(user_id, consent_type, db.CONSENT_STATUS_REVOKED, source="inline_keyboard")
-        return f"🔒 consent {consent_type_short} = revoked"
-    else:
+    if action not in ("on", "off"):
         return f"❌ action ไม่ถูกต้อง: {action}"
+
+    granted = action == "on"
+    status = db.CONSENT_STATUS_GRANTED if granted else db.CONSENT_STATUS_REVOKED
+    db.set_user_consent(user_id, consent_type, status, source="inline_keyboard")
+
+    # ข้อความตอบกลับตาม consent type
+    _CONSENT_RESPONSES = {
+        "chat": {
+            "on": "✅ เปิดเก็บประวัติสนทนาแล้ว\nระบบจะจำบริบทการสนทนาเพื่อตอบได้ต่อเนื่อง\n\nพิมพ์ /help เพื่อดูเครื่องมือทั้งหมด หรือพิมพ์คำถามได้เลย",
+            "off": "🔒 ปิดเก็บประวัติสนทนาแล้ว\nระบบจะไม่จำบริบทก่อนหน้า แต่ใช้งานได้ตามปกติ\n\nพิมพ์ /help เพื่อดูเครื่องมือทั้งหมด หรือพิมพ์คำถามได้เลย",
+        },
+        "location": {
+            "on": "✅ อนุญาตเก็บตำแหน่งแล้ว\nส่งตำแหน่งได้เลย 📍 (กดปุ่ม 📎 → Location)",
+            "off": "🔒 ไม่เก็บตำแหน่ง\nฟีเจอร์ค้นหาสถานที่ใกล้เคียงจะใช้ไม่ได้ เปลี่ยนใจได้ที่ /consent location on",
+        },
+        "gmail": {
+            "on": "✅ consent gmail = granted",
+            "off": "🔒 consent gmail = revoked",
+        },
+    }
+    responses = _CONSENT_RESPONSES.get(consent_type_short, {})
+    return responses.get(action, f"✅ consent {consent_type_short} = {status}")

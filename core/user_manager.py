@@ -32,12 +32,23 @@ def get_user_by_id(user_id: str | int) -> dict | None:
 def register_user(chat_id: str | int, display_name: str = "") -> dict:
     user_id = str(chat_id)
     final_name = display_name.strip() or user_id
+
+    # เลือก default_llm จาก provider ที่ available จริง
+    from core.providers.registry import provider_registry
+    available = provider_registry.get_available(user_id=user_id)
+    if DEFAULT_LLM in available:
+        chosen_llm = DEFAULT_LLM
+    elif available:
+        chosen_llm = available[0]
+    else:
+        chosen_llm = DEFAULT_LLM  # fallback — จะ error ตอนใช้จริง
+
     db.upsert_user(
         user_id=user_id,
         chat_id=str(chat_id),
         display_name=final_name,
         role="user",
-        default_llm=DEFAULT_LLM,
+        default_llm=chosen_llm,
         timezone=TIMEZONE,
         ensure_default_consents=False,
     )

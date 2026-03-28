@@ -62,60 +62,36 @@ async def handle_start(user_id: str, user: dict, args: str, **kw) -> _RESULT:
         lines.append("\nพิมพ์ /help หรือถามงานที่ต้องการได้เลย")
         return _ok("\n".join(lines))
 
-    # New user — แสดง setup instructions + แนะนำเครื่องมือ
+    # New user — แสดง welcome สั้นๆ + privacy policy + ขอ consent พื้นฐาน
+    from tools.response import InlineKeyboardResponse
+
     welcome = (
-        f"ลงทะเบียนเรียบร้อยแล้ว {display_name}\n"
-        "ยินดีต้อนรับสู่ OpenMiniCrew ผู้ช่วยส่วนตัวของคุณ\n"
+        f"สวัสดีครับ {display_name} 👋\n"
+        "ยินดีต้อนรับสู่ OpenMiniCrew\n"
         "\n"
-        "--- เครื่องมือที่ใช้ได้ ---\n"
+        "🔐 ความเป็นส่วนตัว\n"
+        "ระบบจะไม่เก็บข้อมูลใดๆ จนกว่าคุณจะอนุญาต\n"
+        "เปลี่ยนใจได้ทุกเมื่อ (/consent)\n"
         "\n"
-        "อีเมล\n"
-        "  /email — สรุปอีเมล Gmail วันนี้\n"
-        "  /wm — สรุปอีเมลงาน (IMAP)\n"
-        "  /inbox — วิเคราะห์อีเมลล่าสุด หา action items\n"
+        "📝 ประวัติการสนทนา\n"
+        "ช่วยให้ถามต่อเนื่องได้ เช่น \"แล้วพรุ่งนี้ล่ะ?\" โดยไม่ต้องพิมพ์ซ้ำ\n"
+        "อนุญาตให้เก็บประวัติสนทนาไหมครับ?\n"
         "\n"
-        "งานและนัดหมาย\n"
-        "  /todo — จัดการรายการสิ่งที่ต้องทำ\n"
-        "  /remind — ตั้งเตือนความจำ\n"
-        "  /calendar — ดูและเพิ่มนัดหมาย Google Calendar\n"
-        "\n"
-        "การเงิน\n"
-        "  /expense — บันทึกรายจ่าย (ส่งรูปบิลได้)\n"
-        "  /pay — สร้าง PromptPay QR\n"
-        "  /fx — ตรวจอัตราแลกเปลี่ยน\n"
-        "\n"
-        "สถานที่และการเดินทาง\n"
-        "  /places — ค้นหาสถานที่บนแผนที่\n"
-        "  /traffic — เช็คเส้นทางและสภาพจราจร\n"
-        "\n"
-        "เครื่องมือทั่วไป\n"
-        "  /qr — สร้าง QR Code\n"
-        "  /convert — แปลงหน่วย\n"
-        "  /search — ค้นหาข้อมูลเว็บ\n"
-        "  /news — สรุปข่าวล่าสุด\n"
-        "  /lotto — ตรวจหวย\n"
-        "\n"
-        "หรือพิมพ์คำถามเป็นภาษาธรรมชาติได้เลย\n"
-        "เช่น \"แถวนี้มีอะไรกินบ้าง\" หรือ \"สรุปเมลวันนี้ให้หน่อย\"\n"
-        "\n"
-        "--- ตั้งค่าเพิ่มเติม ---\n"
-        "\n"
-        "  /setname ชื่อที่ต้องการ\n"
-        "  /setphone 08XXXXXXXX\n"
-        "  /setid เลขบัตรประชาชน 13 หลัก (สำหรับ PromptPay)\n"
-        "  /authgmail — เชื่อมต่อ Gmail และ Calendar\n"
-        "\n"
-        "--- สิทธิ์การเข้าถึงข้อมูล ---\n"
-        "\n"
-        "Consent เริ่มต้นของผู้ใช้ใหม่ยังไม่เปิดอัตโนมัติ\n"
-        "ระบบจะยังไม่เก็บข้อมูลส่วนตัวจนกว่าคุณจะอนุญาต\n"
-        "  /consent chat on — ให้ระบบจำบริบทสนทนาไว้ชั่วคราว\n"
-        "  /consent location on — ให้ระบบรับตำแหน่งเพื่อค้นหาสถานที่ใกล้เคียง\n"
-        "  /authgmail — ให้ระบบอ่านอีเมลเพื่อสรุปและจัดการนัดหมาย\n"
-        "\n"
-        "พิมพ์ /consent เพื่อดูสถานะ หรือ /help เพื่อดูคำสั่งทั้งหมด"
+        "พิมพ์ /help เพื่อดูคำสั่งทั้งหมด"
     )
-    return _ok(welcome)
+
+    buttons = [
+        [
+            {"text": "✅ อนุญาต", "callback_data": "consent:chat:on"},
+            {"text": "❌ ไม่อนุญาต", "callback_data": "consent:chat:off"},
+        ],
+    ]
+
+    return InlineKeyboardResponse(
+        text=welcome,
+        buttons=buttons,
+        memory_text=f"new user {display_name} — onboarding consent (chat_history)",
+    ), None, None, 0
 
 
 # ---------------------------------------------------------------------------

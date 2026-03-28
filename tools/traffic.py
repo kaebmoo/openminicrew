@@ -160,6 +160,21 @@ class TrafficTool(BaseTool):
         origin = self._resolve_here(user_id, origin)
         destination = self._resolve_here(user_id, destination)
         if origin is None or destination is None:
+            # ตรวจว่าเป็นเพราะยังไม่ได้ให้ consent หรือยังไม่ได้ส่ง location
+            if not db.has_user_consent(user_id, db.CONSENT_LOCATION, default=False):
+                from tools.response import InlineKeyboardResponse
+                return InlineKeyboardResponse(
+                    text=(
+                        "📍 ฟีเจอร์นี้ต้องใช้ตำแหน่งของคุณ\n"
+                        "ระบบจะเก็บตำแหน่งไว้ชั่วคราวเพื่อค้นหาเส้นทาง\n"
+                        "อนุญาตให้ใช้ตำแหน่งไหมครับ?"
+                    ),
+                    buttons=[[
+                        {"text": "✅ อนุญาต", "callback_data": "consent:location:on"},
+                        {"text": "❌ ไม่อนุญาต", "callback_data": "consent:location:off"},
+                    ]],
+                    memory_text="ขอ consent location สำหรับเช็คเส้นทาง",
+                )
             return (
                 "📍 ยังไม่ทราบตำแหน่งปัจจุบันของคุณ\n\n"
                 "กดปุ่ม 📎 (แนบไฟล์) แล้วเลือก Location เพื่อส่งตำแหน่ง\n"

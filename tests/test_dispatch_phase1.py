@@ -254,9 +254,12 @@ async def test_start_new_user_shows_explicit_consent_onboarding():
         )
 
     mock_init.assert_called_once_with("u1", source="start_onboarding")
-    assert "Consent เริ่มต้นของผู้ใช้ใหม่ยังไม่เปิดอัตโนมัติ" in response
-    assert "/consent chat on" in response
-    assert "/consent location on" in response
+    # New user gets InlineKeyboardResponse for chat_history consent
+    from tools.response import InlineKeyboardResponse
+    assert isinstance(response, InlineKeyboardResponse)
+    assert "ความเป็นส่วนตัว" in response.text
+    assert "ประวัติการสนทนา" in response.text
+    assert any("consent:chat:on" in btn.get("callback_data", "") for row in response.buttons for btn in row)
 
 
 @pytest.mark.asyncio

@@ -101,6 +101,24 @@ class PlacesTool(BaseTool):
         nearby_requested = bool(self._NEARBY_KEYWORDS.search(query))
         user_loc = get_user_location(user_id)
         has_location = user_loc is not None
+
+        # ถ้าผู้ใช้พิมพ์ "แถวนี้" แต่ยังไม่ได้ให้ consent location → ขอ consent
+        if nearby_requested and not has_location:
+            if not db.has_user_consent(user_id, db.CONSENT_LOCATION, default=False):
+                from tools.response import InlineKeyboardResponse
+                return InlineKeyboardResponse(
+                    text=(
+                        "📍 การค้นหา \"แถวนี้\" ต้องใช้ตำแหน่งของคุณ\n"
+                        "ระบบจะเก็บตำแหน่งไว้ชั่วคราวเพื่อค้นหาสถานที่ใกล้เคียง\n"
+                        "อนุญาตให้ใช้ตำแหน่งไหมครับ?"
+                    ),
+                    buttons=[[
+                        {"text": "✅ อนุญาต", "callback_data": "consent:location:on"},
+                        {"text": "❌ ไม่อนุญาต", "callback_data": "consent:location:off"},
+                    ]],
+                    memory_text="ขอ consent location สำหรับค้นหาสถานที่ใกล้เคียง",
+                )
+
         location_params = self._resolve_location_params(user_id, query)
 
         # 4.5 ตรวจว่าผู้ใช้ต้องการเฉพาะร้านที่เปิดอยู่หรือไม่

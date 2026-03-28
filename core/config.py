@@ -36,8 +36,9 @@ OWNER_TELEGRAM_CHAT_ID = _require("OWNER_TELEGRAM_CHAT_ID")
 OWNER_DISPLAY_NAME = _optional("OWNER_DISPLAY_NAME", "Owner")
 
 # === LLM ===
-DEFAULT_LLM = _optional("DEFAULT_LLM", "gemini")
-FALLBACK_LLM = _optional("FALLBACK_LLM", "gemini")  # fallback เมื่อ provider หลัก auth fail
+DEFAULT_LLM = _optional("DEFAULT_LLM", "matcha")
+FALLBACK_LLM = _optional("FALLBACK_LLM", "gemini")  # fallback เมื่อ provider หลักล่ม
+FALLBACK_DAILY_QUOTA = int(_optional("FALLBACK_DAILY_QUOTA", "0"))  # 0 = ไม่จำกัด, >0 = จำนวนครั้ง/วัน/user
 ANTHROPIC_API_KEY = _optional("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY = _optional("GEMINI_API_KEY", "")
 

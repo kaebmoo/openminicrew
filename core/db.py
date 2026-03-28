@@ -1646,6 +1646,31 @@ def log_tool_usage(user_id: str, tool_name: str, input_summary: str = "",
         ))
 
 
+def log_fallback_usage(user_id: str, preferred: str, fallback: str):
+    """บันทึกการใช้ fallback provider ลง tool_logs"""
+    log_tool_usage(
+        user_id=user_id,
+        tool_name="__llm_fallback",
+        status="success",
+        input_kind="fallback",
+        input_ref=f"{preferred}->{fallback}",
+    )
+
+
+def count_fallback_today(user_id: str) -> int:
+    """นับจำนวนครั้งที่ user ใช้ fallback วันนี้"""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) as cnt FROM tool_logs
+            WHERE user_id = ? AND tool_name = '__llm_fallback'
+              AND date(created_at) = date('now')
+            """,
+            (str(user_id),),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+
 def cleanup_old_logs(days: int = 90):
     with get_conn() as conn:
         conn.execute(

@@ -64,6 +64,8 @@ class ProviderRegistry:
 
         สำคัญ: preferred ต้องผ่าน is_available_for_user() ถ้ามี user_id
         เพื่อป้องกัน user ใช้ shared key ของ provider ที่ไม่มีสิทธิ์
+
+        Fallback มีโควตาต่อวัน (FALLBACK_DAILY_QUOTA) — owner ไม่จำกัด
         """
         # ลอง preferred ก่อน — ตรวจสิทธิ์ user
         p = self.providers.get(preferred)
@@ -71,27 +73,62 @@ class ProviderRegistry:
             if user_id:
                 if p.is_available_for_user(user_id):
                     return p
-                # user ไม่มีสิทธิ์ใช้ preferred → ไป fallback
                 log.info(f"Provider '{preferred}' not available for user {user_id}, trying fallback")
             elif p.is_configured():
                 return p
 
-        # ลอง configured fallback — ใช้ is_configured() (shared key)
-        # เพราะ fallback เป็นการตัดสินใจของระบบ ไม่ใช่ user เลือก
+        # ลอง configured fallback
         from core.config import FALLBACK_LLM
+        fallback_provider = None
         if FALLBACK_LLM and FALLBACK_LLM != preferred:
             fb = self.providers.get(FALLBACK_LLM)
             if fb and fb.is_configured():
-                log.warning(f"Provider '{preferred}' not available, falling back to '{fb.name}'")
-                return fb
+                fallback_provider = fb
 
-        # fallback ไปตัวอื่นที่พร้อม
-        for provider in self.providers.values():
-            if provider.name != preferred and provider.is_configured():
-                log.warning(f"Provider '{preferred}' not available, falling back to '{provider.name}'")
-                return provider
+        if not fallback_provider:
+            for provider in self.providers.values():
+                if provider.name != preferred and provider.is_configured():
+                    fallback_provider = provider
+                    break
 
-        return None
+        if not fallback_provider:
+            return None
+
+        # ตรวจโควตา fallback (owner ไม่จำกัด)
+        if user_id and not self._is_owner(user_id):
+            from core.config import FALLBACK_DAILY_QUOTA
+            if FALLBACK_DAILY_QUOTA > 0:
+                from core.db import count_fallback_today
+                used = count_fallback_today(user_id)
+                if used >= FALLBACK_DAILY_QUOTA:
+                    log.warning(
+                        f"User {user_id} exceeded fallback quota "
+                        f"({used}/{FALLBACK_DAILY_QUOTA}), denying fallback"
+                    )
+                    return None
+
+        # บันทึก fallback usage
+        if user_id:
+            try:
+                from core.db import log_fallback_usage
+                log_fallback_usage(user_id, preferred, fallback_provider.name)
+            except Exception as e:
+                log.warning(f"Failed to log fallback usage: {e}")
+
+        log.info(
+            f"Provider '{preferred}' not available for user {user_id}, "
+            f"using fallback '{fallback_provider.name}'"
+        )
+        return fallback_provider
+
+    @staticmethod
+    def _is_owner(user_id: str) -> bool:
+        """ตรวจว่า user เป็น owner หรือไม่ — ใช้สำหรับ bypass โควตา"""
+        try:
+            from core.config import OWNER_TELEGRAM_CHAT_ID
+            return str(user_id) == str(OWNER_TELEGRAM_CHAT_ID)
+        except Exception:
+            return False
 
 
 # Singleton

@@ -145,11 +145,16 @@ def test_handle_update_rejects_location_without_explicit_consent():
 
     with patch("interfaces.telegram_polling.get_user", return_value=user), \
             patch("interfaces.telegram_common.save_user_location", return_value=False) as mock_save, \
-         patch("interfaces.telegram_polling.send_message") as mock_send_message:
+         patch("interfaces.telegram_common.send_inline_keyboard") as mock_send_kb:
         telegram_polling.handle_update(update)
 
     mock_save.assert_called_once_with("u-123", 13.7, 100.5)
-    assert "consent location on" in mock_send_message.call_args[0][1]
+    # Should show inline keyboard asking for location consent
+    assert mock_send_kb.called
+    kb_text = mock_send_kb.call_args[0][1]
+    kb_buttons = mock_send_kb.call_args[0][2]
+    assert "consent" in kb_text.lower() or "ตำแหน่ง" in kb_text or "อนุญาต" in kb_text
+    assert any("consent:location:on" in btn.get("callback_data", "") for row in kb_buttons for btn in row)
 
 
 def test_handle_update_accepts_location_after_consent():
