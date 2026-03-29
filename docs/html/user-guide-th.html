@@ -210,7 +210,7 @@
             <blockquote>
                 <p>AI-Powered Personal Assistant Telegram Bot</p>
             </blockquote>
-            <p><strong>เวอร์ชัน:</strong> 1.0 | <strong>อัปเดตล่าสุด:</strong> มีนาคม 2569</p>
+            <p><strong>เวอร์ชัน:</strong> 1.1 | <strong>อัปเดตล่าสุด:</strong> มีนาคม 2569</p>
             <hr />
             <h2 id="_1">สารบัญ</h2>
             <ol>
@@ -233,7 +233,7 @@
             <hr />
             <h2 id="_2">เริ่มต้นใช้งาน</h2>
             <h3 id="_3">ลงทะเบียน</h3>
-            <p>พิมพ์ <code>/start</code> เพื่อลงทะเบียนและเริ่มใช้งาน Bot จะแนะนำขั้นตอนการตั้งค่าเบื้องต้น</p>
+            <p>พิมพ์ <code>/start</code> เพื่อลงทะเบียนและเริ่มใช้งาน Bot จะแสดงนโยบายความเป็นส่วนตัวแบบย่อ พร้อมให้เลือกอนุญาตหรือไม่อนุญาตการเก็บประวัติสนทนาผ่านปุ่มกด (Inline Keyboard) เปลี่ยนใจได้ทุกเมื่อผ่าน <code>/consent</code></p>
             <h3 id="_4">ตั้งค่าข้อมูลพื้นฐาน (แนะนำ)</h3>
             <ul>
                 <li><code>/setname &lt;ชื่อ&gt;</code> — ตั้งชื่อที่แสดง</li>
@@ -249,7 +249,7 @@
                 <code>/fx USD</code> ไม่เสีย LLM token
             </p>
             <p><strong>2. พิมพ์อิสระ</strong> — พิมพ์ภาษาธรรมชาติ AI จะเลือก tool ที่เหมาะสมให้อัตโนมัติ เช่น
-                "สรุปเมลให้หน่อย", "เงินดอลลาร์วันนี้เท่าไหร่", "รถติดไหม สยามไปสีลม"</p>
+                "สรุปเมลให้หน่อย", "เงินดอลลาร์วันนี้เท่าไหร่", "รถติดไหม สยามไปสีลม", "ดู chat history", "เปิดยินยอมบันทึกประวัติสนทนา"</p>
             <p><strong>3. ส่งรูปถ่าย</strong> — ถ่ายรูปบิล ใบเสร็จ หรือ slip ส่งมา Bot จะอ่านและบันทึกรายจ่ายอัตโนมัติ
             </p>
             <hr />
@@ -404,7 +404,15 @@
                     </tr>
                     <tr>
                         <td><code>/expense list</code></td>
-                        <td>ดูรายจ่ายล่าสุด</td>
+                        <td>ดูรายจ่ายล่าสุด (แสดงเป็นลำดับ 1, 2, 3)</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense delete 3</code></td>
+                        <td>ลบรายจ่ายลำดับที่ 3</td>
+                    </tr>
+                    <tr>
+                        <td><code>/expense edit 3 120</code></td>
+                        <td>แก้ราคารายจ่ายลำดับที่ 3 เป็น 120 บาท</td>
                     </tr>
                     <tr>
                         <td><code>/expense summary month</code></td>
@@ -433,6 +441,8 @@
             <p><strong>บันทึกจากรูปถ่าย:</strong> ถ่ายรูปบิล ใบเสร็จ หรือ slip ส่งมาเลย Bot จะใช้ Gemini Vision
                 วิเคราะห์และบันทึกให้อัตโนมัติ ถ้ามีหลายรายการในใบเสร็จ Bot จะถามว่าจะแยกรายการหรือรวมเป็นรายการเดียว
                 สามารถใส่ caption กำกับรูปได้ เช่น "กินข้าวกับเพื่อน"</p>
+            <p><strong>Service charge / VAT:</strong> ถ้าใบเสร็จมี service charge หรือ VAT ระบบจะเฉลี่ยเข้ารายการอัตโนมัติตามสัดส่วน (ไม่แยกบรรทัด SC/VAT ออกมา)</p>
+            <p><strong>แก้ไข/ลบรายจ่าย:</strong> ใช้ <code>/expense list</code> เพื่อดูลำดับ แล้ว <code>/expense delete &lt;ลำดับ&gt;</code> เพื่อลบ หรือ <code>/expense edit &lt;ลำดับ&gt; &lt;ราคาใหม่&gt;</code> เพื่อแก้ราคา</p>
             <hr />
             <h2 id="qr-code-promptpay">QR Code และ PromptPay</h2>
             <h3 id="promptpay-qr">สร้าง PromptPay QR (รับเงิน)</h3>
@@ -521,6 +531,10 @@
                     <tr>
                         <td><code>/places กาแฟ 4.5 ดาวขึ้นไป</code></td>
                         <td>กรองตาม rating</td>
+                    </tr>
+                    <tr>
+                        <td>"แถวนี้คือที่ไหน"</td>
+                        <td>บอกตำแหน่งปัจจุบันจาก GPS (reverse geocode)</td>
                     </tr>
                 </tbody>
             </table>
@@ -1010,10 +1024,11 @@
                     </tr>
                     <tr>
                         <td><code>/model matcha</code></td>
-                        <td>เปลี่ยนเป็น Matcha (ถ้ามี)</td>
+                        <td>เปลี่ยนเป็น Matcha (ค่าเริ่มต้น, ฟรี)</td>
                     </tr>
                 </tbody>
             </table>
+            <p><strong>หมายเหตุ:</strong> ค่าเริ่มต้นสำหรับผู้ใช้ทั่วไปคือ Matcha (ฟรี) ถ้า Matcha ไม่พร้อมใช้งาน ระบบจะ fallback ไปใช้ Gemini อัตโนมัติ (มีโควต้ารายวัน) ผู้ใช้สามารถตั้ง API key ของตัวเองเพื่อใช้ Gemini หรือ Claude โดยตรง</p>
             <hr />
             <h2 id="_24">ความเป็นส่วนตัวและความปลอดภัย</h2>
             <h3 id="consent">จัดการ Consent</h3>
@@ -1025,6 +1040,10 @@
                     </tr>
                 </thead>
                 <tbody>
+                    <tr>
+                        <td><code>/consent</code></td>
+                        <td>ดูสถานะ consent ทั้งหมด</td>
+                    </tr>
                     <tr>
                         <td><code>/consent gmail on</code></td>
                         <td>อนุญาตเข้าถึง Gmail</td>
@@ -1051,6 +1070,8 @@
                     </tr>
                 </tbody>
             </table>
+            <p><strong>พิมพ์อิสระ:</strong> สามารถจัดการ consent ด้วยภาษาธรรมชาติได้ เช่น "เปิดยินยอมบันทึกการสนทนา", "ปิดการบันทึกตำแหน่ง", "ดูสถานะ consent"</p>
+            <p><strong>On-demand consent:</strong> เมื่อใช้ฟีเจอร์ที่ต้องการ consent (เช่น ค้นหาสถานที่ใกล้ตัว) แต่ยังไม่เคยให้ consent ระบบจะถามอนุญาตผ่านปุ่มกดก่อนดำเนินการ</p>
             <h3 id="_25">คำสั่งความเป็นส่วนตัว</h3>
             <table>
                 <thead>
@@ -1105,7 +1126,11 @@
                     </tr>
                     <tr>
                         <td><code>/history</code></td>
-                        <td>ดูประวัติสนทนา</td>
+                        <td>ดูรายชื่อสนทนา</td>
+                    </tr>
+                    <tr>
+                        <td><code>/myemail</code></td>
+                        <td>ดูบัญชีอีเมลที่ตั้งค่าไว้ (Gmail + Work Email)</td>
                     </tr>
                     <tr>
                         <td><code>/authgmail</code></td>
@@ -1113,6 +1138,7 @@
                     </tr>
                 </tbody>
             </table>
+            <p><strong>ดูประวัติสนทนาผ่านภาษาธรรมชาติ:</strong> พิมพ์ "ดู chat history" หรือ "เรียกดูประวัติสนทนา" เพื่อดูเนื้อหาข้อความจริงของสนทนาล่าสุด (ไม่ใช่แค่รายชื่อ)</p>
             <h3 id="owner-only">คำสั่งสำหรับเจ้าของ (Owner Only)</h3>
             <table>
                 <thead>
@@ -1268,6 +1294,11 @@
                     </tr>
                     <tr>
                         <td><code>/model</code></td>
+                        <td>—</td>
+                        <td>ระบบ</td>
+                    </tr>
+                    <tr>
+                        <td><code>/myemail</code></td>
                         <td>—</td>
                         <td>ระบบ</td>
                     </tr>
