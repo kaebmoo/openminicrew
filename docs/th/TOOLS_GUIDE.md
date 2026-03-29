@@ -1194,7 +1194,7 @@ resp = await llm_router.chat(
 | **schedule** — ตั้งเวลา tool อัตโนมัติ | `/schedule` | SQLite + asyncio scheduler | cheap | ไม่ต้อง |
 | **calendar_tool** — Google Calendar | `/cal`, `/calendar` | Google Calendar API (OAuth2) | cheap | ไม่ต้อง (ใช้ OAuth2) |
 | **unit_converter** — แปลงหน่วย | `/convert`, `/unit` | Built-in | cheap | ไม่ต้อง |
-| **settings** — ตั้งค่าส่วนตัว | `/setname`, `/setphone`, `/setid` | SQLite | cheap | ไม่ต้อง |
+| **settings** — ตั้งค่าส่วนตัว + ดูบัญชีอีเมล | `/setname`, `/setphone`, `/setid`, `/myemail` | SQLite + Gmail API (profile) | cheap | ไม่ต้อง |
 | **apikeys** — จัดการ API keys | `/setkey`, `/mykeys`, `/removekey` | SQLite (encrypted) | cheap | ไม่ต้อง |
 
 > **หมายเหตุ:** ทุก tool ใช้ `direct_output = True` (default) — tools ที่ใช้ LLM (gmail_summary, work_email, news_summary, smart_inbox, web_search) สรุปเองภายในแล้ว

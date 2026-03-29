@@ -1,7 +1,9 @@
-"""Settings tool — ตั้งค่าข้อมูลส่วนตัว: ชื่อ เบอร์โทร เลขบัตรประชาชน"""
+"""Settings tool — ตั้งค่าข้อมูลส่วนตัว: ชื่อ เบอร์โทร เลขบัตรประชาชน + ดูบัญชีอีเมล"""
 
 from core import db
+from core.api_keys import get_api_key
 from core.logger import get_logger
+from core.security import get_gmail_credentials
 from tools.base import BaseTool
 
 log = get_logger(__name__)
@@ -11,13 +13,14 @@ _CMD_TO_ACTION = {
     "/setname": "setname",
     "/setphone": "setphone",
     "/setid": "setid",
+    "/myemail": "myemail",
 }
 
 
 class SettingsTool(BaseTool):
     name = "settings"
-    description = "ดูหรือตั้งค่าข้อมูลส่วนตัว: ชื่อ เบอร์โทร เลขบัตรประชาชน"
-    commands = ["/setname", "/setphone", "/setid"]
+    description = "ดูหรือตั้งค่าข้อมูลส่วนตัว: ชื่อ เบอร์โทร เลขบัตรประชาชน + ดูบัญชีอีเมล"
+    commands = ["/setname", "/setphone", "/setid", "/myemail"]
     direct_output = True
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
@@ -40,6 +43,8 @@ class SettingsTool(BaseTool):
             return self._setid(user_id, user, value,
                                chat_id=kwargs.get("chat_id"),
                                message_id=kwargs.get("message_id"))
+        elif action == "myemail":
+            return self._myemail(user_id)
         elif action == "view":
             return self._view(user_id, user)
         else:
@@ -171,21 +176,65 @@ class SettingsTool(BaseTool):
             lines.append("• เลขบัตร: ยังไม่ได้ตั้ง (/setid)")
         return "\n".join(lines)
 
+    # ---- myemail ----
+    def _myemail(self, user_id: str) -> str:
+        """แสดงบัญชีอีเมลที่ตั้งค่าไว้ (Gmail + Work Email)"""
+        lines = ["📧 บัญชีอีเมลที่ตั้งค่าไว้:\n"]
+
+        # --- Gmail ---
+        gmail_email = None
+        try:
+            creds = get_gmail_credentials(user_id)
+            if creds:
+                from googleapiclient.discovery import build
+                service = build("gmail", "v1", credentials=creds)
+                profile = service.users().getProfile(userId="me").execute()
+                gmail_email = profile.get("emailAddress")
+        except Exception as e:
+            log.warning("Failed to fetch Gmail profile for %s: %s", user_id, e)
+
+        if gmail_email:
+            lines.append(f"✅ Gmail: {gmail_email}")
+        else:
+            lines.append("❌ Gmail: ยังไม่ได้เชื่อมต่อ (ใช้ /authgmail)")
+
+        # --- Work Email (IMAP) ---
+        work_user = get_api_key(user_id, "work_imap_user")
+        work_host = get_api_key(user_id, "work_imap_host")
+
+        if work_user:
+            host_info = f" ({work_host})" if work_host else ""
+            lines.append(f"✅ Work Email: {work_user}{host_info}")
+        else:
+            lines.append("❌ Work Email: ยังไม่ได้ตั้งค่า")
+            lines.append("   ตั้งค่าด้วย /setkey work_imap_host, /setkey work_imap_user, /setkey work_imap_password")
+
+        db.log_tool_usage(
+            user_id=user_id,
+            tool_name=self.name,
+            status="success",
+            **db.make_log_field("input", "myemail", kind="tool_command"),
+            **db.make_log_field("output", "\n".join(lines), kind="tool_result"),
+        )
+
+        return "\n".join(lines)
+
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
             "description": (
-                "ดูหรือตั้งค่าข้อมูลส่วนตัว: ตั้งชื่อ (setname), ตั้งเบอร์โทร (setphone), "
-                "ตั้งเลขบัตรประชาชน (setid), หรือดูข้อมูลทั้งหมด (view) "
-                "เช่น 'ตั้งชื่อ kaebmoo', 'เบอร์โทรฉันคืออะไร', 'เปลี่ยนเบอร์เป็น 0891234567'"
+                "ดูหรือตั้งค่าข้อมูลส่วนตัว หรือดูบัญชีอีเมลที่ตั้งค่าไว้. "
+                "ใช้เมื่อ user ถามเรื่องข้อมูลส่วนตัว ชื่อ เบอร์โทร เลขบัตร หรือถามว่าใช้อีเมลอะไรอยู่. "
+                "ไม่ใช่สำหรับอ่านหรือสรุปเนื้อหาอีเมล (ใช้ gmail_summary หรือ work_email). "
+                "เช่น 'ตั้งชื่อ kaebmoo', 'เบอร์โทรฉันคืออะไร', 'ใช้ gmail อะไรอยู่', 'ตั้ง email ไว้ไหม'"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["setname", "setphone", "setid", "view"],
-                        "description": "setname=ตั้งชื่อ, setphone=ตั้งเบอร์โทร, setid=ตั้งเลขบัตรประชาชน, view=ดูข้อมูลทั้งหมด",
+                        "enum": ["setname", "setphone", "setid", "view", "myemail"],
+                        "description": "setname=ตั้งชื่อ, setphone=ตั้งเบอร์โทร, setid=ตั้งเลขบัตรประชาชน, view=ดูข้อมูลทั้งหมด, myemail=ดูบัญชีอีเมลที่ตั้งค่าไว้",
                     },
                     "value": {
                         "type": "string",

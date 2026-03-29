@@ -105,6 +105,7 @@ class ToolRegistry:
         lines.append("  /setname <ชื่อ> — ตั้งชื่อที่แสดง")
         lines.append("  /setphone <เบอร์> — บันทึกเบอร์โทร")
         lines.append("  /setid <เลขบัตร 13 หลัก> — บันทึกเลขบัตรประชาชน")
+        lines.append("  /myemail — ดูบัญชีอีเมลที่ตั้งค่าไว้ (Gmail + Work Email)")
         lines.append("  /authgmail — เชื่อมต่อ Gmail")
         lines.append("  /disconnectgmail — ยกเลิกการเชื่อมต่อ Gmail")
         lines.append("  /clearlocation — ลบตำแหน่งล่าสุดที่บันทึกไว้")

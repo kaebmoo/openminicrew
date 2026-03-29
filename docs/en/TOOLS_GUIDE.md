@@ -1154,6 +1154,8 @@ resp = await llm_router.chat(
 | **exchange_rate** — Exchange rates | `/fx`, `/rate`, `/exchange` | Bank of Thailand API | cheap | `BOT_API_EXCHANGE_TOKEN`, `BOT_API_HOLIDAY_TOKEN` |
 | **news_summary** — News summary | `/news` | Google News RSS + LLM | cheap | None (RSS is free) |
 | **lotto** — Thai lottery results | `/lotto` | lotto.api.rayriffy.com | cheap | None (API is free) |
+| **settings** — Personal settings + email accounts | `/setname`, `/setphone`, `/setid`, `/myemail` | SQLite + Gmail API (profile) | cheap | None |
+| **apikeys** — API key management | `/setkey`, `/mykeys`, `/removekey` | SQLite (encrypted) | cheap | None |
 
 > **Note:** All tools use `direct_output = True` (default) — tools that use LLM (gmail_summary, work_email, news_summary) handle summarization internally.
 
