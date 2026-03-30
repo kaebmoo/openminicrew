@@ -67,6 +67,10 @@ class ApiKeysTool(BaseTool):
             except ImportError as err:
                 log.warning("Failed to import delete_message_safe: %s", err)
 
+        # host/user เป็นค่า config ไม่ใช่ secret → ไม่ต้องเตือน rotation
+        _NO_ROTATION_HINT = {"work_imap_host", "work_imap_user"}
+        if service.lower() in _NO_ROTATION_HINT:
+            return f"✅ บันทึก `{service}` แล้ว"
         rotation_days = get_rotation_period_days(service)
         return f"✅ บันทึก key สำหรับ `{service}` แล้ว\nแนะนำ rotate ภายใน {rotation_days} วัน"
 

@@ -105,7 +105,7 @@ def inspect_api_key_value(service: str, api_key: str, *, updated_at: str | None 
         weak_reasons.append("placeholder value")
     if any(marker in lowered for marker in ("your-", "replace", "dummy", "example", "sample", "test")):
         weak_reasons.append("placeholder-like text")
-    if len(candidate) < 8 and normalized_service not in {"work_imap_host", "work_imap_user"}:
+    if len(candidate) < 8 and normalized_service not in {"work_imap_host", "work_imap_user", "work_imap_password"}:
         weak_reasons.append("too short for secret storage")
     if len(set(candidate)) == 1 and len(candidate) >= 4:
         weak_reasons.append("repeated single character pattern")
@@ -119,8 +119,7 @@ def inspect_api_key_value(service: str, api_key: str, *, updated_at: str | None 
         if "@" not in candidate and len(candidate) < 6:
             weak_reasons.append("username looks incomplete")
     elif normalized_service == "work_imap_password":
-        if len(candidate) < 12:
-            weak_reasons.append("password shorter than 12 characters")
+        pass  # รหัสผ่านจริงของ user — ไม่ block ไม่ว่าจะสั้นแค่ไหน
 
     rotation_days = get_rotation_period_days(normalized_service)
     updated_dt = _parse_iso_datetime(updated_at)
