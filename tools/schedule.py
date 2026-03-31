@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from tools.base import BaseTool
 from core import db
 from core.config import TIMEZONE
-from core.user_manager import is_owner, get_user
+from core.user_manager import is_owner, get_user_by_id
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -393,7 +393,7 @@ class ScheduleTool(BaseTool):
             return f"ID ไม่ถูกต้อง: {schedule_id_str}"
 
         # Owner สามารถลบของใครก็ได้
-        user = get_user(user_id)
+        user = get_user_by_id(user_id)
         if user and is_owner(user):
             sched = db.get_schedule_by_id(sid)
             if not sched or not sched["is_active"]:
@@ -416,7 +416,7 @@ class ScheduleTool(BaseTool):
         return f"✅ ลบ schedule ID {sid} แล้ว"
 
     def _list(self, user_id: str) -> str:
-        user = get_user(user_id)
+        user = get_user_by_id(user_id)
 
         if user and is_owner(user):
             schedules = db.get_active_schedules()

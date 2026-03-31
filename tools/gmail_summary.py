@@ -14,7 +14,7 @@ from core.security import get_gmail_credentials
 from core.config import GMAIL_MAX_RESULTS
 from core import db
 from core.llm import llm_router
-from core.user_manager import get_user, get_preference
+from core.user_manager import get_user_by_id, get_preference
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -97,7 +97,7 @@ class GmailSummaryTool(BaseTool):
         force, newer_than, time_label, search_query = self._parse_args(args)
 
         # ใช้ LLM ตาม user preference (fallback เป็น default)
-        user = get_user(user_id) or {}
+        user = get_user_by_id(user_id) or {}
         provider = get_preference(user, "default_llm")
         # สร้าง label สำหรับแสดงผล
         display_label = time_label

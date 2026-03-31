@@ -7,7 +7,7 @@ import requests
 
 from tools.base import BaseTool
 from core.llm import llm_router
-from core.user_manager import get_user, get_preference
+from core.user_manager import get_user_by_id, get_preference
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -90,7 +90,7 @@ class NewsSummaryTool(BaseTool):
             return "❌ เกิดข้อผิดพลาดในการดึงข้อมูลข่าวจาก Google News ลองใหม่อีกครั้ง"
 
         # 4. สรุปด้วย LLM (ส่งแค่หัวข้อ ไม่ส่ง URL)
-        user = get_user(user_id) or {}
+        user = get_user_by_id(user_id) or {}
         provider = get_preference(user, "default_llm")
 
         system_prompt = (

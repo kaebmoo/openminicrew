@@ -304,7 +304,7 @@ class ExchangeRateTool(BaseTool):
 
     async def execute(self, user_id: str, args: str = "", date: str = "",
                       period: str = "daily", **kwargs) -> str:
-        args = args.strip().upper()
+        args = (args or "").strip().upper()
 
         # ผู้ใช้ถามว่ามีสกุลอะไรบ้าง
         if args in ("LIST", "?", "HELP", "สกุล", "มีอะไรบ้าง"):

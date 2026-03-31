@@ -93,7 +93,10 @@ async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
         if header_secret != TELEGRAM_WEBHOOK_SECRET:
             raise HTTPException(status_code=403, detail="Invalid secret token")
 
-    data = await request.json()
+    try:
+        data = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
     # ตอบ 200 ทันที แล้วโยนงานไป background
     background_tasks.add_task(_process_update, data)

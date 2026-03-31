@@ -31,6 +31,8 @@ _ACTION_MAP = {
     "status": None, "สถานะ": None, "ดู": None,
 }
 
+_ACTION_KEYS_BY_LENGTH = sorted(_ACTION_MAP.keys(), key=len, reverse=True)
+
 
 class ConsentTool(BaseTool):
     name = "consent"
@@ -116,9 +118,9 @@ class ConsentTool(BaseTool):
 
         # ถ้าไม่เจอ action → ลอง substring
         if action is None:
-            for key, act in _ACTION_MAP.items():
+            for key in _ACTION_KEYS_BY_LENGTH:
                 if key in args:
-                    action = act
+                    action = _ACTION_MAP[key]
                     break
 
         return consent_type, action

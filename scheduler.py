@@ -47,22 +47,44 @@ scheduler = BackgroundScheduler(
     timezone=TIMEZONE,
     job_defaults={"misfire_grace_time": 3600, "coalesce": True},
 )
-_last_run_info = {"last_run": None}
+_last_run_info: dict[str, str | None] = {"last_run": None}
 _last_run_lock = threading.Lock()
+
+
+def _resolve_schedule_user(user_ref: str) -> dict | None:
+    """Resolve schedule owner from stored user reference.
+
+    New rows store user_id, but older rows may still contain telegram chat_id.
+    Try user_id first, then fall back to chat_id for backward compatibility.
+    """
+    user = db.get_user_by_id(user_ref)
+    if user:
+        return user
+    return db.get_user_by_chat_id(user_ref)
+
+
+def _resolve_scheduled_at(scheduled_at: str | None) -> str | None:
+    """Return a stable run marker for job_runs even when APScheduler calls directly."""
+    if scheduled_at:
+        return scheduled_at
+    return datetime.now(ZoneInfo(TIMEZONE)).replace(second=0, microsecond=0).isoformat()
 
 
 # === Tool execution for scheduled jobs ===
 
 def _run_tool_for_user(user_id: str, chat_id: str, tool_name: str, args: str = "",
-                       job_id: str = None, scheduled_at: str = None,
-                       schedule_id: int = None):
+                       job_id: str | None = None, scheduled_at: str | None = None,
+                       schedule_id: int | None = None):
     """Helper: รัน tool แล้วส่งผลไป Telegram — retry + save pending ถ้าส่งไม่ได้"""
     log.info(f"[Scheduled] Starting {tool_name} for user={user_id}, chat={chat_id}")
+    run_marker = _resolve_scheduled_at(scheduled_at) if job_id else None
     try:
         success = _run_tool_for_user_inner(user_id, chat_id, tool_name, args)
-        if job_id and scheduled_at:
+        if job_id and run_marker:
             status = "success" if success else "failed"
-            db.log_job_run(job_id, scheduled_at, status=status)
+            db.log_job_run(job_id, run_marker, status=status)
+        if schedule_id:
+            db.update_schedule_last_run(schedule_id)
 
         # Auto-deactivate "once" schedules หลังรันสำเร็จ
         if success and schedule_id:
@@ -76,9 +98,9 @@ def _run_tool_for_user(user_id: str, chat_id: str, tool_name: str, args: str = "
             f"[Scheduled] Unhandled exception in {tool_name} for {user_id}: {e}\n"
             + traceback.format_exc()
         )
-        if job_id and scheduled_at:
+        if job_id and run_marker:
             try:
-                db.log_job_run(job_id, scheduled_at, status="failed")
+                db.log_job_run(job_id, run_marker, status="failed")
             except Exception:
                 pass
 
@@ -119,7 +141,7 @@ def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: s
         log.warning(f"Scheduled send failed for {chat_id}: {e} — saving to pending")
         fallback_text = getattr(result, "text", result)
         if fallback_text:
-            db.save_pending_message(chat_id, fallback_text, source=f"scheduled:{tool_name}")
+            db.save_pending_message(chat_id, str(fallback_text), source=f"scheduled:{tool_name}")
         return False
 
 
@@ -231,7 +253,7 @@ def _load_custom_schedules():
     loaded = 0
     for sched in custom_schedules:
         try:
-            user = db.get_user_by_chat_id(sched["user_id"])
+            user = _resolve_schedule_user(sched["user_id"])
             if not user:
                 continue
 
@@ -347,7 +369,7 @@ def check_missed_jobs():
                     continue  # รันวันนี้แล้ว
 
             # ยังไม่ได้รัน → catchup
-            user = db.get_user_by_chat_id(sched["user_id"])
+            user = _resolve_schedule_user(sched["user_id"])
             if not user:
                 continue
 

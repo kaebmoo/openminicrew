@@ -3,7 +3,7 @@
 import hashlib
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from core.config import DB_FILE
 from core.logger import get_logger
 
@@ -894,18 +894,18 @@ def check_health() -> dict:
 
 def get_security_audit_summary(hours: int = 24) -> dict:
     with get_conn() as conn:
-        since_expr = f"-{int(hours)} hours"
+        since_at = (datetime.now() - timedelta(hours=int(hours))).isoformat(sep=" ")
         total = conn.execute(
-            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE created_at >= datetime('now', ?)",
-            (since_expr,),
+            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE julianday(replace(created_at, 'T', ' ')) >= julianday(?)",
+            (since_at,),
         ).fetchone()["c"]
         denied = conn.execute(
-            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE outcome = 'denied' AND created_at >= datetime('now', ?)",
-            (since_expr,),
+            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE outcome = 'denied' AND julianday(replace(created_at, 'T', ' ')) >= julianday(?)",
+            (since_at,),
         ).fetchone()["c"]
         purges = conn.execute(
-            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE action = 'purge_user_data' AND created_at >= datetime('now', ?)",
-            (since_expr,),
+            "SELECT COUNT(*) AS c FROM security_audit_logs WHERE action = 'purge_user_data' AND julianday(replace(created_at, 'T', ' ')) >= julianday(?)",
+            (since_at,),
         ).fetchone()["c"]
 
     return {
@@ -1582,10 +1582,11 @@ def get_chat_context(user_id: str, limit: int = 10, conversation_id: str = None)
 
 
 def cleanup_old_chats(days: int):
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat(sep=" ")
     with get_conn() as conn:
         conn.execute(
-            "DELETE FROM chat_history WHERE created_at < datetime('now', ?)",
-            (f"-{days} days",)
+            "DELETE FROM chat_history WHERE julianday(replace(created_at, 'T', ' ')) < julianday(?)",
+            (cutoff,)
         )
 
 
@@ -1611,10 +1612,11 @@ def mark_email_processed(user_id: str, message_id: str, subject: str, sender: st
 
 
 def cleanup_old_emails(days: int = 90):
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat(sep=" ")
     with get_conn() as conn:
         conn.execute(
-            "DELETE FROM processed_emails WHERE processed_at < datetime('now', ?)",
-            (f"-{days} days",)
+            "DELETE FROM processed_emails WHERE julianday(replace(processed_at, 'T', ' ')) < julianday(?)",
+            (cutoff,)
         )
 
 
@@ -1692,23 +1694,25 @@ def log_fallback_usage(user_id: str, preferred: str, fallback: str):
 
 def count_fallback_today(user_id: str) -> int:
     """นับจำนวนครั้งที่ user ใช้ fallback วันนี้"""
+    today_local = datetime.now().date().isoformat()
     with get_conn() as conn:
         row = conn.execute(
             """
             SELECT COUNT(*) as cnt FROM tool_logs
             WHERE user_id = ? AND tool_name = '__llm_fallback'
-              AND date(created_at) = date('now')
+              AND substr(created_at, 1, 10) = ?
             """,
-            (str(user_id),),
+            (str(user_id), today_local),
         ).fetchone()
         return row["cnt"] if row else 0
 
 
 def cleanup_old_logs(days: int = 90):
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat(sep=" ")
     with get_conn() as conn:
         conn.execute(
-            "DELETE FROM tool_logs WHERE created_at < datetime('now', ?)",
-            (f"-{days} days",)
+            "DELETE FROM tool_logs WHERE julianday(replace(created_at, 'T', ' ')) < julianday(?)",
+            (cutoff,)
         )
 
 
@@ -1819,10 +1823,11 @@ def save_oauth_state(state: str, user_id: str, chat_id: str, expires_at: str, co
 
 def get_oauth_state(state: str) -> dict | None:
     """ดึง + ลบ OAuth state (single-use) — return None ถ้าหมดอายุหรือไม่มี"""
+    now_value = datetime.now().isoformat(sep=" ")
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM oauth_states WHERE state = ? AND expires_at > datetime('now')",
-            (state,)
+            "SELECT * FROM oauth_states WHERE state = ? AND julianday(replace(expires_at, 'T', ' ')) > julianday(?)",
+            (state, now_value)
         ).fetchone()
         if row:
             conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
@@ -1836,13 +1841,14 @@ def get_location(user_id: str, ttl_minutes: int = 60) -> dict | None:
     """
     if not has_user_consent(user_id, CONSENT_LOCATION, default=False):
         return None
+    cutoff = (datetime.now() - timedelta(minutes=ttl_minutes)).isoformat(sep=" ") if ttl_minutes > 0 else None
     with get_conn() as conn:
         if ttl_minutes > 0:
             row = conn.execute("""
                 SELECT latitude, longitude, updated_at FROM user_locations
                 WHERE user_id = ?
-                  AND updated_at > datetime('now', ?)
-            """, (str(user_id), f"-{ttl_minutes} minutes")).fetchone()
+                  AND julianday(replace(updated_at, 'T', ' ')) > julianday(?)
+            """, (str(user_id), cutoff)).fetchone()
         else:
             row = conn.execute("""
                 SELECT latitude, longitude, updated_at FROM user_locations
@@ -1871,10 +1877,11 @@ def cleanup_stale_locations(ttl_minutes: int = 60):
     """
     if ttl_minutes <= 0:
         return
+    cutoff = (datetime.now() - timedelta(minutes=ttl_minutes)).isoformat(sep=" ")
     with get_conn() as conn:
         conn.execute(
-            "DELETE FROM user_locations WHERE updated_at < datetime('now', ?)",
-            (f"-{ttl_minutes} minutes",),
+            "DELETE FROM user_locations WHERE julianday(replace(updated_at, 'T', ' ')) < julianday(?)",
+            (cutoff,),
         )
 
 
@@ -1907,10 +1914,11 @@ def delete_pending_message(msg_id: int):
 
 def cleanup_old_pending(days: int = 7):
     """ลบข้อความค้างส่งที่เก่าเกิน N วัน"""
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat(sep=" ")
     with get_conn() as conn:
         conn.execute(
-            "DELETE FROM pending_messages WHERE created_at < datetime('now', ?)",
-            (f"-{days} days",)
+            "DELETE FROM pending_messages WHERE julianday(replace(created_at, 'T', ' ')) < julianday(?)",
+            (cutoff,)
         )
 
 
@@ -1938,8 +1946,9 @@ def get_last_job_run(job_id: str) -> dict | None:
 
 def cleanup_old_job_runs(days: int = 30):
     """ลบ job run records ที่เก่าเกิน N วัน"""
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat(sep=" ")
     with get_conn() as conn:
         conn.execute(
-            "DELETE FROM job_runs WHERE ran_at < datetime('now', ?)",
-            (f"-{days} days",)
+            "DELETE FROM job_runs WHERE julianday(replace(ran_at, 'T', ' ')) < julianday(?)",
+            (cutoff,)
         )

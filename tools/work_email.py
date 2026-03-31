@@ -25,7 +25,7 @@ from core.config import (
 )
 from core import db
 from core.llm import llm_router
-from core.user_manager import get_user, get_preference
+from core.user_manager import get_user_by_id, get_preference
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -492,7 +492,7 @@ class WorkEmailTool(BaseTool):
                 return hint
                 
             # 2. Summarize
-            user = get_user(user_id)
+            user = get_user_by_id(user_id)
             provider = get_preference(user, "default_llm") if user else "gemini"
             
             MAX_PROMPT_CHARS = 80000

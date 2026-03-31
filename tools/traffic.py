@@ -57,6 +57,21 @@ class TrafficTool(BaseTool):
         re.IGNORECASE,
     )
 
+    _QUESTION_SUFFIXES = re.compile(
+        r"\s*(รถติดไหม|รถติดมั้ย|ไปยังไง|ไปอย่างไร|ยังไง|ใช้เวลาเท่าไหร่|กี่นาที)$",
+        re.IGNORECASE,
+    )
+
+    _FROM_TO_PATTERN = re.compile(
+        r"^\s*จาก\s*(?P<origin>.+?)\s*ไป\s*(?P<destination>.+?)\s*$",
+        re.IGNORECASE,
+    )
+
+    _COMPACT_TO_PATTERN = re.compile(
+        r"^\s*(?P<origin>.+?)\s*ไป\s*(?P<destination>.+?)\s*$",
+        re.IGNORECASE,
+    )
+
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
@@ -412,9 +427,13 @@ class TrafficTool(BaseTool):
         if not args:
             return None
 
+        normalized_args = self._QUESTION_SUFFIXES.sub("", args).strip()
+        if not normalized_args:
+            return None
+
         for sep in self.SEPARATORS:
-            if sep in args:
-                parts = args.split(sep, 1)
+            if sep in normalized_args:
+                parts = normalized_args.split(sep, 1)
                 if len(parts) == 2:
                     origin = parts[0].strip()
                     dest = parts[1].strip()
@@ -424,9 +443,23 @@ class TrafficTool(BaseTool):
                     if not origin and dest:
                         return "ที่นี่", dest
 
+        from_to_match = self._FROM_TO_PATTERN.match(normalized_args)
+        if from_to_match:
+            origin = from_to_match.group("origin").strip()
+            dest = from_to_match.group("destination").strip()
+            if origin and dest:
+                return origin, dest
+
+        compact_match = self._COMPACT_TO_PATTERN.match(normalized_args)
+        if compact_match and not normalized_args.lower().startswith(("ไป", "to")):
+            origin = compact_match.group("origin").strip()
+            dest = compact_match.group("destination").strip()
+            if origin and dest:
+                return origin, dest
+
         # ไม่มี separator เลย เช่น "บางรัก" → ถือว่าเป็นปลายทาง, ต้นทาง = ตำแหน่งปัจจุบัน
         # ตัดคำนำหน้า "ไป/to/จะไป/ไปที่" ออก
-        dest = re.sub(r"^(จะไป|ไปที่|ไป|to)\s*", "", args, flags=re.IGNORECASE).strip()
+        dest = re.sub(r"^(จะไป|ไปที่|ไป|to)\s*", "", normalized_args, flags=re.IGNORECASE).strip()
         return ("ที่นี่", dest) if dest else None
 
     def _handle_api_error(self, status: str, origin: str, dest: str) -> str:

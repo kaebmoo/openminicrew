@@ -114,6 +114,23 @@ def test_preferred_available_no_fallback(tmp_path, monkeypatch):
     assert count == 0
 
 
+
+
+def test_count_fallback_today_ignores_previous_local_day(tmp_path, monkeypatch):
+    """fallback count ต้องอิงวัน local ของแอป ไม่ใช่ SQLite now/day basis"""
+    from datetime import datetime, timedelta
+
+    _init_db(tmp_path, monkeypatch)
+
+    db.log_fallback_usage("user-1", "matcha", "gemini")
+    yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+    with db.get_conn() as conn:
+        conn.execute(
+            "UPDATE tool_logs SET created_at = ? WHERE user_id = ? AND tool_name = '__llm_fallback'",
+            (yesterday, "user-1"),
+        )
+
+    assert db.count_fallback_today("user-1") == 0
 def test_fallback_when_preferred_unavailable(tmp_path, monkeypatch):
     """ถ้า preferred ใช้ไม่ได้ → fallback ไป gemini + บันทึก log"""
     _init_db(tmp_path, monkeypatch)

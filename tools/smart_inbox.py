@@ -1,6 +1,7 @@
 """Smart Inbox tool for extracting action items from Gmail."""
 
 import asyncio
+import re
 from email.utils import parseaddr
 
 from googleapiclient.discovery import build
@@ -15,6 +16,8 @@ from tools.base import BaseTool
 from tools.gmail_summary import _extract_text
 
 log = get_logger(__name__)
+
+_ACTION_ITEM_PREFIX = re.compile(r"^\s*(?:[-•*]|\d+[.)])\s+(?P<content>.+?)\s*$")
 
 
 class SmartInboxTool(BaseTool):
@@ -49,7 +52,7 @@ class SmartInboxTool(BaseTool):
                         result = "📥 ไม่พบอีเมลที่น่าติดตามในช่วงล่าสุด"
                     else:
                         analysis = await self._extract_action_items(messages)
-                        action_items = [line.strip("- • ") for line in analysis.splitlines() if line.strip() and line.strip().startswith(("-", "•", "1", "2", "3", "4", "5"))]
+                        action_items = self._parse_action_items(analysis)
 
                         created = []
                         if mode == "auto":
@@ -82,6 +85,18 @@ class SmartInboxTool(BaseTool):
                 **db.make_error_fields(str(e)),
             )
             return f"❌ ใช้งาน Smart Inbox ไม่สำเร็จ: {e}"
+
+    @staticmethod
+    def _parse_action_items(analysis: str) -> list[str]:
+        items = []
+        for line in analysis.splitlines():
+            match = _ACTION_ITEM_PREFIX.match(line)
+            if not match:
+                continue
+            content = match.group("content").strip()
+            if content:
+                items.append(content)
+        return items
 
     async def _fetch_recent_messages(self, service) -> list[dict]:
         loop = asyncio.get_running_loop()
