@@ -258,11 +258,21 @@ class ScheduleTool(BaseTool):
         tool = ""
         tool_args_list = []
 
+        _VALID_FREQ = {"daily", "weekday", "weekly", "monthly", "once"}
         i = 0
-        # (1) repeat type
-        if tokens[i].lower() in ("daily", "weekday", "weekly", "monthly", "once"):
-            repeat = tokens[i].lower()
+        # (1) frequency type
+        first = tokens[i].lower()
+        if first in _VALID_FREQ:
+            repeat = first
             i += 1
+        elif not _TIME_RE.match(tokens[i]):
+            # ไม่ใช่ frequency ที่รู้จัก และไม่ใช่เวลา → แจ้ง error ตรงจุด
+            return (
+                f"❌ ไม่รู้จักความถี่ '{tokens[i]}'\n"
+                f"ใช้: {', '.join(sorted(_VALID_FREQ))}\n"
+                "หรือไม่ต้องระบุ (default = daily)\n"
+                "เช่น: /schedule add 07:30 work_email"
+            )
 
         if i >= len(tokens):
             return self._usage()
@@ -428,9 +438,9 @@ class ScheduleTool(BaseTool):
             lines.append(f"  [{s['id']}] {display} — {s['tool_name']}{args_display}{owner_tag}")
 
         lines.append("")
-        lines.append("เพิ่ม: /schedule add [repeat] <HH:MM> <tool> [args]")
+        lines.append("เพิ่ม: /schedule add [ความถี่] <HH:MM> <tool> [args]")
         lines.append("ลบ:   /schedule remove <id>")
-        lines.append(f"repeat: daily, weekday, weekly, monthly, once")
+        lines.append("ความถี่: daily (ค่าเริ่มต้น), weekday, weekly, monthly, once")
         return "\n".join(lines)
 
     def _usage(self) -> str:
