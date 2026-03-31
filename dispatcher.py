@@ -429,6 +429,10 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
             conversation_id=conv_id,
         )
 
+    # LLM ตอบเองโดยไม่ใช้ tool → ต่อท้าย disclaimer
+    if tool_used is None and llm_model is not None and isinstance(response_text, str):
+        response_text = response_text.rstrip() + "\n\n_ℹ️ AI ตอบจากความรู้ทั่วไป อาจไม่ถูกต้อง_"
+
     # ส่งกลับ Telegram (หลัง typing หยุด)
     if not response_text:
         log.warning(f"Empty response for user {user_id}, text={text[:50]}")
