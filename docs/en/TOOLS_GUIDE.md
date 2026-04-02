@@ -1114,6 +1114,29 @@ resp = await llm_router.chat(
 )
 ```
 
+### 8. Asyncio Safety in Tools
+
+Tools are called from **two different contexts**:
+
+1. **Webhook/polling** — runs inside FastAPI/uvicorn's asyncio event loop
+2. **Scheduler** — `asyncio.run()` creates a new event loop inside a `BackgroundScheduler` thread pool thread
+
+When the scheduler reuses a thread from its pool, a previous `asyncio.run()` call may have left a closed event loop reference on that thread. This causes `asyncio.get_event_loop()` to return the **closed** loop instead of the currently running one → `"Event loop is closed"` error.
+
+**Rules:**
+
+- **Never** use `asyncio.get_event_loop()` — always use `asyncio.get_running_loop()`
+- Pure `await` calls (e.g. `await llm_router.chat()`) are safe — they use the running loop implicitly
+- If you need to wrap sync/blocking code (IMAP, heavy file I/O), use:
+
+```python
+loop = asyncio.get_running_loop()
+result = await loop.run_in_executor(None, sync_function, arg1, arg2)
+```
+
+- **Never** create `asyncio.new_event_loop()` inside a tool
+- Symptom of violation: intermittent errors **only** when scheduler runs the tool (manual `/command` works fine)
+
 ---
 
 ## Pre-Deploy Checklist

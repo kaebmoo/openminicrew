@@ -1144,6 +1144,29 @@ resp = await llm_router.chat(
 )
 ```
 
+### 9. Asyncio Safety ใน Tools
+
+Tools ถูกเรียกจาก **2 context ที่ต่างกัน**:
+
+1. **Webhook/polling** — รันใน asyncio event loop ของ FastAPI/uvicorn
+2. **Scheduler** — `asyncio.run()` สร้าง event loop ใหม่ใน thread pool ของ `BackgroundScheduler`
+
+เมื่อ scheduler reuse thread จาก pool, `asyncio.run()` ของ job ก่อนหน้าอาจทิ้ง closed event loop reference ไว้บน thread นั้น ทำให้ `asyncio.get_event_loop()` คืน **closed loop** แทน loop ที่กำลังรันอยู่ → error `"Event loop is closed"`
+
+**กฎ:**
+
+- **ห้าม** ใช้ `asyncio.get_event_loop()` — ใช้ `asyncio.get_running_loop()` แทนเสมอ
+- `await` ตรง (เช่น `await llm_router.chat()`) ปลอดภัย — ใช้ running loop โดยอัตโนมัติ
+- ถ้าต้อง wrap sync/blocking code (IMAP, heavy file I/O) ใช้:
+
+```python
+loop = asyncio.get_running_loop()
+result = await loop.run_in_executor(None, sync_function, arg1, arg2)
+```
+
+- **ห้าม** สร้าง `asyncio.new_event_loop()` เองใน tool
+- อาการของการทำผิดกฎ: error เป็นบางครั้ง **เฉพาะ** ตอน scheduler รัน tool (สั่งผ่าน `/command` ตรงทำงานปกติ)
+
 ---
 
 ## Checklist ก่อน Deploy
