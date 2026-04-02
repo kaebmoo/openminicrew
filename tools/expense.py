@@ -39,16 +39,21 @@ class ExpenseTool(BaseTool):
                     elif sub == "edit":
                         result = self._edit(user_id, tokens[1:])
                     elif sub == "summary":
-                        period = tokens[1].lower() if len(tokens) > 1 else "month"
-                        # tokens ที่เหลือหลัง period: category หรือ keyword
-                        category = ""
-                        keyword = ""
-                        for t in tokens[2:]:
-                            if t in self._KNOWN_CATEGORIES:
-                                category = t
-                            elif not keyword:
-                                keyword = t
-                        result = self._summary(user_id, period, category=category, keyword=keyword)
+                        # summary compare month / summary compare 7d
+                        if len(tokens) > 1 and tokens[1].lower() == "compare":
+                            compare_period = tokens[2].lower() if len(tokens) > 2 else "month"
+                            result = self._compare(user_id, compare_period)
+                        else:
+                            period = tokens[1].lower() if len(tokens) > 1 else "month"
+                            # tokens ที่เหลือหลัง period: category หรือ keyword
+                            category = ""
+                            keyword = ""
+                            for t in tokens[2:]:
+                                if t in self._KNOWN_CATEGORIES:
+                                    category = t
+                                elif not keyword:
+                                    keyword = t
+                            result = self._summary(user_id, period, category=category, keyword=keyword)
                     else:
                         if sub == "add":
                             tokens = tokens[1:]
@@ -223,6 +228,81 @@ class ExpenseTool(BaseTool):
         lines = [header]
         for item in rows:
             lines.append(f"• {item['category']}: {float(item['total']):,.2f} บาท ({item['count']} รายการ)")
+        return "\n".join(lines)
+
+    def _compare(self, user_id: str, period: str) -> str:
+        """เปรียบเทียบรายจ่าย 2 ช่วงเวลา (เดือนนี้ vs เดือนที่แล้ว, 7 วันนี้ vs 7 วันก่อน)"""
+        today = date.today()
+
+        if period == "7d":
+            # Period B (ปัจจุบัน): 7 วันล่าสุด
+            end_b = today
+            start_b = today - timedelta(days=6)
+            # Period A (ก่อนหน้า): 7 วันก่อนหน้านั้น
+            end_a = start_b - timedelta(days=1)
+            start_a = end_a - timedelta(days=6)
+            label_a = f"{start_a.strftime('%d/%m')}–{end_a.strftime('%d/%m')}"
+            label_b = f"{start_b.strftime('%d/%m')}–{end_b.strftime('%d/%m')}"
+        else:
+            # Default: month — เดือนนี้ vs เดือนที่แล้ว
+            # Period B (เดือนปัจจุบัน)
+            start_b = today.replace(day=1)
+            end_b = today
+            # Period A (เดือนก่อน)
+            last_month_end = start_b - timedelta(days=1)
+            start_a = last_month_end.replace(day=1)
+            end_a = last_month_end
+
+            thai_months = [
+                "", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+                "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
+            ]
+            label_a = f"{thai_months[start_a.month]} {start_a.year}"
+            label_b = f"{thai_months[start_b.month]} {start_b.year}"
+
+        rows_a = db.summarize_expenses(user_id, start_a.isoformat(), end_a.isoformat())
+        rows_b = db.summarize_expenses(user_id, start_b.isoformat(), end_b.isoformat())
+
+        if not rows_a and not rows_b:
+            return "💸 ไม่มีรายจ่ายในทั้ง 2 ช่วงที่เลือก"
+
+        # สร้าง map category → total
+        map_a = {r["category"]: float(r["total"]) for r in rows_a}
+        map_b = {r["category"]: float(r["total"]) for r in rows_b}
+        all_cats = list(dict.fromkeys(list(map_a.keys()) + list(map_b.keys())))
+
+        lines = [
+            f"💸 เปรียบเทียบรายจ่าย",
+            f"{label_a} vs {label_b}",
+            "",
+            f"{'หมวด':<14} {label_a:>12} {label_b:>12} {'ผลต่าง':>12}",
+            "-" * 54,
+        ]
+
+        total_a = 0.0
+        total_b = 0.0
+        for cat in all_cats:
+            val_a = map_a.get(cat, 0)
+            val_b = map_b.get(cat, 0)
+            diff = val_b - val_a
+            total_a += val_a
+            total_b += val_b
+            sign = "+" if diff > 0 else ""
+            lines.append(f"{cat:<14} {val_a:>12,.2f} {val_b:>12,.2f} {sign}{diff:>11,.2f}")
+
+        total_diff = total_b - total_a
+        sign = "+" if total_diff > 0 else ""
+        lines.append("-" * 54)
+        lines.append(f"{'รวม':<14} {total_a:>12,.2f} {total_b:>12,.2f} {sign}{total_diff:>11,.2f}")
+
+        # สรุป
+        if total_a > 0:
+            pct = total_diff / total_a * 100
+            sign_pct = "+" if pct > 0 else ""
+            direction = "มากกว่า" if total_diff > 0 else "น้อยกว่า"
+            lines.append("")
+            lines.append(f"สรุป: {label_b} ใช้{direction}{label_a} {abs(total_diff):,.2f} บาท ({sign_pct}{pct:.1f}%)")
+
         return "\n".join(lines)
 
     async def _handle_photo(self, user_id: str, raw_args: str) -> str:
@@ -511,10 +591,11 @@ class ExpenseTool(BaseTool):
         return {
             "name": self.name,
             "description": (
-                "บันทึกและสรุปรายจ่าย (เฉพาะเงินออก/จ่ายเงิน/ซื้อของ). "
+                "บันทึกและสรุปรายจ่าย รวมถึงเปรียบเทียบรายจ่าย 2 ช่วง (เฉพาะเงินออก/จ่ายเงิน/ซื้อของ). "
                 "ห้ามใช้กับรายรับ เงินเข้า รับเงิน รับโอน — "
                 "ถ้า user ต้องการรับเงินหรือสร้าง QR รับโอน ให้ใช้ promptpay แทน. "
-                "เช่น 'จ่ายค่ากาแฟ 65', 'ซื้อข้าว 50 อาหาร', 'กินเหล้า 350'"
+                "เช่น 'จ่ายค่ากาแฟ 65', 'ซื้อข้าว 50 อาหาร', 'กินเหล้า 350', "
+                "'เดือนนี้ใช้เงินเยอะกว่าเดือนที่แล้วไหม'"
             ),
             "parameters": {
                 "type": "object",
@@ -529,7 +610,9 @@ class ExpenseTool(BaseTool):
                             "เช่น '65 เครื่องดื่ม เบียร์', '120 อาหาร ก๋วยเตี๋ยว' "
                             "หรือ 'list', 'summary month', "
                             "'summary month เครื่องดื่ม' (filter หมวด), "
-                            "'summary month กาแฟ' (ค้นหาใน note)"
+                            "'summary month กาแฟ' (ค้นหาใน note), "
+                            "'summary compare month' (เทียบเดือนนี้กับเดือนที่แล้ว), "
+                            "'summary compare 7d' (เทียบ 7 วันนี้กับ 7 วันก่อน)"
                         )
                     }
                 },

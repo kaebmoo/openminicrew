@@ -303,12 +303,16 @@ class ExchangeRateTool(BaseTool):
     direct_output = True
 
     async def execute(self, user_id: str, args: str = "", date: str = "",
-                      period: str = "daily", **kwargs) -> str:
+                      period: str = "daily", compare_date: str = "", **kwargs) -> str:
         args = (args or "").strip().upper()
 
         # ผู้ใช้ถามว่ามีสกุลอะไรบ้าง
         if args in ("LIST", "?", "HELP", "สกุล", "มีอะไรบ้าง"):
             return self._list_currencies()
+
+        # ----- Compare mode -----
+        if compare_date:
+            return self._handle_compare(user_id, args, date, compare_date, period)
 
         # ถ้าไม่ระบุ → แสดง default currencies
         if not args:
@@ -416,6 +420,123 @@ class ExchangeRateTool(BaseTool):
             )
             return f"เกิดข้อผิดพลาดในการดึงอัตราแลกเปลี่ยน: {e}"
 
+    def _handle_compare(self, user_id: str, args_upper: str, date_a_str: str,
+                         date_b_str: str, period: str) -> str:
+        """เปรียบเทียบอัตราแลกเปลี่ยน 2 ช่วงเวลา"""
+        period = (period or "daily").lower().strip()
+        if period not in EXCHANGE_RATE_URLS:
+            return f"ไม่รู้จัก period: {period} (ใช้ daily, monthly, quarterly, annual)"
+
+        # กำหนด currencies
+        if not args_upper:
+            currencies = DEFAULT_CURRENCIES
+        else:
+            currencies = [c.strip() for c in args_upper.replace(",", " ").split() if c.strip()]
+        unknown = [c for c in currencies if c not in SUPPORTED_CURRENCIES]
+        if unknown:
+            return f"ไม่รู้จักสกุลเงิน: {', '.join(unknown)}\nพิมพ์ /fx list เพื่อดูรายการสกุลทั้งหมด"
+
+        # Parse date A
+        if date_a_str:
+            try:
+                target_a = datetime.strptime(date_a_str.strip(), "%Y-%m-%d").date()
+            except ValueError:
+                return f"รูปแบบวันที่ไม่ถูกต้อง: {date_a_str} (ใช้ YYYY-MM-DD)"
+        else:
+            target_a = date_module_today()
+
+        # Parse date B
+        try:
+            target_b = datetime.strptime(date_b_str.strip(), "%Y-%m-%d").date()
+        except ValueError:
+            return f"รูปแบบวันที่ไม่ถูกต้อง: {date_b_str} (ใช้ YYYY-MM-DD)"
+
+        # สำหรับ daily: หาวันทำการ
+        if period == "daily":
+            if not date_a_str:
+                target_a = last_business_day()
+            target_a = self._find_biz_day(target_a, currencies[0])
+            target_b = self._find_biz_day(target_b, currencies[0])
+        elif period in ("monthly", "quarterly", "annual"):
+            target_a = self._find_period_day(target_a, currencies[0], period)
+            target_b = self._find_period_day(target_b, currencies[0], period)
+
+        label_a = _period_label(target_a, period)
+        label_b = _period_label(target_b, period)
+        period_th = PERIOD_LABELS.get(period, "")
+
+        lines = [
+            f"เปรียบเทียบอัตราแลกเปลี่ยน ({period_th})",
+            f"{label_a} vs {label_b}",
+            "",
+            f"{'สกุล':<6} {'ขาย A':>10} {'ขาย B':>10} {'เปลี่ยน':>10} {'%':>8}",
+            "-" * 50,
+        ]
+
+        errors = []
+        for currency in currencies:
+            try:
+                rec_a = _fetch_exchange_rate(target_a, currency, period)
+                rec_b = _fetch_exchange_rate(target_b, currency, period)
+                if not rec_a or not rec_b:
+                    errors.append(f"{currency}: ไม่มีข้อมูลบางช่วง")
+                    continue
+                sell_a = float(rec_a.get("selling", 0))
+                sell_b = float(rec_b.get("selling", 0))
+                diff = sell_b - sell_a
+                pct = (diff / sell_a * 100) if sell_a else 0
+                sign = "+" if diff > 0 else ""
+                lines.append(
+                    f"{currency:<6} {sell_a:>10.4f} {sell_b:>10.4f} {sign}{diff:>9.4f} {sign}{pct:>7.2f}%"
+                )
+            except Exception as e:
+                log.warning("Compare failed for %s: %s", currency, e)
+                errors.append(f"{currency}: ดึงข้อมูลไม่ได้")
+
+        if errors:
+            lines.append("")
+            lines.extend(errors)
+
+        lines.append(f"\nที่มา: ธนาคารแห่งประเทศไทย")
+
+        result = "\n".join(lines)
+        db.log_tool_usage(
+            user_id=user_id,
+            tool_name=self.name,
+            status="success",
+            **db.make_log_field("input", f"compare {period} {label_a} vs {label_b}", kind="exchange_rate_query"),
+            **db.make_log_field("output", result[:200], kind="exchange_rate_result"),
+        )
+        return result
+
+    @staticmethod
+    def _find_biz_day(target: date, currency: str) -> date:
+        """หาวันทำการที่มีข้อมูล (ย้อนหลังสูงสุด 7 วัน)"""
+        for _ in range(7):
+            try:
+                test = _fetch_exchange_rate(target, currency, "daily")
+                if test:
+                    return target
+            except Exception:
+                pass
+            target -= timedelta(days=1)
+            while target.weekday() >= 5:
+                target -= timedelta(days=1)
+        return target
+
+    @staticmethod
+    def _find_period_day(target: date, currency: str, period: str) -> date:
+        """หางวดที่มีข้อมูล (ย้อนหลังสูงสุด 3 งวด)"""
+        for _ in range(3):
+            try:
+                test = _fetch_exchange_rate(target, currency, period)
+                if test:
+                    return target
+            except Exception:
+                pass
+            target = _prev_period(target, period)
+        return target
+
     def _list_currencies(self) -> str:
         lines = ["สกุลเงินที่รองรับ:\n"]
         for code, country in SUPPORTED_CURRENCIES.items():
@@ -429,12 +550,15 @@ class ExchangeRateTool(BaseTool):
             "name": self.name,
             "description": (
                 "ดูอัตราแลกเปลี่ยนเงินตราต่างประเทศเป็นบาทไทย จากธนาคารแห่งประเทศไทย "
+                "รองรับเปรียบเทียบ 2 ช่วงเวลาด้วย compare_date "
                 "สำคัญมาก: เมื่อผู้ใช้พูดถึงอัตราแลกเปลี่ยน ให้เรียก tool นี้ทันที "
                 "ห้ามถามกลับเด็ดขาด ห้ามขอข้อมูลเพิ่ม — ถ้าผู้ใช้ไม่ระบุสกุลเงิน ให้ส่ง args ว่าง (tool จะแสดง USD GBP EUR JPY CNY อัตโนมัติ) "
                 "ถ้าผู้ใช้ไม่ระบุวันที่ ให้ส่ง date ว่าง (tool จะใช้วันทำการล่าสุดอัตโนมัติ) "
                 "ถ้าผู้ใช้ไม่ระบุ period ให้ส่ง period ว่าง (tool จะใช้ daily อัตโนมัติ) "
                 "tool จะจัดการวันหยุด/เสาร์-อาทิตย์เอง โดยหาวันทำการก่อนหน้าให้อัตโนมัติ "
-                "ให้ส่ง date และ period ตามที่ผู้ใช้ระบุเสมอ ไม่ต้องตรวจสอบว่าเป็นวันหยุดหรือไม่"
+                "ให้ส่ง date และ period ตามที่ผู้ใช้ระบุเสมอ ไม่ต้องตรวจสอบว่าเป็นวันหยุดหรือไม่ "
+                "เช่น 'เทียบค่าเงินดอลลาร์เดือน ม.ค. กับเดือน มี.ค.', "
+                "'ค่าเงินดอลลาร์เดือนนี้ vs เดือนที่แล้ว'"
             ),
             "parameters": {
                 "type": "object",
@@ -466,6 +590,16 @@ class ExchangeRateTool(BaseTool):
                             "'monthly' = เฉลี่ยรายเดือน, "
                             "'quarterly' = เฉลี่ยรายไตรมาส, "
                             "'annual' = เฉลี่ยรายปี"
+                        ),
+                    },
+                    "compare_date": {
+                        "type": "string",
+                        "description": (
+                            "วันที่สำหรับเปรียบเทียบ (YYYY-MM-DD) "
+                            "เมื่อ user ถามเทียบ 2 ช่วง ให้ใส่ช่วงแรกใน date "
+                            "และช่วงที่สองใน compare_date "
+                            "เช่น 'เทียบค่าเงินเดือน ม.ค. กับ มี.ค.' "
+                            "→ date='2026-01-01', compare_date='2026-03-01', period='monthly'"
                         ),
                     },
                 },

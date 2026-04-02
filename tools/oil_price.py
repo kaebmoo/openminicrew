@@ -346,7 +346,7 @@ class OilPriceTool(BaseTool):
     direct_output = True
 
     async def execute(self, user_id: str, args: str = "",
-                      date: str = "", **kwargs) -> str:
+                      date: str = "", compare_date: str = "", **kwargs) -> str:
         """
         Main entry point
 
@@ -354,10 +354,15 @@ class OilPriceTool(BaseTool):
             user_id: Telegram chat ID
             args: free text (สำหรับ /command parsing)
             date: วันที่ YYYY-MM-DD สำหรับดูราคาย้อนหลัง (ปตท.)
+            compare_date: วันที่สำหรับเปรียบเทียบ (YYYY-MM-DD)
         """
         raw_args = (args or "").strip()
 
         try:
+            # ----- Compare mode: เปรียบเทียบราคา 2 วัน -----
+            if compare_date:
+                return self._handle_compare(user_id, date or "", compare_date)
+
             # ----- LLM path: explicit date parameter -----
             if date:
                 return self._handle_historical_str(user_id, date)
@@ -467,6 +472,86 @@ class OilPriceTool(BaseTool):
         )
         return result
 
+    # ----- Compare -----
+
+    def _handle_compare(self, user_id: str, date_a_str: str, date_b_str: str) -> str:
+        """เปรียบเทียบราคาน้ำมัน ปตท. 2 วัน"""
+        # Parse date A
+        if date_a_str:
+            try:
+                target_a = datetime.strptime(date_a_str.strip(), "%Y-%m-%d").date()
+            except ValueError:
+                return f"รูปแบบวันที่ไม่ถูกต้อง: {date_a_str} (ใช้ YYYY-MM-DD)"
+        else:
+            target_a = date.today()
+
+        # Parse date B
+        try:
+            target_b = datetime.strptime(date_b_str.strip(), "%Y-%m-%d").date()
+        except ValueError:
+            return f"รูปแบบวันที่ไม่ถูกต้อง: {date_b_str} (ใช้ YYYY-MM-DD)"
+
+        # ดึงข้อมูลทั้ง 2 วัน (ข้ามวันหยุด)
+        try:
+            actual_a, fuels_a = _find_latest_ptt_date(target_a)
+        except ValueError:
+            return f"ไม่พบข้อมูลราคาน้ำมัน ปตท. ณ วันที่ {target_a.strftime('%d/%m/%Y')} หรือวันใกล้เคียง"
+
+        try:
+            actual_b, fuels_b = _find_latest_ptt_date(target_b)
+        except ValueError:
+            return f"ไม่พบข้อมูลราคาน้ำมัน ปตท. ณ วันที่ {target_b.strftime('%d/%m/%Y')} หรือวันใกล้เคียง"
+
+        # จับคู่ fuel type
+        map_a = {f["product"]: float(f["price"]) for f in fuels_a}
+        map_b = {f["product"]: float(f["price"]) for f in fuels_b}
+
+        # ใช้ลำดับจาก fuels_a เป็นหลัก
+        common = [p for p in map_a if p in map_b]
+        if not common:
+            return "ไม่พบประเภทน้ำมันที่ตรงกันระหว่าง 2 วัน"
+
+        label_a = actual_a.strftime("%d/%m/%Y")
+        label_b = actual_b.strftime("%d/%m/%Y")
+
+        lines = [
+            "เปรียบเทียบราคาน้ำมัน ปตท.",
+            f"{label_a} vs {label_b}",
+            "",
+            f"{'ประเภท':<28} {'ราคา A':>8}  {'ราคา B':>8}  {'ผลต่าง':>8}",
+            "-" * 60,
+        ]
+
+        diffs = []
+        for product in common:
+            price_a = map_a[product]
+            price_b = map_b[product]
+            diff = price_b - price_a
+            diffs.append(diff)
+            sign = "+" if diff > 0 else ""
+            lines.append(
+                f"{product:<28} {price_a:>8.2f}  {price_b:>8.2f}  {sign}{diff:>7.2f}"
+            )
+
+        avg_diff = sum(diffs) / len(diffs)
+        sign = "+" if avg_diff > 0 else ""
+        direction = "เพิ่มขึ้น" if avg_diff > 0 else ("ลดลง" if avg_diff < 0 else "ไม่เปลี่ยนแปลง")
+        lines.append("")
+        lines.append(f"สรุป: ราคาเฉลี่ย{direction} {sign}{avg_diff:.2f} บาท/ประเภท")
+        lines.append("")
+        lines.append(_NOTE_BANGKOK_RETAIL)
+
+        result = "\n".join(lines)
+
+        db.log_tool_usage(
+            user_id=user_id,
+            tool_name=self.name,
+            status="success",
+            **db.make_log_field("input", f"compare {actual_a.isoformat()} vs {actual_b.isoformat()}", kind="tool_command"),
+            **db.make_log_field("output", result[:200], kind="tool_result"),
+        )
+        return result
+
     # ----- Usage / Help -----
 
     def _usage(self) -> str:
@@ -486,13 +571,15 @@ class OilPriceTool(BaseTool):
             "name": self.name,
             "description": (
                 # Positive
-                "เช็คราคาน้ำมันปัจจุบัน (บางจาก/ปตท.) และราคาน้ำมันย้อนหลัง (ปตท.). "
+                "เช็คราคาน้ำมันปัจจุบัน (บางจาก/ปตท.) ราคาย้อนหลัง และเปรียบเทียบราคา 2 วัน. "
                 # Negative boundary
                 "ไม่ใช่สำหรับอัตราแลกเปลี่ยนเงินตรา (ใช้ exchange_rate) "
                 "และไม่ใช่สำหรับค้นหาสถานีบริการ/ปั๊มน้ำมัน (ใช้ places). "
                 # Examples
                 "เช่น 'ราคาน้ำมันวันนี้', 'น้ำมันเท่าไหร่', 'ดีเซลราคาเท่าไหร่', "
-                "'ราคาน้ำมันเมื่อวาน', 'ราคาน้ำมัน ปตท'"
+                "'ราคาน้ำมันเมื่อวาน', 'ราคาน้ำมัน ปตท', "
+                "'ราคาน้ำมัน 1 ม.ค. กับวันนี้ ต่างกันเท่าไหร่', "
+                "'เทียบน้ำมันเดือนที่แล้วกับเดือนนี้'"
             ),
             "parameters": {
                 "type": "object",
@@ -511,6 +598,16 @@ class OilPriceTool(BaseTool):
                             "วันที่สำหรับราคาย้อนหลัง (ปตท.) รูปแบบ YYYY-MM-DD "
                             "เช่น '2026-01-15' "
                             "ถ้าไม่ระบุ = ราคาล่าสุด"
+                        ),
+                    },
+                    "compare_date": {
+                        "type": "string",
+                        "description": (
+                            "วันที่สำหรับเปรียบเทียบ (YYYY-MM-DD) "
+                            "เมื่อ user ถามเปรียบเทียบ 2 วัน ให้ใส่วันแรกใน date "
+                            "และวันที่สองใน compare_date "
+                            "เช่น ถาม 'ราคาน้ำมัน 1 ม.ค. กับวันนี้' "
+                            "→ date='2025-01-01', compare_date='2026-04-02'"
                         ),
                     },
                 },
