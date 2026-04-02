@@ -477,7 +477,7 @@ class WorkEmailTool(BaseTool):
             display_label += f" ({filters_str})"
             
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             # 1. Fetch emails (async wrapper)
             # await asyncio.wait_for is used to limit execution time
