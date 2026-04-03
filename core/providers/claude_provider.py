@@ -28,6 +28,7 @@ class ClaudeProvider(BaseLLMProvider):
 
     def __init__(self):
         self._client = None
+        self._user_clients: dict[str, anthropic.AsyncAnthropic] = {}
         if ANTHROPIC_API_KEY:
             self._client = anthropic.AsyncAnthropic(
                 api_key=ANTHROPIC_API_KEY,
@@ -92,10 +93,12 @@ class ClaudeProvider(BaseLLMProvider):
         if not api_key:
             raise ValueError("ยังไม่มี API key สำหรับ Claude — ใช้ /setkey anthropic <key>")
 
-        # ใช้ per-user client ถ้า key ต่างจาก shared key
+        # ใช้ per-user client ถ้า key ต่างจาก shared key (cache เพื่อ reuse connection)
         client = self._client
         if api_key != ANTHROPIC_API_KEY or client is None:
-            client = anthropic.AsyncAnthropic(api_key=api_key, timeout=60.0)
+            if api_key not in self._user_clients:
+                self._user_clients[api_key] = anthropic.AsyncAnthropic(api_key=api_key, timeout=60.0)
+            client = self._user_clients[api_key]
 
         kwargs: dict[str, Any] = {
             "model": model,

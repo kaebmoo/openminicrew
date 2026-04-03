@@ -21,6 +21,7 @@ class GeminiProvider(BaseLLMProvider):
 
     def __init__(self):
         self._client = None
+        self._user_clients: dict[str, genai.Client] = {}
         if GEMINI_API_KEY:
             self._client = genai.Client(
                 api_key=GEMINI_API_KEY,
@@ -84,10 +85,12 @@ class GeminiProvider(BaseLLMProvider):
         if not api_key:
             raise ValueError("ยังไม่มี API key สำหรับ Gemini — ใช้ /setkey gemini <key>")
 
-        # ใช้ per-user client ถ้า key ต่างจาก shared key
+        # ใช้ per-user client ถ้า key ต่างจาก shared key (cache เพื่อ reuse connection)
         client = self._client
         if api_key != GEMINI_API_KEY or client is None:
-            client = genai.Client(api_key=api_key, http_options={"timeout": 60000})
+            if api_key not in self._user_clients:
+                self._user_clients[api_key] = genai.Client(api_key=api_key, http_options={"timeout": 60000})
+            client = self._user_clients[api_key]
 
         # Convert messages to Gemini format
         gemini_contents = []

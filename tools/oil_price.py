@@ -89,10 +89,16 @@ def _fetch_bangchak() -> dict:
 
 def _format_bangchak(data: dict) -> str:
     """แปลงข้อมูล Bangchak เป็นข้อความ"""
-    lines = [
-        f"ราคาน้ำมันบางจาก",
-        f"วันที่: {data['date']} | เวลาประกาศ: {data['time']}",
-    ]
+    # ตรวจว่ามีราคาเปลี่ยนแปลง (วันนี้ ≠ พรุ่งนี้) หรือไม่
+    has_price_change = any(
+        oil["today"] != oil["tomorrow"] for oil in data["oils"]
+    )
+
+    header = f"ราคาน้ำมันบางจาก"
+    if has_price_change:
+        lines = [header, f"วันที่: {data['date']} | เวลาประกาศ: {data['time']}"]
+    else:
+        lines = [header, f"วันที่: {data['date']}"]
     if data["remark"]:
         lines.append(data["remark"])
     lines.append("")
