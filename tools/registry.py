@@ -76,7 +76,7 @@ class ToolRegistry:
         # จัดกลุ่มตาม category
         email_tools = [t for t in self.tools.values() if t.name in ("gmail_summary", "work_email")]
         media_tools = [t for t in self.tools.values() if t.name in ("qrcode_gen", "promptpay")]
-        util_tools = [t for t in self.tools.values() if t.name in ("unit_converter", "web_search")]
+        util_tools = [t for t in self.tools.values() if t.name in ("unit_converter", "web_search", "dictionary")]
         task_tools = [t for t in self.tools.values() if t.name in ("todo", "reminder", "calendar", "smart_inbox")]
         finance_tools = [t for t in self.tools.values() if t.name in ("expense",)]
         categorized_names = {t.name for group in [email_tools, media_tools, util_tools, task_tools, finance_tools] for t in group}
