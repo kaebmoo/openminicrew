@@ -56,17 +56,28 @@ async def lifespan(app: FastAPI):
     elif report["status"] != "ok":
         log.warning("Startup readiness warnings: %s", report["status"])
 
-    # Set webhook
+    # Set webhook (retry on transient DNS / network errors)
     webhook_url = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
     payload = {"url": webhook_url, "allowed_updates": ["message", "callback_query"]}
     if TELEGRAM_WEBHOOK_SECRET:
         payload["secret_token"] = TELEGRAM_WEBHOOK_SECRET
 
-    resp = requests.post(f"{API_BASE}/setWebhook", json=payload, timeout=10)
-    if resp.ok:
-        log.info(f"Webhook set: {webhook_url}")
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.post(f"{API_BASE}/setWebhook", json=payload, timeout=10)
+            if resp.ok:
+                log.info(f"Webhook set: {webhook_url}")
+                break
+            # Telegram returned an error (e.g. DNS failure on their side)
+            log.warning(f"setWebhook attempt {attempt}/{max_attempts} failed: {resp.text}")
+        except requests.RequestException as e:
+            log.warning(f"setWebhook attempt {attempt}/{max_attempts} error: {e}")
+
+        if attempt < max_attempts:
+            await asyncio.sleep(3 * attempt)
     else:
-        log.error(f"Failed to set webhook: {resp.text}")
+        log.error(f"Failed to set webhook after {max_attempts} attempts")
 
     # Start scheduler watchdog
     watchdog_task = asyncio.create_task(_scheduler_watchdog())
