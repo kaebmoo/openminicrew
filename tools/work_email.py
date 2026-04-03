@@ -77,16 +77,19 @@ class WorkEmailTool(BaseTool):
     FILLER_PHRASES = (
         "มีอะไรบ้าง",
         "อะไรบ้าง",
-        "ให้ใหม่",
-        "ใหม่อีกครั้ง",
-        "อีกครั้ง",
-        "อีกที",
-        "อีกรอบ",
         "ให้หน่อย",
         "ให้ที",
         "ให้ด้วย",
         "หน่อย",
         "สรุปให้",
+    )
+
+    REDO_PHRASES = (
+        "ให้ใหม่",
+        "ใหม่อีกครั้ง",
+        "อีกครั้ง",
+        "อีกที",
+        "อีกรอบ",
         "สรุปใหม่",
         "ใหม่",
     )
@@ -161,12 +164,18 @@ class WorkEmailTool(BaseTool):
 
         original_args = args.strip()
         normalized_args = re.sub(r"\bforce\b", " ", original_args, flags=re.IGNORECASE).strip()
+
+        parsed.force = bool(re.search(r"\bforce\b", original_args, flags=re.IGNORECASE))
+        for phrase in self.REDO_PHRASES:
+            if phrase in normalized_args:
+                parsed.force = True
+                normalized_args = normalized_args.replace(phrase, " ")
+        normalized_args = re.sub(r"\s+", " ", normalized_args).strip()
+
         parsed.time_range, parsed.time_label, remaining_args = self._extract_time_range(normalized_args)
 
         original_tokens = remaining_args.split()
         search_tokens = []
-
-        parsed.force = bool(re.search(r"\bforce\b", original_args, flags=re.IGNORECASE))
 
         for token in original_tokens:
             token_lower = token.lower()

@@ -61,16 +61,20 @@ class GmailSummaryTool(BaseTool):
     FILLER_PHRASES = (
         "มีอะไรบ้าง",
         "อะไรบ้าง",
-        "ให้ใหม่",
-        "ใหม่อีกครั้ง",
-        "อีกครั้ง",
-        "อีกที",
-        "อีกรอบ",
         "ให้หน่อย",
         "ให้ที",
         "ให้ด้วย",
         "หน่อย",
         "สรุปให้",
+    )
+
+    # Phrases that mean "redo / re-run" → treated as force (show all, not just unread)
+    REDO_PHRASES = (
+        "ให้ใหม่",
+        "ใหม่อีกครั้ง",
+        "อีกครั้ง",
+        "อีกที",
+        "อีกรอบ",
         "สรุปใหม่",
         "ใหม่",
     )
@@ -163,12 +167,18 @@ class GmailSummaryTool(BaseTool):
         original_args = args.strip() if args else ""
         normalized_args = re.sub(r"\bforce\b", " ", original_args, flags=re.IGNORECASE).strip()
 
+        # Detect redo phrases (อีกครั้ง, ให้ใหม่, …) → force=True
+        force = bool(re.search(r"\bforce\b", original_args, flags=re.IGNORECASE))
+        for phrase in self.REDO_PHRASES:
+            if phrase in normalized_args:
+                force = True
+                normalized_args = normalized_args.replace(phrase, " ")
+        normalized_args = re.sub(r"\s+", " ", normalized_args).strip()
+
         newer_than, time_label, remaining_args = self._extract_time_range(normalized_args)
 
         tokens = remaining_args.split() if remaining_args else []
         tokens_lower = [t.lower() for t in tokens]
-
-        force = bool(re.search(r"\bforce\b", original_args, flags=re.IGNORECASE))
 
         search_tokens = []
 
