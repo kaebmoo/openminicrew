@@ -69,6 +69,13 @@ class ToolRegistry:
     def get_all_specs(self) -> list[dict]:
         return [t.get_tool_spec() for t in self.tools.values()]
 
+    def match_free_text(self, text: str) -> tuple[BaseTool, str] | None:
+        for tool in self.tools.values():
+            inferred_args = tool.match_free_text(text)
+            if inferred_args is not None:
+                return tool, inferred_args
+        return None
+
     def get_help_text(self) -> str:
         lines = ["🤖 *OpenMiniCrew — คำสั่งทั้งหมด*\n"]
 

@@ -19,6 +19,10 @@ class BaseTool(ABC):
         """ทำงานหลัก — รับ user_id เสมอ, return ข้อความหรือ MediaResponse"""
         ...
 
+    def match_free_text(self, text: str) -> str | None:
+        """Return inferred args when this tool should handle a free-text message directly."""
+        return None
+
     def get_tool_spec(self) -> dict:
         """
         Return generic tool spec — LLM Router จะแปลง format ให้ตรง provider

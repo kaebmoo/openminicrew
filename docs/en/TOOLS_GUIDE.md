@@ -1000,7 +1000,39 @@ from core.logger import get_logger
 log = get_logger(__name__)
 ```
 
-### 4. Writing `get_tool_spec()`
+### 4. Runtime Routing Layers
+
+Tools can now participate in runtime routing through three separate layers. These layers have different purposes and should not be mixed together.
+
+1. Command routing
+    `/email`, `/wm`, `/expense` and similar commands are mapped directly by the registry from `tool.commands`.
+2. Free-text pre-routing
+    A tool may optionally implement `match_free_text()` to claim a natural-language message before it reaches the LLM router.
+3. LLM tool spec
+    `get_tool_spec()` describes the tool to the LLM for function calling when the first two layers did not already route the request.
+
+This means `match_free_text()` is not a new external tool schema. It is only an internal pre-routing hook.
+
+```python
+class BaseTool(ABC):
+     commands: list[str] = []
+
+     def match_free_text(self, text: str) -> str | None:
+          return None
+
+     def get_tool_spec(self) -> dict:
+          ...
+```
+
+Use each layer for the right job:
+
+- Use `commands` for deterministic slash commands.
+- Use `match_free_text()` only when a tool has a high-confidence natural-language pattern that should not depend on LLM routing.
+- Use `get_tool_spec()` to help the LLM choose the tool for broader or ambiguous requests.
+
+Keep tool-specific heuristics inside the tool itself. The registry should only ask each tool whether it matches; it should not contain Gmail-specific, work-mail-specific, or domain-specific parsing rules.
+
+### 5. Writing `get_tool_spec()`
 
 The tool spec uses a **generic format** — LLM Router auto-converts to match the provider:
 
@@ -1048,7 +1080,7 @@ async def execute(self, user_id: str, args: str = "", mode: str = "driving", **k
 
 **If tool has no parameters** — don't override `get_tool_spec()` (BaseTool has a default).
 
-### 5. Error Handling
+### 6. Error Handling
 
 ```python
 async def execute(self, user_id: str, args: str = "", **kwargs) -> str:

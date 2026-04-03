@@ -156,6 +156,25 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
         log.info("Meta-question detected → routing to /help")
         return await handle_help(user_id, user, "")
 
+    # ---- 3.6 Explicit Gmail request in free text → route directly ----
+    matched_tool = registry.match_free_text(text)
+    if matched_tool is not None:
+        routed_tool, routed_args = matched_tool
+        log.info(f"Explicit free-text tool detected → routing to {routed_tool.name}")
+        try:
+            result = await routed_tool.execute(user_id, routed_args, chat_id=chat_id, message_id=message_id)
+            return result, routed_tool.name, None, 0
+        except Exception as e:
+            log.error(f"Tool {routed_tool.name} failed: {e}", exc_info=True)
+            db.log_tool_usage(
+                user_id,
+                routed_tool.name,
+                status="failed",
+                **db.make_log_field("input", routed_args, kind="tool_command"),
+                **db.make_error_fields(str(e)),
+            )
+            return f"เกิดข้อผิดพลาด: {e}\nกรุณาลองใหม่", routed_tool.name, None, 0
+
     # ---- 4. ข้อความอิสระ → LLM Router ----
     conv_id = ensure_conversation(user_id)
     provider = get_preference(user, "default_llm")

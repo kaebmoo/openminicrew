@@ -998,7 +998,39 @@ from core.logger import get_logger
 log = get_logger(__name__)
 ```
 
-### 4. `get_tool_spec()` เขียนยังไง (Standardized Format)
+### 4. ชั้นของการ route ตอน runtime
+
+ตอนนี้ Tool สามารถมีส่วนร่วมกับการ route ได้ 3 ชั้น ซึ่งหน้าที่ต่างกันชัดเจนและไม่ควรปนกัน:
+
+1. Command routing
+    `/email`, `/wm`, `/expense` และ command ที่ขึ้นต้นด้วย `/` ถูก map ตรงจาก `tool.commands` ผ่าน registry
+2. Free-text pre-routing
+    Tool สามารถ implement `match_free_text()` แบบ optional เพื่อรับข้อความภาษาธรรมชาติก่อนจะถึง LLM router
+3. LLM tool spec
+    `get_tool_spec()` ใช้อธิบาย Tool ให้ LLM สำหรับ function calling เมื่อ 2 ชั้นแรกยังไม่ได้ route งานนั้น
+
+ดังนั้น `match_free_text()` ไม่ใช่ tool schema ภายนอกตัวใหม่ แต่เป็น internal pre-routing hook เท่านั้น
+
+```python
+class BaseTool(ABC):
+     commands: list[str] = []
+
+     def match_free_text(self, text: str) -> str | None:
+          return None
+
+     def get_tool_spec(self) -> dict:
+          ...
+```
+
+หลักการใช้งานแต่ละชั้น:
+
+- ใช้ `commands` สำหรับ slash command ที่ deterministic
+- ใช้ `match_free_text()` เฉพาะกรณีที่มี pattern ภาษาธรรมชาติที่มั่นใจสูง และไม่อยากพึ่ง LLM route
+- ใช้ `get_tool_spec()` เพื่อช่วยให้ LLM เลือก Tool ได้ถูกในงานที่กว้างหรือกำกวม
+
+ให้เก็บ heuristic เฉพาะโดเมนไว้ใน Tool ของตัวเองเสมอ ส่วน registry มีหน้าที่แค่ถามว่า Tool ไหน match ข้อความนี้ ไม่ควรยัด logic เฉพาะ Gmail, work mail หรือ parsing เฉพาะโดเมนลงไปใน registry
+
+### 5. `get_tool_spec()` เขียนยังไง (Standardized Format)
 
 Tool spec เป็น **format กลาง** — LLM Router จะแปลงให้ตรง provider อัตโนมัติ.
 สิ่งสำคัญที่สุดคือ **`description`** ต้องเขียนให้ครอบคลุมขอบเขต (Boundary) เพื่อให้ LLM เลือก Tool ได้ถูกต้อง โดยให้ยึดโครงสร้างนี้:
@@ -1057,7 +1089,7 @@ async def execute(self, user_id: str, args: str = "", mode: str = "driving", **k
 
 **ถ้า tool ไม่มี parameter** — ไม่ต้อง override `get_tool_spec()` เลย (BaseTool มี default)
 
-### 5. Error Handling
+### 6. Error Handling
 
 ```python
 async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
