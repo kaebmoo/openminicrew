@@ -58,6 +58,39 @@ class GmailSummaryTool(BaseTool):
         "30d": ("30d", "30 วันล่าสุด"),
     }
 
+    FILLER_PHRASES = (
+        "มีอะไรบ้าง",
+        "อะไรบ้าง",
+    )
+
+    THAI_TIME_PATTERNS = (
+        re.compile(r"(?:(?:ใน|ย้อนหลัง)\s*)?(\d{1,3})\s*วัน(?:ที่ผ่านมา|ล่าสุด)?"),
+    )
+
+    def _extract_time_range(self, text: str) -> tuple[str, str, str]:
+        newer_than = "1d"
+        time_label = "วันนี้"
+        remaining = text
+
+        for pattern in self.THAI_TIME_PATTERNS:
+            match = pattern.search(remaining)
+            if not match:
+                continue
+            days = match.group(1)
+            newer_than = f"{days}d"
+            time_label = "วันนี้" if days == "1" else f"{days} วันล่าสุด"
+            remaining = (remaining[:match.start()] + " " + remaining[match.end():]).strip()
+            return newer_than, time_label, remaining
+
+        return newer_than, time_label, remaining
+
+    def _normalize_search_query(self, text: str) -> str:
+        normalized = text
+        for phrase in self.FILLER_PHRASES:
+            normalized = normalized.replace(phrase, " ")
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
+
     def _parse_args(self, args: str) -> tuple[bool, str, str, str]:
         """
         Parse arguments → (force, gmail_newer_than, time_label, search_query)
@@ -66,23 +99,20 @@ class GmailSummaryTool(BaseTool):
              "from:ktc.co.th"    → (False, "1d", "วันนี้", "from:ktc.co.th")
              ""                  → (False, "1d", "วันนี้", "")
         """
-        # เก็บ args ต้นฉบับ (ไม่ lower) เพราะ search query อาจมี case สำคัญ
         original_args = args.strip() if args else ""
-        tokens = original_args.split() if original_args else []
+        normalized_args = re.sub(r"\bforce\b", " ", original_args, flags=re.IGNORECASE).strip()
+
+        newer_than, time_label, remaining_args = self._extract_time_range(normalized_args)
+
+        tokens = remaining_args.split() if remaining_args else []
         tokens_lower = [t.lower() for t in tokens]
 
-        # ดึง force
-        force = "force" in tokens_lower
+        force = bool(re.search(r"\bforce\b", original_args, flags=re.IGNORECASE))
 
-        # หา time range + แยก search tokens
-        newer_than = "1d"
-        time_label = "วันนี้"
         search_tokens = []
 
         for token, token_low in zip(tokens, tokens_lower):
-            if token_low == "force":
-                continue
-            elif token_low in self.TIME_RANGES:
+            if token_low in self.TIME_RANGES:
                 newer_than, time_label = self.TIME_RANGES[token_low]
             elif re.match(r"^\d+d$", token_low):
                 newer_than = token_low
@@ -90,7 +120,7 @@ class GmailSummaryTool(BaseTool):
             else:
                 search_tokens.append(token)
 
-        search_query = " ".join(search_tokens)
+        search_query = self._normalize_search_query(" ".join(search_tokens))
         return force, newer_than, time_label, search_query
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:

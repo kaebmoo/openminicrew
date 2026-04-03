@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.consent import ConsentTool
+from tools.gmail_summary import GmailSummaryTool
 from tools.smart_inbox import SmartInboxTool
 from tools.traffic import TrafficTool
 
@@ -54,3 +55,36 @@ def test_smart_inbox_auto_mode_creates_only_parsed_action_items():
     created_titles = [call.kwargs["title"] for call in mock_add_todo.call_args_list]
     assert created_titles == ["ส่งเอกสารให้ HR", "ตรวจ invoice"]
     assert "#11" in result and "#12" in result
+
+
+def test_gmail_summary_parser_supports_thai_time_phrase():
+    tool = GmailSummaryTool()
+
+    assert tool._parse_args("ค่าใช้จ่าย ใน 30 วันที่ผ่านมา") == (
+        False,
+        "30d",
+        "30 วันล่าสุด",
+        "ค่าใช้จ่าย",
+    )
+
+
+def test_gmail_summary_parser_strips_conversational_filler():
+    tool = GmailSummaryTool()
+
+    assert tool._parse_args("ค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา") == (
+        False,
+        "30d",
+        "30 วันล่าสุด",
+        "ค่าใช้จ่าย",
+    )
+
+
+def test_gmail_summary_parser_keeps_gmail_search_syntax():
+    tool = GmailSummaryTool()
+
+    assert tool._parse_args("from:ktc.co.th ใน 30 วันที่ผ่านมา") == (
+        False,
+        "30d",
+        "30 วันล่าสุด",
+        "from:ktc.co.th",
+    )
