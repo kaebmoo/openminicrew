@@ -69,33 +69,14 @@ def test_gmail_summary_parser_supports_thai_time_phrase():
     )
 
 
-def test_gmail_summary_parser_strips_conversational_filler():
+def test_gmail_summary_parser_handles_clean_llm_args():
     tool = GmailSummaryTool()
 
-    assert tool._parse_args("ค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา") == (
+    assert tool._parse_args("ค่าใช้จ่าย 30d") == (
         False,
         "30d",
         "30 วันล่าสุด",
         "ค่าใช้จ่าย",
-    )
-
-
-def test_gmail_summary_parser_strips_gmail_lead_in_phrase():
-    tool = GmailSummaryTool()
-
-    assert tool._parse_args("ใน gmail มีค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา") == (
-        False,
-        "30d",
-        "30 วันล่าสุด",
-        "ค่าใช้จ่าย",
-    )
-
-
-def test_gmail_summary_matches_free_text_lookup_request():
-    tool = GmailSummaryTool()
-
-    assert tool.match_free_text("ใน gmail มีค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา") == (
-        "ค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา"
     )
 
 
@@ -137,15 +118,6 @@ def test_work_email_parser_supports_thai_time_phrase():
     assert parsed.search_text == "ค่าใช้จ่าย"
 
 
-def test_work_email_parser_strips_conversational_filler_and_lead_in():
-    tool = WorkEmailTool()
-    parsed = tool._parse_args("ใน work email มีค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา")
-
-    assert parsed.time_range == "30d"
-    assert parsed.time_label == "30 วันล่าสุด"
-    assert parsed.search_text == "ค่าใช้จ่าย"
-
-
 def test_work_email_parser_keeps_filter_syntax():
     tool = WorkEmailTool()
     parsed = tool._parse_args("from:hr@example.com ใน 30 วันที่ผ่านมา")
@@ -155,9 +127,3 @@ def test_work_email_parser_keeps_filter_syntax():
     assert parsed.search_text == ""
 
 
-def test_work_email_matches_free_text_lookup_request():
-    tool = WorkEmailTool()
-
-    assert tool.match_free_text("ใน work email มีค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา") == (
-        "ค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา"
-    )

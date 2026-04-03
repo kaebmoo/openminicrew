@@ -58,42 +58,9 @@ class GmailSummaryTool(BaseTool):
         "30d": ("30d", "30 วันล่าสุด"),
     }
 
-    FILLER_PHRASES = (
-        "มีอะไรบ้าง",
-        "อะไรบ้าง",
-        "ให้หน่อย",
-        "ให้ที",
-        "ให้ด้วย",
-        "หน่อย",
-        "สรุปให้",
-    )
-
-    # Phrases that mean "redo / re-run" → treated as force (show all, not just unread)
-    REDO_PHRASES = (
-        "ให้ใหม่",
-        "ใหม่อีกครั้ง",
-        "อีกครั้ง",
-        "อีกที",
-        "อีกรอบ",
-        "สรุปใหม่",
-        "ใหม่",
-    )
-
-    LEAD_IN_PATTERNS = (
-        re.compile(r"^\s*ใน\s*(?:gmail|email|อีเมล)\s*มี?\s*", re.IGNORECASE),
-        re.compile(r"^\s*(?:gmail|email|อีเมล)\s*มี?\s*", re.IGNORECASE),
-    )
-
     THAI_TIME_PATTERNS = (
         re.compile(r"(?:(?:ใน|ย้อนหลัง)\s*)?(\d{1,3})\s*วัน(?:ที่ผ่านมา|ล่าสุด)?"),
     )
-
-    FREE_TEXT_REFERENCE_RE = re.compile(r"\b(?:gmail|email)\b|อีเมล", re.IGNORECASE)
-    FREE_TEXT_HINT_RE = re.compile(
-        r"มีอะไรบ้าง|สรุป|เช็ค|ค้น|หา|ย้อนหลัง|วันนี้|ล่าสุด|from:|subject:|body:|to:|\b\d+d\b|\d{1,3}\s*วัน",
-        re.IGNORECASE,
-    )
-    WORK_EMAIL_REFERENCE_RE = re.compile(r"work\s*mail|work\s*email|เมลงาน|อีเมลงาน", re.IGNORECASE)
 
     def _extract_time_range(self, text: str) -> tuple[str, str, str]:
         newer_than = "1d"
@@ -112,15 +79,6 @@ class GmailSummaryTool(BaseTool):
 
         return newer_than, time_label, remaining
 
-    def _normalize_search_query(self, text: str) -> str:
-        normalized = text
-        for pattern in self.LEAD_IN_PATTERNS:
-            normalized = pattern.sub("", normalized)
-        for phrase in self.FILLER_PHRASES:
-            normalized = normalized.replace(phrase, " ")
-        normalized = re.sub(r"\s+", " ", normalized).strip()
-        return normalized
-
     def _build_gmail_query(self, force: bool, newer_than: str, search_query: str) -> str:
         parts = [f"newer_than:{newer_than}"]
 
@@ -135,27 +93,6 @@ class GmailSummaryTool(BaseTool):
 
         return " ".join(parts)
 
-    def match_free_text(self, text: str) -> str | None:
-        stripped = text.strip()
-        if not stripped:
-            return None
-
-        if self.WORK_EMAIL_REFERENCE_RE.search(stripped):
-            return None
-
-        if not self.FREE_TEXT_REFERENCE_RE.search(stripped):
-            return None
-
-        if not self.FREE_TEXT_HINT_RE.search(stripped):
-            return None
-
-        reference = self.FREE_TEXT_REFERENCE_RE.search(stripped)
-        if reference:
-            stripped = stripped[reference.end():].strip()
-            stripped = re.sub(r"^มี\s*", "", stripped)
-
-        return stripped
-
     def _parse_args(self, args: str) -> tuple[bool, str, str, str]:
         """
         Parse arguments → (force, gmail_newer_than, time_label, search_query)
@@ -167,13 +104,7 @@ class GmailSummaryTool(BaseTool):
         original_args = args.strip() if args else ""
         normalized_args = re.sub(r"\bforce\b", " ", original_args, flags=re.IGNORECASE).strip()
 
-        # Detect redo phrases (อีกครั้ง, ให้ใหม่, …) → force=True
         force = bool(re.search(r"\bforce\b", original_args, flags=re.IGNORECASE))
-        for phrase in self.REDO_PHRASES:
-            if phrase in normalized_args:
-                force = True
-                normalized_args = normalized_args.replace(phrase, " ")
-        normalized_args = re.sub(r"\s+", " ", normalized_args).strip()
 
         newer_than, time_label, remaining_args = self._extract_time_range(normalized_args)
 
@@ -191,7 +122,7 @@ class GmailSummaryTool(BaseTool):
             else:
                 search_tokens.append(token)
 
-        search_query = self._normalize_search_query(" ".join(search_tokens))
+        search_query = " ".join(search_tokens)
         return force, newer_than, time_label, search_query
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:

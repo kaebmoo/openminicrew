@@ -1000,35 +1000,21 @@ log = get_logger(__name__)
 
 ### 4. ชั้นของการ route ตอน runtime
 
-ตอนนี้ Tool สามารถมีส่วนร่วมกับการ route ได้ 3 ชั้น ซึ่งหน้าที่ต่างกันชัดเจนและไม่ควรปนกัน:
+Tool มีส่วนร่วมกับการ route ได้ 2 ชั้น:
 
-1. Command routing
-    `/email`, `/wm`, `/expense` และ command ที่ขึ้นต้นด้วย `/` ถูก map ตรงจาก `tool.commands` ผ่าน registry
-2. Free-text pre-routing
-    Tool สามารถ implement `match_free_text()` แบบ optional เพื่อรับข้อความภาษาธรรมชาติก่อนจะถึง LLM router
-3. LLM tool spec
-    `get_tool_spec()` ใช้อธิบาย Tool ให้ LLM สำหรับ function calling เมื่อ 2 ชั้นแรกยังไม่ได้ route งานนั้น
-
-ดังนั้น `match_free_text()` ไม่ใช่ tool schema ภายนอกตัวใหม่ แต่เป็น internal pre-routing hook เท่านั้น
+1. **Command routing** — `/email`, `/wm`, `/expense` และ command ที่ขึ้นต้นด้วย `/` ถูก map ตรงจาก `tool.commands` ผ่าน registry (ไม่เสีย LLM token)
+2. **LLM tool spec** — `get_tool_spec()` อธิบาย Tool ให้ LLM สำหรับ function calling เมื่อข้อความเป็นภาษาธรรมชาติ
 
 ```python
 class BaseTool(ABC):
      commands: list[str] = []
 
-     def match_free_text(self, text: str) -> str | None:
-          return None
-
      def get_tool_spec(self) -> dict:
           ...
 ```
 
-หลักการใช้งานแต่ละชั้น:
-
 - ใช้ `commands` สำหรับ slash command ที่ deterministic
-- ใช้ `match_free_text()` เฉพาะกรณีที่มี pattern ภาษาธรรมชาติที่มั่นใจสูง และไม่อยากพึ่ง LLM route
-- ใช้ `get_tool_spec()` เพื่อช่วยให้ LLM เลือก Tool ได้ถูกในงานที่กว้างหรือกำกวม
-
-ให้เก็บ heuristic เฉพาะโดเมนไว้ใน Tool ของตัวเองเสมอ ส่วน registry มีหน้าที่แค่ถามว่า Tool ไหน match ข้อความนี้ ไม่ควรยัด logic เฉพาะ Gmail, work mail หรือ parsing เฉพาะโดเมนลงไปใน registry
+- ใช้ `get_tool_spec()` เพื่อช่วยให้ LLM เลือก Tool ได้ถูกในงานที่กว้างหรือกำกวม — LLM เข้าใจภาษาธรรมชาติอยู่แล้ว ไม่ต้องเขียน regex parse เอง
 
 ### 5. `get_tool_spec()` เขียนยังไง (Standardized Format)
 

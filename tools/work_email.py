@@ -74,42 +74,8 @@ class WorkEmailTool(BaseTool):
         "30d": ("30d", "30 วันล่าสุด"),
     }
 
-    FILLER_PHRASES = (
-        "มีอะไรบ้าง",
-        "อะไรบ้าง",
-        "ให้หน่อย",
-        "ให้ที",
-        "ให้ด้วย",
-        "หน่อย",
-        "สรุปให้",
-    )
-
-    REDO_PHRASES = (
-        "ให้ใหม่",
-        "ใหม่อีกครั้ง",
-        "อีกครั้ง",
-        "อีกที",
-        "อีกรอบ",
-        "สรุปใหม่",
-        "ใหม่",
-    )
-
-    LEAD_IN_PATTERNS = (
-        re.compile(r"^\s*ใน\s*(?:work\s*mail|work\s*email|workmail|เมลงาน|อีเมลงาน|เมลที่ทำงาน|อีเมลที่ทำงาน)\s*มี?\s*", re.IGNORECASE),
-        re.compile(r"^\s*(?:work\s*mail|work\s*email|workmail|เมลงาน|อีเมลงาน|เมลที่ทำงาน|อีเมลที่ทำงาน)\s*มี?\s*", re.IGNORECASE),
-    )
-
     THAI_TIME_PATTERNS = (
         re.compile(r"(?:(?:ใน|ย้อนหลัง)\s*)?(\d{1,3})\s*วัน(?:ที่ผ่านมา|ล่าสุด)?"),
-    )
-
-    FREE_TEXT_REFERENCE_RE = re.compile(
-        r"work\s*mail|work\s*email|workmail|เมลงาน|อีเมลงาน|เมลที่ทำงาน|อีเมลที่ทำงาน",
-        re.IGNORECASE,
-    )
-    FREE_TEXT_HINT_RE = re.compile(
-        r"มีอะไรบ้าง|สรุป|เช็ค|ค้น|หา|ย้อนหลัง|วันนี้|ล่าสุด|from:|subject:|body:|to:|folder:|\b\d+d\b|\d{1,3}\s*วัน",
-        re.IGNORECASE,
     )
 
     def _extract_time_range(self, text: str) -> tuple[str, str, str]:
@@ -129,33 +95,6 @@ class WorkEmailTool(BaseTool):
 
         return time_range, time_label, remaining
 
-    def _normalize_search_text(self, text: str) -> str:
-        normalized = text
-        for pattern in self.LEAD_IN_PATTERNS:
-            normalized = pattern.sub("", normalized)
-        for phrase in self.FILLER_PHRASES:
-            normalized = normalized.replace(phrase, " ")
-        normalized = re.sub(r"\s+", " ", normalized).strip()
-        return normalized
-
-    def match_free_text(self, text: str) -> str | None:
-        stripped = text.strip()
-        if not stripped:
-            return None
-
-        if not self.FREE_TEXT_REFERENCE_RE.search(stripped):
-            return None
-
-        if not self.FREE_TEXT_HINT_RE.search(stripped):
-            return None
-
-        reference = self.FREE_TEXT_REFERENCE_RE.search(stripped)
-        if reference:
-            stripped = stripped[reference.end():].strip()
-            stripped = re.sub(r"^มี\s*", "", stripped)
-
-        return stripped
-
     def _parse_args(self, args: str) -> ParsedArgs:
         """แยก time_range, force, filters, search_text"""
         parsed = ParsedArgs()
@@ -166,11 +105,6 @@ class WorkEmailTool(BaseTool):
         normalized_args = re.sub(r"\bforce\b", " ", original_args, flags=re.IGNORECASE).strip()
 
         parsed.force = bool(re.search(r"\bforce\b", original_args, flags=re.IGNORECASE))
-        for phrase in self.REDO_PHRASES:
-            if phrase in normalized_args:
-                parsed.force = True
-                normalized_args = normalized_args.replace(phrase, " ")
-        normalized_args = re.sub(r"\s+", " ", normalized_args).strip()
 
         parsed.time_range, parsed.time_label, remaining_args = self._extract_time_range(normalized_args)
 
@@ -194,7 +128,7 @@ class WorkEmailTool(BaseTool):
             else:
                 search_tokens.append(token)
 
-        parsed.search_text = self._normalize_search_text(" ".join(search_tokens))
+        parsed.search_text = " ".join(search_tokens)
         return parsed
 
     def _resolve_imap_credentials(self, user_id: str) -> tuple[str, str, str] | None:

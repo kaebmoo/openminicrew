@@ -8,64 +8,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 @pytest.mark.asyncio
-async def test_free_text_gmail_request_routes_directly_without_llm():
-    from dispatcher import dispatch
-
-    fake_tool = MagicMock()
-    fake_tool.name = "gmail_summary"
-    fake_tool.execute = AsyncMock(return_value="📬 ผลสรุป Gmail")
-
-    with patch("dispatcher.registry.match_free_text", return_value=(fake_tool, "ค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา")), \
-         patch("dispatcher.llm_router.chat", new_callable=AsyncMock) as mock_chat:
-        response, tool_used, model, tokens = await dispatch(
-            user_id="u1",
-            user={"telegram_chat_id": "123", "role": "user"},
-            text="ใน gmail มีค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา",
-        )
-
-    fake_tool.execute.assert_awaited_once_with(
-        "u1",
-        "ค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา",
-        chat_id=None,
-        message_id=None,
-    )
-    assert response == "📬 ผลสรุป Gmail"
-    assert tool_used == "gmail_summary"
-    assert model is None
-    assert tokens == 0
-    mock_chat.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_free_text_work_email_request_routes_directly_without_llm():
-    from dispatcher import dispatch
-
-    fake_tool = MagicMock()
-    fake_tool.name = "work_email"
-    fake_tool.execute = AsyncMock(return_value="📬 ผลสรุป Work Email")
-
-    with patch("dispatcher.registry.match_free_text", return_value=(fake_tool, "ค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา")), \
-         patch("dispatcher.llm_router.chat", new_callable=AsyncMock) as mock_chat:
-        response, tool_used, model, tokens = await dispatch(
-            user_id="u1",
-            user={"telegram_chat_id": "123", "role": "user"},
-            text="ใน work email มีค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา",
-        )
-
-    fake_tool.execute.assert_awaited_once_with(
-        "u1",
-        "ค่าใช้จ่ายมีอะไรบ้าง ใน 30 วันที่ผ่านมา",
-        chat_id=None,
-        message_id=None,
-    )
-    assert response == "📬 ผลสรุป Work Email"
-    assert tool_used == "work_email"
-    assert model is None
-    assert tokens == 0
-    mock_chat.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_delete_my_data_requires_confirm():
     from dispatcher import dispatch
 
