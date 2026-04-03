@@ -91,6 +91,20 @@ class GmailSummaryTool(BaseTool):
         normalized = re.sub(r"\s+", " ", normalized).strip()
         return normalized
 
+    def _build_gmail_query(self, force: bool, newer_than: str, search_query: str) -> str:
+        parts = [f"newer_than:{newer_than}"]
+
+        # Default summary keeps the inbox view focused on unread mail.
+        # Explicit searches or force re-runs should search all matching mail,
+        # otherwise users get false negatives for older/read receipts.
+        if not force and not search_query:
+            parts.insert(0, "is:unread")
+
+        if search_query:
+            parts.append(search_query)
+
+        return " ".join(parts)
+
     def _parse_args(self, args: str) -> tuple[bool, str, str, str]:
         """
         Parse arguments → (force, gmail_newer_than, time_label, search_query)
@@ -147,9 +161,7 @@ class GmailSummaryTool(BaseTool):
             service = build("gmail", "v1", credentials=creds)
 
             # 2. ดึงเมลตามช่วงเวลา + search query
-            query = f"is:unread newer_than:{newer_than}"
-            if search_query:
-                query += f" {search_query}"
+            query = self._build_gmail_query(force, newer_than, search_query)
             log.info(f"Gmail query: {query}")
 
             # run_in_executor เพื่อไม่ block event loop (Gmail API เป็น sync)

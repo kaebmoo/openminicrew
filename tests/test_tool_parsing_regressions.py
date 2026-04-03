@@ -88,3 +88,21 @@ def test_gmail_summary_parser_keeps_gmail_search_syntax():
         "30 วันล่าสุด",
         "from:ktc.co.th",
     )
+
+
+def test_gmail_summary_default_query_stays_unread_only():
+    tool = GmailSummaryTool()
+
+    assert tool._build_gmail_query(False, "1d", "") == "is:unread newer_than:1d"
+
+
+def test_gmail_summary_keyword_search_queries_all_matching_mail():
+    tool = GmailSummaryTool()
+
+    assert tool._build_gmail_query(False, "30d", "ค่าใช้จ่าย") == "newer_than:30d ค่าใช้จ่าย"
+
+
+def test_gmail_summary_force_query_drops_unread_filter():
+    tool = GmailSummaryTool()
+
+    assert tool._build_gmail_query(True, "1d", "ktc") == "newer_than:1d ktc"
