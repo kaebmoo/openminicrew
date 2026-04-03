@@ -126,6 +126,7 @@ class GmailSummaryTool(BaseTool):
         return force, newer_than, time_label, search_query
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        user_request = kwargs.get("user_request", "")
         force, newer_than, time_label, search_query = self._parse_args(args)
 
         # ใช้ LLM ตาม user preference (fallback เป็น default)
@@ -240,8 +241,11 @@ class GmailSummaryTool(BaseTool):
                 "รวมอีเมลที่คล้ายกันเข้าด้วยกัน เช่น Grab receipts หลายฉบับ ให้รวมเป็นรายการเดียว\n"
                 "ใช้ emoji ให้อ่านง่าย กระชับ ไม่ต้องยาวเกินไป"
             )
+            user_msg = f"สรุปอีเมล {len(emails_data)} ฉบับ ({display_label}):\n{emails_text}"
+            if user_request:
+                user_msg += f"\n\n--- คำขอของผู้ใช้ ---\n{user_request}\nให้ตอบตามคำขอของผู้ใช้โดยอิงจากข้อมูลอีเมลข้างต้น"
             resp = await llm_router.chat(
-                messages=[{"role": "user", "content": f"สรุปอีเมล {len(emails_data)} ฉบับ ({display_label}):\n{emails_text}"}],
+                messages=[{"role": "user", "content": user_msg}],
                 provider=provider,
                 tier=self.preferred_tier,
                 system=system,
@@ -278,11 +282,15 @@ class GmailSummaryTool(BaseTool):
         return {
             "name": "gmail_summary",
             "description": (
-                "สรุปอีเมลจาก Gmail ส่วนตัวของ user (ต้อง /authgmail ก่อน). "
-                "ใช้เมื่อ user ถามเรื่องอีเมล Gmail. "
-                "ไม่ใช่สำหรับอีเมลที่ทำงาน IMAP (ใช้ work_email) "
-                "และไม่ใช่สำหรับหา action items จากอีเมล (ใช้ smart_inbox). "
-                "เช่น 'เช็คอีเมล', 'สรุปอีเมลวันนี้', 'มีเมลจาก grab ไหม'"
+                "ดึงและสรุปอีเมลจาก Gmail ส่วนตัวของ user. "
+                "ต้องเรียก tool นี้ทุกครั้งที่ user ถามเรื่อง Gmail, email, อีเมล "
+                "ไม่ว่าจะเป็นสรุป, ค้นหา, นับจำนวน, รวมยอด, หาค่าใช้จ่าย, "
+                "หาใบเสร็จ, หาข้อมูลจากอีเมล หรืออะไรก็ตามที่เกี่ยวกับ Gmail. "
+                "tool จะดึงอีเมลมาให้ แล้วคุณค่อยสรุป/คำนวณ/ตอบจากผลลัพธ์. "
+                "ห้ามตอบเองว่าทำไม่ได้ — เรียก tool ก่อนเสมอ. "
+                "ไม่ใช่สำหรับอีเมลที่ทำงาน IMAP (ใช้ work_email). "
+                "เช่น 'เช็คอีเมล', 'สรุปอีเมลวันนี้', 'มีเมลจาก grab ไหม', "
+                "'ค่าใช้จ่ายใน gmail 30 วัน', 'รวมยอดอีเมลค่าใช้จ่าย'"
             ),
             "parameters": {
                 "type": "object",

@@ -487,6 +487,7 @@ class WorkEmailTool(BaseTool):
         return emails_data, skipped
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        user_request = kwargs.get("user_request", "")
         imap_credentials = self._resolve_imap_credentials(user_id)
         if not imap_credentials:
             return (
@@ -567,8 +568,11 @@ class WorkEmailTool(BaseTool):
             )
             
             prompt_count_text = f"{included_count} ฉบับ (จากทั้งหมด {len(emails_data)} ฉบับ)" if included_count < len(emails_data) else f"{len(emails_data)} ฉบับ"
+            user_msg = f"สรุปอีเมล {prompt_count_text} ({display_label}):\n{emails_text}"
+            if user_request:
+                user_msg += f"\n\n--- คำขอของผู้ใช้ ---\n{user_request}\nให้ตอบตามคำขอของผู้ใช้โดยอิงจากข้อมูลอีเมลข้างต้น"
             resp = await llm_router.chat(
-                messages=[{"role": "user", "content": f"สรุปอีเมล {prompt_count_text} ({display_label}):\n{emails_text}"}],
+                messages=[{"role": "user", "content": user_msg}],
                 provider=provider,
                 tier=self.preferred_tier,
                 system=system_prompt,
@@ -611,10 +615,14 @@ class WorkEmailTool(BaseTool):
         return {
             "name": self.name,
             "description": (
-                "สรุปอีเมลที่ทำงานผ่านระบบ IMAP ขององค์กร. "
-                "ใช้เมื่อ user ถามเรื่องอีเมลงาน หรืออีเมลบริษัท. "
+                "ดึงและสรุปอีเมลที่ทำงานผ่านระบบ IMAP ขององค์กร. "
+                "ต้องเรียก tool นี้ทุกครั้งที่ user ถามเรื่อง work email, เมลงาน, อีเมลงาน, อีเมลที่ทำงาน "
+                "ไม่ว่าจะเป็นสรุป, ค้นหา, นับจำนวน, รวมยอด, หาค่าใช้จ่าย, หาข้อมูล. "
+                "tool จะดึงอีเมลมาให้ แล้วคุณค่อยสรุป/คำนวณ/ตอบจากผลลัพธ์. "
+                "ห้ามตอบเองว่าทำไม่ได้ — เรียก tool ก่อนเสมอ. "
                 "ไม่ใช่สำหรับ Gmail ส่วนตัว (ใช้ gmail_summary). "
-                "เช่น 'มีเมลงานเข้าไหม', 'สรุปเมล บขบ. วันนี้', 'เมลจาก hr'"
+                "เช่น 'มีเมลงานเข้าไหม', 'สรุปเมลงานวันนี้', 'เมลจาก hr', "
+                "'ค่าใช้จ่ายใน work email 30 วัน'"
             ),
             "parameters": {
                 "type": "object",

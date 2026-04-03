@@ -278,7 +278,7 @@ async def _dispatch_with_retry(
         last_tool_used = tool_name
 
         try:
-            tool_result = await selected_tool.execute(user_id, **tool_args)
+            tool_result = await selected_tool.execute(user_id, **tool_args, user_request=text)
         except Exception as e:
             log.error(f"[dispatch] tool {tool_name} error at attempt {attempt}: {e}", exc_info=True)
             db.log_tool_usage(
@@ -362,7 +362,7 @@ async def _dispatch_with_retry(
             fb_tool_args = fallback_resp["tool_call"].get("args", {})
             fb_tool = registry.get_tool(fb_tool_name)
             if fb_tool:
-                fb_result = await fb_tool.execute(user_id, **fb_tool_args)
+                fb_result = await fb_tool.execute(user_id, **fb_tool_args, user_request=text)
                 log.info(f"[dispatch] mid-tier fallback called {fb_tool_name} (direct_output={fb_tool.direct_output})")
                 if fb_tool.direct_output:
                     return fb_result, fb_tool_name, last_model, total_tokens
