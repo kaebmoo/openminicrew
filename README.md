@@ -7,6 +7,7 @@
 
 ## เอกสารเพิ่มเติม
 
+- [ทำไมต้อง OpenMiniCrew (Thai)](docs/th/WHY_OPENMINICREW.md) | [Why OpenMiniCrew (English)](docs/en/WHY_OPENMINICREW.md)
 - [docs/en/CONFIGURATION.md](docs/en/CONFIGURATION.md)
 - [docs/en/ARCHITECTURE.md](docs/en/ARCHITECTURE.md)
 - [docs/en/DATABASE.md](docs/en/DATABASE.md)

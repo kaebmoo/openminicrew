@@ -33,6 +33,7 @@ Use `/help` in Telegram for the live command list.
 
 ## Additional Docs
 
+- [Why OpenMiniCrew](WHY_OPENMINICREW.md)
 - [Configuration Reference](CONFIGURATION.md)
 - [Architecture](ARCHITECTURE.md)
 - [Database](DATABASE.md)
