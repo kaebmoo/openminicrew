@@ -79,9 +79,9 @@ def test_summarize_expenses_keyword_search_matches_encrypted_notes(tmp_path, mon
     _init_temp_db(tmp_path, monkeypatch)
 
     db.upsert_user("u1", "chat-1", "User One")
-    db.add_expense("u1", 120.0, "อาหาร", "ก๋วยเตี๋ยวหมู")
-    db.add_expense("u1", 80.0, "อาหาร", "กาแฟเย็น")
-    db.add_expense("u1", 50.0, "เดินทาง", "BTS")
+    db.add_expense("u1", 120.0, "อาหาร", "ก๋วยเตี๋ยวหมู", expense_date="2026-03-15")
+    db.add_expense("u1", 80.0, "อาหาร", "กาแฟเย็น", expense_date="2026-03-16")
+    db.add_expense("u1", 50.0, "เดินทาง", "BTS", expense_date="2026-03-17")
 
     rows = db.summarize_expenses("u1", "2026-03-01", "2026-03-31", keyword="กาแฟ")
 
