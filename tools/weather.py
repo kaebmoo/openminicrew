@@ -1,0 +1,307 @@
+"""Weather Tool — ดูสภาพอากาศปัจจุบันและพยากรณ์ล่วงหน้าผ่าน Google Weather API"""
+
+import urllib.parse
+from datetime import datetime
+
+import requests
+
+from tools.base import BaseTool
+from core.config import GOOGLE_MAPS_API_KEY
+from core import db
+from core.logger import get_logger
+
+log = get_logger(__name__)
+
+# Default location: Nan Province, Thailand
+NAN_LAT = 18.7836
+NAN_LNG = 100.7780
+NAN_NAME = "น่าน (จังหวัดน่าน)"
+
+WEATHER_ICONS = {
+    "CLEAR": "☀️",
+    "MOSTLY_CLEAR": "🌤",
+    "PARTLY_CLOUDY": "⛅",
+    "CLOUDY": "☁️",
+    "MOSTLY_CLOUDY": "🌥",
+    "RAIN": "🌧",
+    "HEAVY_RAIN": "⛈",
+    "SNOW": "❄️",
+    "THUNDERSTORM": "⚡",
+    "FOG": "🌫",
+    "WINDY": "💨",
+}
+
+class WeatherTool(BaseTool):
+    name = "weather"
+    description = "ดูสภาพอากาศปัจจุบัน และพยากรณ์อากาศล่วงหน้า 7 วัน"
+    commands = ["/weather"]
+    direct_output = True
+
+    def get_tool_spec(self) -> dict:
+        return {
+            "name": self.name,
+            "description": "ดูสภาพอากาศปัจจุบัน และพยากรณ์อากาศล่วงหน้า 7 วัน (ใช้ได้ทั้งเมื่อระบุชื่อเมือง หรือถามอากาศแถวนี้)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "args": {
+                        "type": "string",
+                        "description": "ชื่อเมืองหรือสถานที่ที่ต้องการดูสภาพอากาศ เช่น 'เชียงใหม่', 'Tokyo', 'London'. หากผู้ใช้ถามว่า 'อากาศแถวนี้' หรือไม่ระบุสถานที่ ให้เว้นว่างไว้ ระบบจะใช้ GPS ปัจจุบัน",
+                    }
+                },
+            },
+        }
+
+    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+        if not GOOGLE_MAPS_API_KEY:
+            return "❌ ยังไม่ได้ตั้งค่า Google Maps API Key ใน .env"
+
+        query = args.strip()
+        lat, lng, area_name = None, None, None
+
+        # 1. Resolve Location
+        if query:
+            # Geocode the requested location
+            lat, lng, area_name_from_api = self._geocode(query)
+            if lat is not None:
+                area_name = area_name_from_api or query
+            else:
+                # Fallback directly to Nan if geocode fails but user queried something? 
+                # Better to just mention it's not found and we default to Nan
+                lat, lng = NAN_LAT, NAN_LNG
+                area_name = NAN_NAME
+                query_not_found = True
+        else:
+            # Try to get user GPS
+            from interfaces.telegram_common import get_user_location
+            user_loc = get_user_location(user_id)
+            if user_loc:
+                lat, lng = user_loc["lat"], user_loc["lng"]
+                area_name = self._reverse_geocode(lat, lng) or "ตำแหน่งปัจจุบันของคุณ"
+            else:
+                # Default to Nan
+                lat, lng = NAN_LAT, NAN_LNG
+                area_name = NAN_NAME
+
+        # Fetch Data
+        try:
+            current_data = self._get_current_conditions(lat, lng)
+            hourly_data = self._get_hourly_forecast(lat, lng, hours=3)
+            history_data = self._get_hourly_history(lat, lng, hours=3)
+            forecast_data = self._get_forecast(lat, lng, days=7)
+            
+            output = self._format_weather(area_name, current_data, hourly_data, history_data, forecast_data, lat, lng)
+            
+            # Note if fallback to Nan happened
+            if lat == NAN_LAT and lng == NAN_LNG and area_name == NAN_NAME:
+                if query and not getattr(self, "query_not_found", False): 
+                    # it was meant to be Nan or we couldn't geocode
+                    pass
+                else:
+                    output = "💡 เนื่องจากไม่พิกัดตำแหน่ง จึงแสดงสภาพอากาศของ จ.น่าน เป็นค่าเริ่มต้น\n(หากต้องการดูพื้นที่อื่น สามารถระบุชื่อสถานที่ เช่น `/weather เชียงใหม่` หรือแชร์ Location มาที่บอทก่อนได้ครับ)\n\n" + output
+
+            db.log_tool_usage(
+                user_id=user_id,
+                tool_name=self.name,
+                status="success",
+                **db.make_log_field("input", query or "gps_or_nan", kind="weather_query"),
+                **db.make_log_field("output", area_name, kind="weather_result"),
+            )
+            return output
+
+        except requests.exceptions.RequestException as e:
+            log.error(f"Weather API Error: {e}")
+            db.log_tool_usage(user_id, self.name, args, status="failed", error_message=str(e))
+            return "❌ ไม่สามารถดึงข้อมูลสภาพอากาศจาก Google Weather API ได้ในขณะนี้"
+
+    def _geocode(self, query: str):
+        """แปลงชื่อสถานที่เป้น lat, lng ผ่าน Googla Maps Geocoding API"""
+        try:
+            resp = requests.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={
+                    "address": query,
+                    "key": GOOGLE_MAPS_API_KEY,
+                    "language": "th",
+                },
+                timeout=5,
+            )
+            data = resp.json()
+            if data.get("status") == "OK" and data.get("results"):
+                res = data["results"][0]
+                loc = res["geometry"]["location"]
+                name = res.get("formatted_address", query)
+                # Remove ", ประเทศไทย" for cleaner display
+                name = name.replace(", ประเทศไทย", "").replace(" ประเทศไทย", "")
+                return loc["lat"], loc["lng"], name
+        except Exception as e:
+            log.error(f"Geocoding error for '{query}': {e}")
+        return None, None, None
+
+    def _reverse_geocode(self, lat: float, lng: float) -> str:
+        """แปลง lat, lng เป็นชื่อพื้นที่"""
+        try:
+            resp = requests.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={
+                    "latlng": f"{lat},{lng}",
+                    "key": GOOGLE_MAPS_API_KEY,
+                    "language": "th",
+                    "result_type": "sublocality|locality",
+                },
+                timeout=5,
+            )
+            data = resp.json()
+            if data.get("status") == "OK" and data.get("results"):
+                name = data["results"][0].get("formatted_address", "")
+                name = name.replace(", ประเทศไทย", "").replace(" ประเทศไทย", "")
+                return name
+        except Exception:
+            pass
+        return ""
+
+    def _get_current_conditions(self, lat: float, lng: float) -> dict:
+        resp = requests.get(
+            "https://weather.googleapis.com/v1/currentConditions:lookup",
+            params={
+                "key": GOOGLE_MAPS_API_KEY,
+                "location.latitude": lat,
+                "location.longitude": lng,
+                "languageCode": "th",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def _get_forecast(self, lat: float, lng: float, days: int = 7) -> dict:
+        resp = requests.get(
+            "https://weather.googleapis.com/v1/forecast/days:lookup",
+            params={
+                "key": GOOGLE_MAPS_API_KEY,
+                "location.latitude": lat,
+                "location.longitude": lng,
+                "days": days,
+                "languageCode": "th",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def _get_hourly_forecast(self, lat: float, lng: float, hours: int = 3) -> dict:
+        resp = requests.get(
+            "https://weather.googleapis.com/v1/forecast/hours:lookup",
+            params={
+                "key": GOOGLE_MAPS_API_KEY,
+                "location.latitude": lat,
+                "location.longitude": lng,
+                "hours": hours,
+                "languageCode": "th",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def _get_hourly_history(self, lat: float, lng: float, hours: int = 3) -> dict:
+        resp = requests.get(
+            "https://weather.googleapis.com/v1/history/hours:lookup",
+            params={
+                "key": GOOGLE_MAPS_API_KEY,
+                "location.latitude": lat,
+                "location.longitude": lng,
+                "hours": hours,
+                "languageCode": "th",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def _format_weather(self, area_name: str, current: dict, hourly: dict, history: dict, forecast: dict, lat: float, lng: float) -> str:
+        lines = []
+        
+        # --- Current Conditions ---
+        cond = current.get("weatherCondition", {})
+        cond_type = cond.get("type", "UNKNOWN")
+        icon = WEATHER_ICONS.get(cond_type, "☁️")
+        desc = cond.get("description", {}).get("text", cond_type)
+        
+        temp = current.get("temperature", {}).get("degrees", "?")
+        feels = current.get("feelsLikeTemperature", {}).get("degrees", "?")
+        humid = current.get("relativeHumidity", "?")
+        
+        wind_speed = current.get("wind", {}).get("speed", {}).get("value", "?")
+        
+        rain_prob = current.get("precipitation", {}).get("probability", {}).get("percent", 0)
+
+        lines.append(f"📍 **สภาพอากาศ: {area_name}**")
+        lines.append(f"{icon} **ปัจจุบัน:** {temp}°C (รู้สึกเหมือน {feels}°C) | {desc}")
+        lines.append(f"💧 ความชื้น: {humid}% | 💨 ลม: {wind_speed} km/h | ☔ โอกาสฝนตก: {rain_prob}%")
+        lines.append("")
+
+        # --- Hourly History ---
+        history_hours = history.get("historyHours", [])
+        if history_hours:
+            lines.append("🕰 **ย้อนหลัง 3 ชั่วโมง:**")
+            for h in reversed(history_hours):  # API usually returns newest to oldest, reverse to display chronological
+                dt = h.get("displayDateTime", {})
+                hr = f"{dt.get('hours', 0):02d}:00"
+                h_temp = h.get("temperature", {}).get("degrees", "?")
+                h_rain = h.get("precipitation", {}).get("probability", {}).get("percent", 0)
+                h_cond = h.get("weatherCondition", {})
+                h_icon = WEATHER_ICONS.get(h_cond.get("type", ""), "☁️")
+                
+                lines.append(f"- **{hr}**: {h_temp}°C | {h_icon} {h_cond.get('description', {}).get('text', '')} | ☔ ฝน {h_rain}%")
+            lines.append("")
+
+        # --- Hourly Forecast ---
+        hours_data = hourly.get("forecastHours", [])
+        if hours_data:
+            lines.append("🕒 **แนวโน้มรายชั่วโมง:**")
+            for h in hours_data:
+                dt = h.get("displayDateTime", {})
+                hr = f"{dt.get('hours', 0):02d}:00"
+                h_temp = h.get("temperature", {}).get("degrees", "?")
+                h_rain = h.get("precipitation", {}).get("probability", {}).get("percent", 0)
+                h_cond = h.get("weatherCondition", {})
+                h_icon = WEATHER_ICONS.get(h_cond.get("type", ""), "☁️")
+                
+                lines.append(f"- **{hr}**: {h_temp}°C | {h_icon} {h_cond.get('description', {}).get('text', '')} | ☔ ฝน {h_rain}%")
+            lines.append("")
+
+        # --- Daily Forecast ---
+        days = forecast.get("forecastDays", [])
+        if days:
+            lines.append("📅 **พยากรณ์อากาศล่วงหน้า:**")
+            
+            for i, day in enumerate(days):
+                date_dict = day.get("displayDate", {})
+                
+                # Make date display nicer (e.g. "วันนี้", "พรุ่งนี้", or Date)
+                if i == 0:
+                    date_label = "วันนี้"
+                elif i == 1:
+                    date_label = "พรุ่งนี้"
+                else:
+                    date_label = f"{date_dict.get('day', '')}/{date_dict.get('month', '')}/{date_dict.get('year', '')}"
+                
+                daytime = day.get("daytimeForecast", {})
+                d_cond = daytime.get("weatherCondition", {})
+                d_icon = WEATHER_ICONS.get(d_cond.get("type", ""), "☁️")
+                d_desc = d_cond.get("description", {}).get("text", "")
+                
+                max_t = day.get("maxTemperature", {}).get("degrees", "?")
+                min_t = day.get("minTemperature", {}).get("degrees", "?")
+                d_rain = daytime.get("precipitation", {}).get("probability", {}).get("percent", 0)
+
+                lines.append(f"- **{date_label}**: {min_t}°C ถึง {max_t}°C | {d_icon} {d_desc} | ☔ ฝน {d_rain}%")
+
+        lines.append("")
+        
+        # Link mapping
+        query_safe = urllib.parse.quote(f"weather {lat},{lng}")
+        lines.append(f"🔗 [ดูรายละเอียดเพิ่มเติมบน Google](https://www.google.com/search?q={query_safe})")
+        
+        return "\n".join(lines)
