@@ -47,12 +47,16 @@ class WeatherTool(BaseTool):
                     "args": {
                         "type": "string",
                         "description": "ชื่อเมืองหรือสถานที่ที่ต้องการดูสภาพอากาศ เช่น 'เชียงใหม่', 'Tokyo', 'London'. หากผู้ใช้ถามว่า 'อากาศแถวนี้' หรือไม่ระบุสถานที่ ให้เว้นว่างไว้ ระบบจะใช้ GPS ปัจจุบัน",
+                    },
+                    "show_history": {
+                        "type": "boolean",
+                        "description": "ตั้งเป็น True หากมีคำสั่งหรือผู้ใช้ถามถึงอดีต (เช่น ย้อนหลัง, อดีต, วันก่อน, เมื่อวาน, ที่ผ่านมา)",
                     }
                 },
             },
         }
 
-    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+    async def execute(self, user_id: str, args: str = "", show_history: bool = False, **kwargs) -> str:
         if not GOOGLE_MAPS_API_KEY:
             return "❌ ยังไม่ได้ตั้งค่า Google Maps API Key ใน .env"
 
@@ -86,8 +90,8 @@ class WeatherTool(BaseTool):
         # Fetch Data
         try:
             current_data = self._get_current_conditions(lat, lng)
-            hourly_data = self._get_hourly_forecast(lat, lng, hours=3)
-            history_data = self._get_hourly_history(lat, lng, hours=3)
+            hourly_data = self._get_hourly_forecast(lat, lng, hours=6)
+            history_data = self._get_hourly_history(lat, lng, hours=6) if show_history else {}
             forecast_data = self._get_forecast(lat, lng, days=7)
             
             output = self._format_weather(area_name, current_data, hourly_data, history_data, forecast_data, lat, lng)
@@ -244,7 +248,7 @@ class WeatherTool(BaseTool):
         # --- Hourly History ---
         history_hours = history.get("historyHours", [])
         if history_hours:
-            lines.append("🕰 **ย้อนหลัง 3 ชั่วโมง:**")
+            lines.append("🕰 **ย้อนหลัง:**")
             for h in reversed(history_hours):  # API usually returns newest to oldest, reverse to display chronological
                 dt = h.get("displayDateTime", {})
                 hr = f"{dt.get('hours', 0):02d}:00"
@@ -301,7 +305,7 @@ class WeatherTool(BaseTool):
         lines.append("")
         
         # Link mapping
-        query_safe = urllib.parse.quote(f"weather {lat},{lng}")
+        query_safe = urllib.parse.quote(f"สภาพอากาศ {area_name}")
         lines.append(f"🔗 [ดูรายละเอียดเพิ่มเติมบน Google](https://www.google.com/search?q={query_safe})")
         
         return "\n".join(lines)
