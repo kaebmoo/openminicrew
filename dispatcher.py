@@ -366,7 +366,27 @@ async def _dispatch_with_retry(
                 log.info(f"[dispatch] mid-tier fallback called {fb_tool_name} (direct_output={fb_tool.direct_output})")
                 if fb_tool.direct_output:
                     return fb_result, fb_tool_name, last_model, total_tokens
-                return fb_result, fb_tool_name, last_model, total_tokens
+                # direct_output=False → ส่งให้ LLM สรุป
+                fb_summary = await llm_router.chat(
+                    messages=messages[:2] + [
+                        {"role": "assistant", "content": f"[เรียก {fb_tool_name}]"},
+                        {"role": "user", "content": (
+                            f"ผลลัพธ์จาก {fb_tool_name}:\n{fb_result}\n\n"
+                            "ช่วยสรุปให้ user เข้าใจง่าย"
+                        )},
+                    ],
+                    provider=provider,
+                    tier="mid",
+                    system=system_prompt,
+                    user_id=user_id,
+                )
+                total_tokens += fb_summary.get("token_used", 0)
+                return (
+                    fb_summary.get("content", fb_result),
+                    fb_tool_name,
+                    fb_summary.get("model", last_model),
+                    total_tokens,
+                )
     except Exception as e:
         log.error(f"[dispatch] mid-tier fallback failed: {e}")
 

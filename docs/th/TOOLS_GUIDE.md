@@ -971,6 +971,24 @@ Dispatcher เรียก WeatherTool.execute(user_id, args)
 > **สำคัญ:** `description` ใน class และ `get_tool_spec()` ต้องชัดเจน —
 > LLM ใช้ description ตัดสินใจว่าจะเรียก tool ไหน
 
+> **กฎสำคัญเรื่อง `execute()` return value:**
+>
+> - `execute()` ต้อง return **ข้อมูลจริง** เสมอ — ห้าม return prompt หรือ LLM instruction ดิบ
+> - ถ้า tool ต้องการให้ LLM ประมวลผล → เรียก `llm_router.chat()` ภายใน tool เอง แล้ว return ผลลัพธ์
+> - เหตุผล: ถ้า LLM summary step ใน dispatcher พังหรือถูกข้าม user จะเห็น return value ตรงๆ
+>   ถ้าเป็นข้อมูลจริง (เช่น รายการอีเมล) ยังพออ่านได้ แต่ถ้าเป็น prompt ดิบจะสร้างความสับสน
+>
+> ```python
+> # ❌ ผิด — return prompt ดิบ
+> async def execute(self, user_id, args="", **kwargs):
+>     return f"ให้ข้อมูลเรื่อง '{args}' ตอบเป็นภาษาไทย"
+>
+> # ✅ ถูก — เรียก LLM เอง แล้ว return คำตอบจริง
+> async def execute(self, user_id, args="", **kwargs):
+>     resp = await llm_router.chat(messages=[...], provider=provider, tier=self.preferred_tier)
+>     return resp.get("content", "")
+> ```
+
 ### 3. ใช้ modules จาก core ได้
 
 ```python

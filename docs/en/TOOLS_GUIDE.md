@@ -973,6 +973,24 @@ Sent to user via Telegram
 > **Important:** The `description` in both the class and `get_tool_spec()` must be clear —
 > LLM uses the description to decide which tool to call.
 
+> **Critical rule for `execute()` return value:**
+>
+> - `execute()` must always return **real data** — never return raw prompts or LLM instructions
+> - If the tool needs LLM processing → call `llm_router.chat()` inside the tool itself, then return the result
+> - Reason: if the LLM summary step in dispatcher fails or is skipped, the user sees the raw return value.
+>   Real data (e.g. email list) is still usable; a raw prompt creates confusion.
+>
+> ```python
+> # ❌ Wrong — returns raw prompt
+> async def execute(self, user_id, args="", **kwargs):
+>     return f"Provide info about '{args}' in Thai"
+>
+> # ✅ Correct — calls LLM internally, returns real answer
+> async def execute(self, user_id, args="", **kwargs):
+>     resp = await llm_router.chat(messages=[...], provider=provider, tier=self.preferred_tier)
+>     return resp.get("content", "")
+> ```
+
 ### 3. Available Core Modules
 
 ```python
