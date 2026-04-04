@@ -198,6 +198,7 @@ class WeatherTool(BaseTool):
                 "location.latitude": lat,
                 "location.longitude": lng,
                 "days": days,
+                "pageSize": days,
                 "languageCode": "th",
             },
             timeout=10,
