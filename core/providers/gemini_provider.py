@@ -1,5 +1,6 @@
 """Gemini Provider — Google Gemini API"""
 
+import asyncio
 from typing import Any
 
 from google import genai
@@ -15,21 +16,20 @@ from core.logger import get_logger
 
 log = get_logger(__name__)
 
+_GEMINI_HTTP_OPTS = {"timeout": 60000}  # 60s timeout (milliseconds)
+
 
 class GeminiProvider(BaseLLMProvider):
     name = "gemini"
 
     def __init__(self):
-        self._client = None
+        self._client: genai.Client | None = None
+        self._client_loop_id: int | None = None
         self._user_clients: dict[str, genai.Client] = {}
-        if GEMINI_API_KEY:
-            self._client = genai.Client(
-                api_key=GEMINI_API_KEY,
-                http_options={"timeout": 60000},  # 60s timeout (milliseconds) — ป้องกัน polling thread ค้าง
-            )
+        self._user_clients_loop_id: int | None = None
 
     def is_configured(self) -> bool:
-        return self._client is not None
+        return bool(GEMINI_API_KEY)
 
     def _has_personal_key(self, user_id: str) -> bool:
         """ตรวจว่า user มี per-user key ของตัวเอง (ไม่ fallback ไป shared key)"""
@@ -52,6 +52,31 @@ class GeminiProvider(BaseLLMProvider):
             if user_key:
                 return user_key
         return GEMINI_API_KEY
+
+    def _get_client(self, api_key: str) -> genai.Client:
+        """Get or create genai.Client — recreate ถ้า event loop เปลี่ยน"""
+        loop_id = id(asyncio.get_running_loop())
+
+        if api_key == GEMINI_API_KEY:
+            if self._client is not None and self._client_loop_id == loop_id:
+                return self._client
+            if self._client is not None:
+                log.info("Gemini shared client: event loop changed, recreating")
+            self._client = genai.Client(api_key=api_key, http_options=_GEMINI_HTTP_OPTS)
+            self._client_loop_id = loop_id
+            return self._client
+        else:
+            if self._user_clients_loop_id != loop_id:
+                if self._user_clients:
+                    log.info("Gemini user clients: event loop changed, clearing cache")
+                self._user_clients.clear()
+                self._user_clients_loop_id = loop_id
+
+            if api_key not in self._user_clients:
+                self._user_clients[api_key] = genai.Client(
+                    api_key=api_key, http_options=_GEMINI_HTTP_OPTS,
+                )
+            return self._user_clients[api_key]
 
     def get_model(self, tier: str = "cheap") -> str:
         return GEMINI_MODEL_MID if tier == "mid" else GEMINI_MODEL_CHEAP
@@ -85,12 +110,8 @@ class GeminiProvider(BaseLLMProvider):
         if not api_key:
             raise ValueError("ยังไม่มี API key สำหรับ Gemini — ใช้ /setkey gemini <key>")
 
-        # ใช้ per-user client ถ้า key ต่างจาก shared key (cache เพื่อ reuse connection)
-        client = self._client
-        if api_key != GEMINI_API_KEY or client is None:
-            if api_key not in self._user_clients:
-                self._user_clients[api_key] = genai.Client(api_key=api_key, http_options={"timeout": 60000})
-            client = self._user_clients[api_key]
+        # Get/create client — จัดการ event loop change อัตโนมัติ
+        client = self._get_client(api_key)
 
         # Convert messages to Gemini format
         gemini_contents = []

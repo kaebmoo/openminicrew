@@ -1,5 +1,6 @@
 """Claude Provider — Anthropic Claude API"""
 
+import asyncio
 from typing import Any
 
 import anthropic
@@ -27,16 +28,40 @@ class ClaudeProvider(BaseLLMProvider):
     name = "claude"
 
     def __init__(self):
-        self._client = None
+        self._client: anthropic.AsyncAnthropic | None = None
+        self._client_loop_id: int | None = None  # track event loop ที่สร้าง client
         self._user_clients: dict[str, anthropic.AsyncAnthropic] = {}
-        if ANTHROPIC_API_KEY:
-            self._client = anthropic.AsyncAnthropic(
-                api_key=ANTHROPIC_API_KEY,
-                timeout=60.0,  # 60s timeout — ป้องกัน polling thread ค้าง
-            )
+        self._user_clients_loop_id: int | None = None
+
+    def _get_client(self, api_key: str) -> anthropic.AsyncAnthropic:
+        """Get or create AsyncAnthropic client — recreate ถ้า event loop เปลี่ยน"""
+        loop_id = id(asyncio.get_running_loop())
+
+        if api_key == ANTHROPIC_API_KEY:
+            # shared client
+            if self._client is not None and self._client_loop_id == loop_id:
+                return self._client
+            if self._client is not None:
+                log.info("Claude shared client: event loop changed, recreating")
+            self._client = anthropic.AsyncAnthropic(api_key=api_key, timeout=60.0)
+            self._client_loop_id = loop_id
+            return self._client
+        else:
+            # per-user client — ถ้า loop เปลี่ยน ต้อง clear cache ทั้งหมด
+            if self._user_clients_loop_id != loop_id:
+                if self._user_clients:
+                    log.info("Claude user clients: event loop changed, clearing cache")
+                self._user_clients.clear()
+                self._user_clients_loop_id = loop_id
+
+            if api_key not in self._user_clients:
+                self._user_clients[api_key] = anthropic.AsyncAnthropic(
+                    api_key=api_key, timeout=60.0,
+                )
+            return self._user_clients[api_key]
 
     def is_configured(self) -> bool:
-        return self._client is not None
+        return bool(ANTHROPIC_API_KEY)
 
     def _has_personal_key(self, user_id: str) -> bool:
         """ตรวจว่า user มี per-user key ของตัวเอง (ไม่ fallback ไป shared key)"""
@@ -93,12 +118,8 @@ class ClaudeProvider(BaseLLMProvider):
         if not api_key:
             raise ValueError("ยังไม่มี API key สำหรับ Claude — ใช้ /setkey anthropic <key>")
 
-        # ใช้ per-user client ถ้า key ต่างจาก shared key (cache เพื่อ reuse connection)
-        client = self._client
-        if api_key != ANTHROPIC_API_KEY or client is None:
-            if api_key not in self._user_clients:
-                self._user_clients[api_key] = anthropic.AsyncAnthropic(api_key=api_key, timeout=60.0)
-            client = self._user_clients[api_key]
+        # Get/create client — จัดการ event loop change อัตโนมัติ
+        client = self._get_client(api_key)
 
         kwargs: dict[str, Any] = {
             "model": model,
