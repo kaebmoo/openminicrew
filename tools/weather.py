@@ -17,18 +17,60 @@ NAN_LAT = 18.7836
 NAN_LNG = 100.7780
 NAN_NAME = "น่าน (จังหวัดน่าน)"
 
-WEATHER_ICONS = {
-    "CLEAR": "☀️",
-    "MOSTLY_CLEAR": "🌤",
-    "PARTLY_CLOUDY": "⛅",
-    "CLOUDY": "☁️",
-    "MOSTLY_CLOUDY": "🌥",
-    "RAIN": "🌧",
-    "HEAVY_RAIN": "⛈",
-    "SNOW": "❄️",
-    "THUNDERSTORM": "⚡",
-    "FOG": "🌫",
-    "WINDY": "💨",
+# Weather condition type → (emoji, คำอธิบายภาษาไทย)
+# ใช้แทน description.text จาก API เพราะ API แปลไทยห่วยมาก (เช่น Clear → "ล้าง")
+WEATHER_DESC = {
+    # Clear / Sunny
+    "CLEAR": ("☀️", "ท้องฟ้าแจ่มใส"),
+    "MOSTLY_CLEAR": ("🌤", "แดดจัดเป็นส่วนใหญ่"),
+    # Cloudy
+    "PARTLY_CLOUDY": ("⛅", "มีเมฆบางส่วน"),
+    "MOSTLY_CLOUDY": ("🌥", "เมฆมากเป็นส่วนใหญ่"),
+    "CLOUDY": ("☁️", "มีเมฆมาก"),
+    # Wind
+    "WINDY": ("💨", "ลมแรง"),
+    "WIND_AND_RAIN": ("🌬🌧", "ลมแรงและฝนตก"),
+    # Rain showers
+    "LIGHT_RAIN_SHOWERS": ("🌦", "ฝนตกเล็กน้อยเป็นพัก ๆ"),
+    "CHANCE_OF_SHOWERS": ("🌦", "อาจมีฝนตก"),
+    "SCATTERED_SHOWERS": ("🌦", "ฝนตกกระจาย"),
+    "RAIN_SHOWERS": ("🌧", "ฝนตกเป็นพักๆ"),
+    "HEAVY_RAIN_SHOWERS": ("⛈", "ฝนตกหนักเป็นพัก ๆ"),
+    # Rain
+    "LIGHT_RAIN": ("🌧", "ฝนตกเบาๆ"),
+    "LIGHT_TO_MODERATE_RAIN": ("🌧", "ฝนตกเล็กน้อยถึงปานกลาง"),
+    "RAIN": ("🌧", "ฝนตก"),
+    "MODERATE_TO_HEAVY_RAIN": ("🌧", "ฝนตกปานกลางถึงหนัก"),
+    "HEAVY_RAIN": ("⛈", "ฝนตกหนัก"),
+    "RAIN_PERIODICALLY_HEAVY": ("⛈", "ฝนตกหนักเป็นช่วง ๆ"),
+    # Snow showers
+    "LIGHT_SNOW_SHOWERS": ("🌨", "หิมะตกเล็กน้อยเป็นพัก ๆ"),
+    "CHANCE_OF_SNOW_SHOWERS": ("🌨", "อาจมีหิมะตก"),
+    "SCATTERED_SNOW_SHOWERS": ("🌨", "หิมะตกกระจาย"),
+    "SNOW_SHOWERS": ("🌨", "หิมะตกเป็นพักๆ"),
+    "HEAVY_SNOW_SHOWERS": ("❄️", "หิมะตกหนักเป็นพัก ๆ"),
+    # Snow
+    "LIGHT_SNOW": ("🌨", "หิมะตกเล็กน้อย"),
+    "LIGHT_TO_MODERATE_SNOW": ("🌨", "หิมะตกเล็กน้อยถึงปานกลาง"),
+    "SNOW": ("❄️", "หิมะตก"),
+    "MODERATE_TO_HEAVY_SNOW": ("❄️", "หิมะตกปานกลางถึงหนัก"),
+    "HEAVY_SNOW": ("❄️", "หิมะตกหนัก"),
+    "SNOWSTORM": ("❄️", "พายุหิมะ"),
+    "SNOW_PERIODICALLY_HEAVY": ("❄️", "หิมะตกหนักเป็นช่วงๆ"),
+    "HEAVY_SNOW_STORM": ("❄️", "พายุหิมะรุนแรง"),
+    "BLOWING_SNOW": ("🌬❄️", "หิมะปลิว"),
+    # Mixed
+    "RAIN_AND_SNOW": ("🌨🌧", "ฝนปนหิมะ"),
+    "HAIL": ("🧊", "ลูกเห็บ"),
+    "HAIL_SHOWERS": ("🧊", "ลูกเห็บตกเป็นพักๆ"),
+    # Thunderstorm
+    "THUNDERSTORM": ("⛈", "พายุฝนฟ้าคะนอง"),
+    "THUNDERSHOWER": ("⛈", "ฝนฟ้าคะนอง"),
+    "LIGHT_THUNDERSTORM_RAIN": ("🌩", "ฝนฟ้าคะนองเล็กน้อย"),
+    "SCATTERED_THUNDERSTORMS": ("🌩", "ฝนฟ้าคะนองกระจาย"),
+    "HEAVY_THUNDERSTORM": ("⛈", "พายุฝนฟ้าคะนองรุนแรง"),
+    # Other
+    "FOG": ("🌫", "หมอก"),
 }
 
 class WeatherTool(BaseTool):
@@ -246,8 +288,7 @@ class WeatherTool(BaseTool):
         # --- Current Conditions ---
         cond = current.get("weatherCondition", {})
         cond_type = cond.get("type", "UNKNOWN")
-        icon = WEATHER_ICONS.get(cond_type, "☁️")
-        desc = cond.get("description", {}).get("text", cond_type)
+        icon, desc = WEATHER_DESC.get(cond_type, ("☁️", cond.get("description", {}).get("text", cond_type)))
         
         temp = current.get("temperature", {}).get("degrees", "?")
         feels = current.get("feelsLikeTemperature", {}).get("degrees", "?")
@@ -282,11 +323,9 @@ class WeatherTool(BaseTool):
                     daytime = day.get("daytimeForecast", {})
                     nighttime = day.get("nighttimeForecast", {})
                     d_cond = daytime.get("weatherCondition", {})
-                    d_icon = WEATHER_ICONS.get(d_cond.get("type", ""), "☁️")
-                    d_desc = d_cond.get("description", {}).get("text", "")
+                    d_icon, d_desc = WEATHER_DESC.get(d_cond.get("type", ""), ("☁️", d_cond.get("description", {}).get("text", "")))
                     n_cond = nighttime.get("weatherCondition", {})
-                    n_icon = WEATHER_ICONS.get(n_cond.get("type", ""), "☁️")
-                    n_desc = n_cond.get("description", {}).get("text", "")
+                    n_icon, n_desc = WEATHER_DESC.get(n_cond.get("type", ""), ("☁️", n_cond.get("description", {}).get("text", "")))
                     max_t = day.get("maxTemperature", {}).get("degrees", "?")
                     min_t = day.get("minTemperature", {}).get("degrees", "?")
                     d_rain = daytime.get("precipitation", {}).get("probability", {}).get("percent", 0)
@@ -327,9 +366,9 @@ class WeatherTool(BaseTool):
                 h_temp = h.get("temperature", {}).get("degrees", "?")
                 h_rain = h.get("precipitation", {}).get("probability", {}).get("percent", 0)
                 h_cond = h.get("weatherCondition", {})
-                h_icon = WEATHER_ICONS.get(h_cond.get("type", ""), "☁️")
+                h_icon, h_desc = WEATHER_DESC.get(h_cond.get("type", ""), ("☁️", h_cond.get("description", {}).get("text", "")))
                 
-                lines.append(f"- **{hr}**: {h_temp}°C | {h_icon} {h_cond.get('description', {}).get('text', '')} | ☔ ฝน {h_rain}%")
+                lines.append(f"- **{hr}**: {h_temp}°C | {h_icon} {h_desc} | ☔ ฝน {h_rain}%")
             lines.append("")
 
         # --- Hourly Forecast ---
@@ -342,9 +381,9 @@ class WeatherTool(BaseTool):
                 h_temp = h.get("temperature", {}).get("degrees", "?")
                 h_rain = h.get("precipitation", {}).get("probability", {}).get("percent", 0)
                 h_cond = h.get("weatherCondition", {})
-                h_icon = WEATHER_ICONS.get(h_cond.get("type", ""), "☁️")
+                h_icon, h_desc = WEATHER_DESC.get(h_cond.get("type", ""), ("☁️", h_cond.get("description", {}).get("text", "")))
                 
-                lines.append(f"- **{hr}**: {h_temp}°C | {h_icon} {h_cond.get('description', {}).get('text', '')} | ☔ ฝน {h_rain}%")
+                lines.append(f"- **{hr}**: {h_temp}°C | {h_icon} {h_desc} | ☔ ฝน {h_rain}%")
             lines.append("")
 
         # --- Daily Forecast ---
@@ -365,8 +404,7 @@ class WeatherTool(BaseTool):
                 
                 daytime = day.get("daytimeForecast", {})
                 d_cond = daytime.get("weatherCondition", {})
-                d_icon = WEATHER_ICONS.get(d_cond.get("type", ""), "☁️")
-                d_desc = d_cond.get("description", {}).get("text", "")
+                d_icon, d_desc = WEATHER_DESC.get(d_cond.get("type", ""), ("☁️", d_cond.get("description", {}).get("text", "")))
                 
                 max_t = day.get("maxTemperature", {}).get("degrees", "?")
                 min_t = day.get("minTemperature", {}).get("degrees", "?")
