@@ -40,7 +40,7 @@ class WeatherTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": "ดูสภาพอากาศปัจจุบัน และพยากรณ์อากาศล่วงหน้า 7 วัน (ใช้ได้ทั้งเมื่อระบุชื่อเมือง หรือถามอากาศแถวนี้)",
+            "description": "ดูสภาพอากาศปัจจุบัน และพยากรณ์อากาศล่วงหน้า (ใช้ได้ทั้งเมื่อระบุชื่อเมือง หรือถามอากาศแถวนี้)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -48,15 +48,23 @@ class WeatherTool(BaseTool):
                         "type": "string",
                         "description": "ชื่อเมืองหรือสถานที่ที่ต้องการดูสภาพอากาศ เช่น 'เชียงใหม่', 'Tokyo', 'London'. หากผู้ใช้ถามว่า 'อากาศแถวนี้' หรือไม่ระบุสถานที่ ให้เว้นว่างไว้ ระบบจะใช้ GPS ปัจจุบัน",
                     },
+                    "forecast_days": {
+                        "type": "integer",
+                        "description": "จำนวนวันที่ต้องการพยากรณ์ล่วงหน้า (1-10). ค่าเริ่มต้น 7. ถ้าผู้ใช้บอก '3 วัน' ให้ส่ง 3, '10 วัน' ให้ส่ง 10, 'สัปดาห์หน้า/อาทิตย์หน้า' ให้ส่ง 7",
+                    },
                     "show_history": {
                         "type": "boolean",
-                        "description": "ตั้งเป็น True หากมีคำสั่งหรือผู้ใช้ถามถึงอดีต (เช่น ย้อนหลัง, อดีต, วันก่อน, เมื่อวาน, ที่ผ่านมา)",
+                        "description": "ตั้งเป็น True หากผู้ใช้ถามถึงอดีต (เช่น ย้อนหลัง, อดีต, วันก่อน, เมื่อวาน, ที่ผ่านมา, เมื่อกี้)",
+                    },
+                    "history_hours": {
+                        "type": "integer",
+                        "description": "จำนวนชั่วโมงย้อนหลังที่ต้องการดู (1-24). ค่าเริ่มต้น 24. ถ้า 'เมื่อวาน' ให้ส่ง 24, 'เมื่อ 2-3 ชั่วโมงก่อน' ให้ส่ง 3",
                     }
                 },
             },
         }
 
-    async def execute(self, user_id: str, args: str = "", show_history: bool = False, **kwargs) -> str:
+    async def execute(self, user_id: str, args: str = "", forecast_days: int = 7, show_history: bool = False, history_hours: int = 24, **kwargs) -> str:
         if not GOOGLE_MAPS_API_KEY:
             return "❌ ยังไม่ได้ตั้งค่า Google Maps API Key ใน .env"
 
@@ -89,10 +97,14 @@ class WeatherTool(BaseTool):
 
         # Fetch Data
         try:
+            # Clamp values to safe ranges
+            forecast_days = max(1, min(forecast_days, 10))
+            history_hours = max(1, min(history_hours, 24))
+
             current_data = self._get_current_conditions(lat, lng)
             hourly_data = self._get_hourly_forecast(lat, lng, hours=6)
-            history_data = self._get_hourly_history(lat, lng, hours=6) if show_history else {}
-            forecast_data = self._get_forecast(lat, lng, days=7)
+            history_data = self._get_hourly_history(lat, lng, hours=history_hours) if show_history else {}
+            forecast_data = self._get_forecast(lat, lng, days=forecast_days)
             
             output = self._format_weather(area_name, current_data, hourly_data, history_data, forecast_data, lat, lng)
             
