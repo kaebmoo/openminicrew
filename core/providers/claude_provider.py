@@ -43,6 +43,7 @@ class ClaudeProvider(BaseLLMProvider):
                 return self._client
             if self._client is not None:
                 log.info("Claude shared client: event loop changed, recreating")
+                self._close_client_sync(self._client)
             self._client = anthropic.AsyncAnthropic(api_key=api_key, timeout=60.0)
             self._client_loop_id = loop_id
             return self._client
@@ -51,6 +52,8 @@ class ClaudeProvider(BaseLLMProvider):
             if self._user_clients_loop_id != loop_id:
                 if self._user_clients:
                     log.info("Claude user clients: event loop changed, clearing cache")
+                    for old_client in self._user_clients.values():
+                        self._close_client_sync(old_client)
                 self._user_clients.clear()
                 self._user_clients_loop_id = loop_id
 
@@ -59,6 +62,15 @@ class ClaudeProvider(BaseLLMProvider):
                     api_key=api_key, timeout=60.0,
                 )
             return self._user_clients[api_key]
+
+    @staticmethod
+    def _close_client_sync(client: anthropic.AsyncAnthropic):
+        """ปิด client เก่าอย่างปลอดภัย — suppress error ถ้า event loop ปิดแล้ว"""
+        try:
+            if hasattr(client, '_client') and hasattr(client._client, '_transport'):
+                client._client._transport = None
+        except Exception:
+            pass
 
     def is_configured(self) -> bool:
         return bool(ANTHROPIC_API_KEY)

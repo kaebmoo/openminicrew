@@ -50,7 +50,7 @@ class WeatherTool(BaseTool):
                     },
                     "forecast_days": {
                         "type": "integer",
-                        "description": "จำนวนวันที่ต้องการพยากรณ์ล่วงหน้า (1-10). ค่าเริ่มต้น 7. ถ้าผู้ใช้บอก '3 วัน' ให้ส่ง 3, '10 วัน' ให้ส่ง 10, 'สัปดาห์หน้า/อาทิตย์หน้า' ให้ส่ง 7",
+                        "description": "จำนวนวันที่ต้องการพยากรณ์ล่วงหน้า (1-10). ค่าเริ่มต้น 10. ถ้าผู้ใช้ถามวันที่เจาะจง ให้คำนวณจำนวนวันจากวันนี้ เช่น วันนี้ 4 เมษา ถามวันที่ 11 เมษา = ส่ง 8. ถ้าไม่ระบุให้ใช้ค่าเริ่มต้น 10",
                     },
                     "show_history": {
                         "type": "boolean",
@@ -59,12 +59,16 @@ class WeatherTool(BaseTool):
                     "history_hours": {
                         "type": "integer",
                         "description": "จำนวนชั่วโมงย้อนหลังที่ต้องการดู (1-24). ค่าเริ่มต้น 24. ถ้า 'เมื่อวาน' ให้ส่ง 24, 'เมื่อ 2-3 ชั่วโมงก่อน' ให้ส่ง 3",
+                    },
+                    "target_date": {
+                        "type": "string",
+                        "description": "วันที่เจาะจงที่อยากดูพยากรณ์ รูปแบบ YYYY-MM-DD เช่น '2026-04-11'. ถ้าระบุจะแสดงเฉพาะวันนั้น. ถ้าไม่ระบุจะแสดงทั้งหมด",
                     }
                 },
             },
         }
 
-    async def execute(self, user_id: str, args: str = "", forecast_days: int = 7, show_history: bool = False, history_hours: int = 24, **kwargs) -> str:
+    async def execute(self, user_id: str, args: str = "", forecast_days: int = 10, show_history: bool = False, history_hours: int = 24, target_date: str = "", **kwargs) -> str:
         if not GOOGLE_MAPS_API_KEY:
             return "❌ ยังไม่ได้ตั้งค่า Google Maps API Key ใน .env"
 
@@ -106,7 +110,7 @@ class WeatherTool(BaseTool):
             history_data = self._get_hourly_history(lat, lng, hours=history_hours) if show_history else {}
             forecast_data = self._get_forecast(lat, lng, days=forecast_days)
             
-            output = self._format_weather(area_name, current_data, hourly_data, history_data, forecast_data, lat, lng)
+            output = self._format_weather(area_name, current_data, hourly_data, history_data, forecast_data, lat, lng, target_date=target_date)
             
             # Note if fallback to Nan happened
             if lat == NAN_LAT and lng == NAN_LNG and area_name == NAN_NAME:
@@ -236,7 +240,7 @@ class WeatherTool(BaseTool):
         resp.raise_for_status()
         return resp.json()
 
-    def _format_weather(self, area_name: str, current: dict, hourly: dict, history: dict, forecast: dict, lat: float, lng: float) -> str:
+    def _format_weather(self, area_name: str, current: dict, hourly: dict, history: dict, forecast: dict, lat: float, lng: float, target_date: str = "") -> str:
         lines = []
         
         # --- Current Conditions ---
@@ -253,6 +257,61 @@ class WeatherTool(BaseTool):
         
         rain_prob = current.get("precipitation", {}).get("probability", {}).get("percent", 0)
 
+        # Parse target_date if provided (YYYY-MM-DD)
+        target_y, target_m, target_d = 0, 0, 0
+        if target_date:
+            try:
+                parts = target_date.split("-")
+                target_y, target_m, target_d = int(parts[0]), int(parts[1]), int(parts[2])
+            except (ValueError, IndexError):
+                pass
+
+        # If target_date is set, show concise header + only that day
+        if target_y:
+            lines.append(f"📍 **สภาพอากาศ: {area_name}**")
+            lines.append(f"{icon} **ตอนนี้:** {temp}°C (รู้สึกเหมือน {feels}°C) | {desc}")
+            lines.append("")
+
+            # Filter to target date
+            days_data = forecast.get("forecastDays", [])
+            found = False
+            for day in days_data:
+                dd = day.get("displayDate", {})
+                if dd.get("year") == target_y and dd.get("month") == target_m and dd.get("day") == target_d:
+                    found = True
+                    daytime = day.get("daytimeForecast", {})
+                    nighttime = day.get("nighttimeForecast", {})
+                    d_cond = daytime.get("weatherCondition", {})
+                    d_icon = WEATHER_ICONS.get(d_cond.get("type", ""), "☁️")
+                    d_desc = d_cond.get("description", {}).get("text", "")
+                    n_cond = nighttime.get("weatherCondition", {})
+                    n_icon = WEATHER_ICONS.get(n_cond.get("type", ""), "☁️")
+                    n_desc = n_cond.get("description", {}).get("text", "")
+                    max_t = day.get("maxTemperature", {}).get("degrees", "?")
+                    min_t = day.get("minTemperature", {}).get("degrees", "?")
+                    d_rain = daytime.get("precipitation", {}).get("probability", {}).get("percent", 0)
+                    n_rain = nighttime.get("precipitation", {}).get("probability", {}).get("percent", 0)
+                    d_humid = daytime.get("relativeHumidity", "?")
+                    d_wind = daytime.get("wind", {}).get("speed", {}).get("value", "?")
+                    d_uv = daytime.get("uvIndex", "?")
+
+                    lines.append(f"📅 **พยากรณ์วันที่ {target_d}/{target_m}/{target_y}:**")
+                    lines.append(f"🌡 อุณหภูมิ: {min_t}°C ถึง {max_t}°C")
+                    lines.append(f"☀️ กลางวัน: {d_icon} {d_desc} | ☔ ฝน {d_rain}%")
+                    lines.append(f"🌙 กลางคืน: {n_icon} {n_desc} | ☔ ฝน {n_rain}%")
+                    lines.append(f"💧 ความชื้น: {d_humid}% | 💨 ลม: {d_wind} km/h | ☀️ UV: {d_uv}")
+                    break
+
+            if not found:
+                lines.append(f"❌ ไม่พบข้อมูลพยากรณ์สำหรับวันที่ {target_d}/{target_m}/{target_y}")
+                lines.append("สามารถพยากรณ์ล่วงหน้าได้สูงสุด 10 วัน")
+
+            lines.append("")
+            query_safe = urllib.parse.quote(f"สภาพอากาศ {area_name}")
+            lines.append(f"🔗 [ดูรายละเอียดเพิ่มเติมบน Google](https://www.google.com/search?q={query_safe})")
+            return "\n".join(lines)
+
+        # --- Full output (no target_date) ---
         lines.append(f"📍 **สภาพอากาศ: {area_name}**")
         lines.append(f"{icon} **ปัจจุบัน:** {temp}°C (รู้สึกเหมือน {feels}°C) | {desc}")
         lines.append(f"💧 ความชื้น: {humid}% | 💨 ลม: {wind_speed} km/h | ☔ โอกาสฝนตก: {rain_prob}%")
