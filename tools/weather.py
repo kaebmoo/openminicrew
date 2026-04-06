@@ -1,7 +1,8 @@
 """Weather Tool — ดูสภาพอากาศปัจจุบันและพยากรณ์ล่วงหน้าผ่าน Google Weather API"""
 
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -97,6 +98,31 @@ def _get_weather_desc(cond_type: str, hour: int | None = None,
     if result:
         return result
     return ("☁️", fallback_text or cond_type)
+
+
+_LOCAL_TZ = ZoneInfo("Asia/Bangkok")
+
+
+def _parse_sun_time(iso_str: str) -> datetime | None:
+    """Parse ISO UTC timestamp from Google Weather API → local datetime."""
+    if not iso_str:
+        return None
+    try:
+        # Truncate nanoseconds to microseconds for fromisoformat
+        clean = iso_str.replace("Z", "+00:00")
+        # Handle nanosecond precision: keep only 6 decimal digits
+        if "." in clean:
+            base, frac_and_tz = clean.split(".", 1)
+            # Split fraction from timezone
+            for i, c in enumerate(frac_and_tz):
+                if c in ("+", "-"):
+                    frac = frac_and_tz[:i][:6]
+                    tz_part = frac_and_tz[i:]
+                    clean = f"{base}.{frac}{tz_part}"
+                    break
+        return datetime.fromisoformat(clean).astimezone(_LOCAL_TZ)
+    except (ValueError, TypeError):
+        return None
 
 
 class WeatherTool(BaseTool):
@@ -314,16 +340,17 @@ class WeatherTool(BaseTool):
         # --- Extract sunrise/sunset from today's forecast ---
         sunrise_hour = _DEFAULT_SUNRISE_HOUR
         sunset_hour = _DEFAULT_SUNSET_HOUR
+        sunrise_dt = None
+        sunset_dt = None
         today_forecast = (forecast.get("forecastDays") or [None])[0]
         if today_forecast:
-            log.info(f"[Weather] forecastDay keys: {list(today_forecast.keys())}")
-            sr = today_forecast.get("sunrise", {})
-            ss = today_forecast.get("sunset", {})
-            log.info(f"[Weather] sunrise={sr}, sunset={ss}")
-            if sr.get("hours") is not None:
-                sunrise_hour = sr["hours"]
-            if ss.get("hours") is not None:
-                sunset_hour = ss["hours"]
+            sun_events = today_forecast.get("sunEvents", {})
+            sunrise_dt = _parse_sun_time(sun_events.get("sunriseTime", ""))
+            sunset_dt = _parse_sun_time(sun_events.get("sunsetTime", ""))
+            if sunrise_dt:
+                sunrise_hour = sunrise_dt.hour
+            if sunset_dt:
+                sunset_hour = sunset_dt.hour
 
         # --- Current Conditions ---
         now_hour = datetime.now().hour
@@ -377,10 +404,11 @@ class WeatherTool(BaseTool):
                     d_uv = daytime.get("uvIndex", "?")
 
                     # Sunrise / Sunset for target date
-                    t_sr = day.get("sunrise", {})
-                    t_ss = day.get("sunset", {})
-                    t_sr_str = f"{t_sr.get('hours', 6):02d}:{t_sr.get('minutes', 0):02d}" if t_sr else "N/A"
-                    t_ss_str = f"{t_ss.get('hours', 18):02d}:{t_ss.get('minutes', 0):02d}" if t_ss else "N/A"
+                    t_sun = day.get("sunEvents", {})
+                    t_sr_dt = _parse_sun_time(t_sun.get("sunriseTime", ""))
+                    t_ss_dt = _parse_sun_time(t_sun.get("sunsetTime", ""))
+                    t_sr_str = t_sr_dt.strftime("%H:%M") if t_sr_dt else "N/A"
+                    t_ss_str = t_ss_dt.strftime("%H:%M") if t_ss_dt else "N/A"
 
                     lines.append(f"📅 **พยากรณ์วันที่ {target_d}/{target_m}/{target_y}:**")
                     lines.append(f"🌡 อุณหภูมิ: {min_t}°C ถึง {max_t}°C")
@@ -403,11 +431,9 @@ class WeatherTool(BaseTool):
         lines.append(f"📍 **สภาพอากาศ: {area_name}**")
         lines.append(f"{icon} **ปัจจุบัน:** {temp}°C (รู้สึกเหมือน {feels}°C) | {desc}")
         lines.append(f"💧 ความชื้น: {humid}% | 💨 ลม: {wind_speed} km/h | ☔ โอกาสฝนตก: {rain_prob}%")
-        if today_forecast:
-            sr = today_forecast.get("sunrise", {})
-            ss = today_forecast.get("sunset", {})
-            sr_str = f"{sr.get('hours', 6):02d}:{sr.get('minutes', 0):02d}" if sr else "N/A"
-            ss_str = f"{ss.get('hours', 18):02d}:{ss.get('minutes', 0):02d}" if ss else "N/A"
+        if sunrise_dt or sunset_dt:
+            sr_str = sunrise_dt.strftime("%H:%M") if sunrise_dt else "N/A"
+            ss_str = sunset_dt.strftime("%H:%M") if sunset_dt else "N/A"
             lines.append(f"🌅 พระอาทิตย์ขึ้น: {sr_str} | 🌇 พระอาทิตย์ตก: {ss_str}")
         lines.append("")
 
