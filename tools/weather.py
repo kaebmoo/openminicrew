@@ -73,6 +73,32 @@ WEATHER_DESC = {
     "FOG": ("🌫", "หมอก"),
 }
 
+# Override for nighttime (after sunset / before sunrise) — conditions that mention "แดด"
+WEATHER_DESC_NIGHT = {
+    "CLEAR": ("🌙", "ท้องฟ้าแจ่มใส"),
+    "MOSTLY_CLEAR": ("🌙", "ท้องฟ้าโปร่ง"),
+}
+
+# Fallback sunrise/sunset hours if API doesn't provide them
+_DEFAULT_SUNRISE_HOUR = 6
+_DEFAULT_SUNSET_HOUR = 18
+
+
+def _get_weather_desc(cond_type: str, hour: int | None = None,
+                      sunrise_hour: int = _DEFAULT_SUNRISE_HOUR,
+                      sunset_hour: int = _DEFAULT_SUNSET_HOUR,
+                      fallback_text: str = "") -> tuple[str, str]:
+    """Return (emoji, description) for a weather condition, using night variant when appropriate."""
+    if hour is not None and (hour >= sunset_hour or hour < sunrise_hour):
+        night = WEATHER_DESC_NIGHT.get(cond_type)
+        if night:
+            return night
+    result = WEATHER_DESC.get(cond_type)
+    if result:
+        return result
+    return ("☁️", fallback_text or cond_type)
+
+
 class WeatherTool(BaseTool):
     name = "weather"
     description = "ดูสภาพอากาศปัจจุบัน และพยากรณ์อากาศล่วงหน้า 7 วัน"
@@ -284,11 +310,25 @@ class WeatherTool(BaseTool):
 
     def _format_weather(self, area_name: str, current: dict, hourly: dict, history: dict, forecast: dict, lat: float, lng: float, target_date: str = "") -> str:
         lines = []
-        
+
+        # --- Extract sunrise/sunset from today's forecast ---
+        sunrise_hour = _DEFAULT_SUNRISE_HOUR
+        sunset_hour = _DEFAULT_SUNSET_HOUR
+        today_forecast = (forecast.get("forecastDays") or [None])[0]
+        if today_forecast:
+            sr = today_forecast.get("sunrise", {})
+            ss = today_forecast.get("sunset", {})
+            if sr.get("hours") is not None:
+                sunrise_hour = sr["hours"]
+            if ss.get("hours") is not None:
+                sunset_hour = ss["hours"]
+
         # --- Current Conditions ---
+        now_hour = datetime.now().hour
         cond = current.get("weatherCondition", {})
         cond_type = cond.get("type", "UNKNOWN")
-        icon, desc = WEATHER_DESC.get(cond_type, ("☁️", cond.get("description", {}).get("text", cond_type)))
+        icon, desc = _get_weather_desc(cond_type, hour=now_hour, sunrise_hour=sunrise_hour, sunset_hour=sunset_hour,
+                                       fallback_text=cond.get("description", {}).get("text", cond_type))
         
         temp = current.get("temperature", {}).get("degrees", "?")
         feels = current.get("feelsLikeTemperature", {}).get("degrees", "?")
@@ -334,11 +374,18 @@ class WeatherTool(BaseTool):
                     d_wind = daytime.get("wind", {}).get("speed", {}).get("value", "?")
                     d_uv = daytime.get("uvIndex", "?")
 
+                    # Sunrise / Sunset for target date
+                    t_sr = day.get("sunrise", {})
+                    t_ss = day.get("sunset", {})
+                    t_sr_str = f"{t_sr.get('hours', 6):02d}:{t_sr.get('minutes', 0):02d}" if t_sr else "N/A"
+                    t_ss_str = f"{t_ss.get('hours', 18):02d}:{t_ss.get('minutes', 0):02d}" if t_ss else "N/A"
+
                     lines.append(f"📅 **พยากรณ์วันที่ {target_d}/{target_m}/{target_y}:**")
                     lines.append(f"🌡 อุณหภูมิ: {min_t}°C ถึง {max_t}°C")
                     lines.append(f"☀️ กลางวัน: {d_icon} {d_desc} | ☔ ฝน {d_rain}%")
                     lines.append(f"🌙 กลางคืน: {n_icon} {n_desc} | ☔ ฝน {n_rain}%")
                     lines.append(f"💧 ความชื้น: {d_humid}% | 💨 ลม: {d_wind} km/h | ☀️ UV: {d_uv}")
+                    lines.append(f"🌅 พระอาทิตย์ขึ้น: {t_sr_str} | 🌇 พระอาทิตย์ตก: {t_ss_str}")
                     break
 
             if not found:
@@ -354,6 +401,12 @@ class WeatherTool(BaseTool):
         lines.append(f"📍 **สภาพอากาศ: {area_name}**")
         lines.append(f"{icon} **ปัจจุบัน:** {temp}°C (รู้สึกเหมือน {feels}°C) | {desc}")
         lines.append(f"💧 ความชื้น: {humid}% | 💨 ลม: {wind_speed} km/h | ☔ โอกาสฝนตก: {rain_prob}%")
+        if today_forecast:
+            sr = today_forecast.get("sunrise", {})
+            ss = today_forecast.get("sunset", {})
+            sr_str = f"{sr.get('hours', 6):02d}:{sr.get('minutes', 0):02d}" if sr else "N/A"
+            ss_str = f"{ss.get('hours', 18):02d}:{ss.get('minutes', 0):02d}" if ss else "N/A"
+            lines.append(f"🌅 พระอาทิตย์ขึ้น: {sr_str} | 🌇 พระอาทิตย์ตก: {ss_str}")
         lines.append("")
 
         # --- Hourly History ---
@@ -362,12 +415,15 @@ class WeatherTool(BaseTool):
             lines.append("🕰 **ย้อนหลัง:**")
             for h in reversed(history_hours):  # API usually returns newest to oldest, reverse to display chronological
                 dt = h.get("displayDateTime", {})
-                hr = f"{dt.get('hours', 0):02d}:00"
+                h_hour = dt.get('hours', 0)
+                hr = f"{h_hour:02d}:00"
                 h_temp = h.get("temperature", {}).get("degrees", "?")
                 h_rain = h.get("precipitation", {}).get("probability", {}).get("percent", 0)
                 h_cond = h.get("weatherCondition", {})
-                h_icon, h_desc = WEATHER_DESC.get(h_cond.get("type", ""), ("☁️", h_cond.get("description", {}).get("text", "")))
-                
+                h_icon, h_desc = _get_weather_desc(h_cond.get("type", ""), hour=h_hour,
+                                                   sunrise_hour=sunrise_hour, sunset_hour=sunset_hour,
+                                                   fallback_text=h_cond.get("description", {}).get("text", ""))
+
                 lines.append(f"- **{hr}**: {h_temp}°C | {h_icon} {h_desc} | ☔ ฝน {h_rain}%")
             lines.append("")
 
@@ -377,12 +433,15 @@ class WeatherTool(BaseTool):
             lines.append("🕒 **แนวโน้มรายชั่วโมง:**")
             for h in hours_data:
                 dt = h.get("displayDateTime", {})
-                hr = f"{dt.get('hours', 0):02d}:00"
+                h_hour = dt.get('hours', 0)
+                hr = f"{h_hour:02d}:00"
                 h_temp = h.get("temperature", {}).get("degrees", "?")
                 h_rain = h.get("precipitation", {}).get("probability", {}).get("percent", 0)
                 h_cond = h.get("weatherCondition", {})
-                h_icon, h_desc = WEATHER_DESC.get(h_cond.get("type", ""), ("☁️", h_cond.get("description", {}).get("text", "")))
-                
+                h_icon, h_desc = _get_weather_desc(h_cond.get("type", ""), hour=h_hour,
+                                                   sunrise_hour=sunrise_hour, sunset_hour=sunset_hour,
+                                                   fallback_text=h_cond.get("description", {}).get("text", ""))
+
                 lines.append(f"- **{hr}**: {h_temp}°C | {h_icon} {h_desc} | ☔ ฝน {h_rain}%")
             lines.append("")
 
