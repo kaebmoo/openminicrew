@@ -33,7 +33,7 @@ class ClaudeProvider(BaseLLMProvider):
         self._user_clients: dict[str, anthropic.AsyncAnthropic] = {}
         self._user_clients_loop_id: int | None = None
 
-    def _get_client(self, api_key: str) -> anthropic.AsyncAnthropic:
+    async def _get_client(self, api_key: str) -> anthropic.AsyncAnthropic:
         """Get or create AsyncAnthropic client — recreate ถ้า event loop เปลี่ยน"""
         loop_id = id(asyncio.get_running_loop())
 
@@ -43,7 +43,7 @@ class ClaudeProvider(BaseLLMProvider):
                 return self._client
             if self._client is not None:
                 log.info("Claude shared client: event loop changed, recreating")
-                self._close_client_sync(self._client)
+                await self._close_client(self._client)
             self._client = anthropic.AsyncAnthropic(api_key=api_key, timeout=60.0)
             self._client_loop_id = loop_id
             return self._client
@@ -53,7 +53,7 @@ class ClaudeProvider(BaseLLMProvider):
                 if self._user_clients:
                     log.info("Claude user clients: event loop changed, clearing cache")
                     for old_client in self._user_clients.values():
-                        self._close_client_sync(old_client)
+                        await self._close_client(old_client)
                 self._user_clients.clear()
                 self._user_clients_loop_id = loop_id
 
@@ -64,11 +64,10 @@ class ClaudeProvider(BaseLLMProvider):
             return self._user_clients[api_key]
 
     @staticmethod
-    def _close_client_sync(client: anthropic.AsyncAnthropic):
-        """ปิด client เก่าอย่างปลอดภัย — suppress error ถ้า event loop ปิดแล้ว"""
+    async def _close_client(client: anthropic.AsyncAnthropic):
+        """ปิด client เก่าอย่างถูกต้องด้วย async — ป้องกัน orphan cleanup task"""
         try:
-            if hasattr(client, '_client') and hasattr(client._client, '_transport'):
-                client._client._transport = None
+            await client.close()
         except Exception:
             pass
 
@@ -131,7 +130,7 @@ class ClaudeProvider(BaseLLMProvider):
             raise ValueError("ยังไม่มี API key สำหรับ Claude — ใช้ /setkey anthropic <key>")
 
         # Get/create client — จัดการ event loop change อัตโนมัติ
-        client = self._get_client(api_key)
+        client = await self._get_client(api_key)
 
         kwargs: dict[str, Any] = {
             "model": model,

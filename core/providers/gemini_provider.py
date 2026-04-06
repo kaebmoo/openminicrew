@@ -53,7 +53,7 @@ class GeminiProvider(BaseLLMProvider):
                 return user_key
         return GEMINI_API_KEY
 
-    def _get_client(self, api_key: str) -> genai.Client:
+    async def _get_client(self, api_key: str) -> genai.Client:
         """Get or create genai.Client — recreate ถ้า event loop เปลี่ยน"""
         loop_id = id(asyncio.get_running_loop())
 
@@ -62,7 +62,7 @@ class GeminiProvider(BaseLLMProvider):
                 return self._client
             if self._client is not None:
                 log.info("Gemini shared client: event loop changed, recreating")
-                self._close_client_sync(self._client)
+                await self._close_client(self._client)
             self._client = genai.Client(api_key=api_key, http_options=_GEMINI_HTTP_OPTS)
             self._client_loop_id = loop_id
             return self._client
@@ -71,7 +71,7 @@ class GeminiProvider(BaseLLMProvider):
                 if self._user_clients:
                     log.info("Gemini user clients: event loop changed, clearing cache")
                     for old_client in self._user_clients.values():
-                        self._close_client_sync(old_client)
+                        await self._close_client(old_client)
                 self._user_clients.clear()
                 self._user_clients_loop_id = loop_id
 
@@ -82,12 +82,10 @@ class GeminiProvider(BaseLLMProvider):
             return self._user_clients[api_key]
 
     @staticmethod
-    def _close_client_sync(client: genai.Client):
-        """ปิด client เก่าอย่างปลอดภัย — suppress error ถ้า event loop ปิดแล้ว"""
+    async def _close_client(client: genai.Client):
+        """ปิด client เก่าอย่างถูกต้องด้วย async — ป้องกัน __del__ สร้าง orphan task"""
         try:
-            # ตัด reference ไปยัง internal httpx client เพื่อป้องกัน __del__ พยายาม aclose()
-            if hasattr(client, '_api_client') and hasattr(client._api_client, '_async_httpx_client'):
-                client._api_client._async_httpx_client = None
+            await client.aclose()
         except Exception:
             pass
 
@@ -124,7 +122,7 @@ class GeminiProvider(BaseLLMProvider):
             raise ValueError("ยังไม่มี API key สำหรับ Gemini — ใช้ /setkey gemini <key>")
 
         # Get/create client — จัดการ event loop change อัตโนมัติ
-        client = self._get_client(api_key)
+        client = await self._get_client(api_key)
 
         # Convert messages to Gemini format
         gemini_contents = []

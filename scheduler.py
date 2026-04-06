@@ -50,6 +50,46 @@ scheduler = BackgroundScheduler(
 _last_run_info: dict[str, str | None] = {"last_run": None}
 _last_run_lock = threading.Lock()
 
+# Persistent event loop สำหรับ scheduler — ใช้ loop เดิมตลอด
+# แทน asyncio.run() ที่สร้าง loop ใหม่ทุกครั้ง → ทำให้ LLM client ต้อง recreate
+_scheduler_loop: asyncio.AbstractEventLoop | None = None
+_scheduler_loop_thread: threading.Thread | None = None
+_scheduler_loop_lock = threading.Lock()
+
+
+def _get_scheduler_loop() -> asyncio.AbstractEventLoop:
+    """Get or create a persistent event loop for scheduler async tasks."""
+    global _scheduler_loop, _scheduler_loop_thread
+    with _scheduler_loop_lock:
+        if _scheduler_loop and not _scheduler_loop.is_closed() and _scheduler_loop_thread and _scheduler_loop_thread.is_alive():
+            return _scheduler_loop
+
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(
+            target=loop.run_forever,
+            daemon=True,
+            name="scheduler-async-loop",
+        )
+        thread.start()
+        _scheduler_loop = loop
+        _scheduler_loop_thread = thread
+        log.info("Started persistent async event loop for scheduler")
+        return loop
+
+
+def _stop_scheduler_loop():
+    """Stop the scheduler's persistent event loop."""
+    global _scheduler_loop, _scheduler_loop_thread
+    with _scheduler_loop_lock:
+        if _scheduler_loop and not _scheduler_loop.is_closed():
+            _scheduler_loop.call_soon_threadsafe(_scheduler_loop.stop)
+        if _scheduler_loop_thread and _scheduler_loop_thread.is_alive():
+            _scheduler_loop_thread.join(timeout=5)
+        if _scheduler_loop and not _scheduler_loop.is_closed():
+            _scheduler_loop.close()
+        _scheduler_loop = None
+        _scheduler_loop_thread = None
+
 
 def _resolve_schedule_user(user_ref: str) -> dict | None:
     """Resolve schedule owner from stored user reference.
@@ -113,11 +153,14 @@ def _run_tool_for_user_inner(user_id: str, chat_id: str, tool_name: str, args: s
         log.warning(f"Scheduled tool not found: {tool_name}")
         return False
 
-    # Step 1: รัน tool เพื่อได้ผลลัพธ์
+    # Step 1: รัน tool เพื่อได้ผลลัพธ์ — ใช้ persistent loop เดิม (ไม่สร้างใหม่)
     try:
-        result = asyncio.run(
-            asyncio.wait_for(tool.execute(user_id, args), timeout=TOOL_EXEC_TIMEOUT)
+        loop = _get_scheduler_loop()
+        future = asyncio.run_coroutine_threadsafe(
+            asyncio.wait_for(tool.execute(user_id, args), timeout=TOOL_EXEC_TIMEOUT),
+            loop,
         )
+        result = future.result(timeout=TOOL_EXEC_TIMEOUT + 5)
     except Exception as e:
         log.error(f"Scheduled {tool_name} failed for {user_id}: {e}\n{traceback.format_exc()}")
         db.log_tool_usage(
@@ -485,6 +528,9 @@ def ensure_scheduler_alive():
     except Exception:
         pass
 
+    # Reset scheduler loop เพื่อให้ recreate ตัวใหม่
+    _stop_scheduler_loop()
+
     # Re-init scheduler
     try:
         init_scheduler()
@@ -498,3 +544,4 @@ def stop_scheduler():
     if scheduler.running:
         scheduler.shutdown(wait=True)
         log.info("Scheduler stopped")
+    _stop_scheduler_loop()

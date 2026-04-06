@@ -316,8 +316,10 @@ class WeatherTool(BaseTool):
         sunset_hour = _DEFAULT_SUNSET_HOUR
         today_forecast = (forecast.get("forecastDays") or [None])[0]
         if today_forecast:
+            log.debug(f"[Weather] forecastDay keys: {list(today_forecast.keys())}")
             sr = today_forecast.get("sunrise", {})
             ss = today_forecast.get("sunset", {})
+            log.debug(f"[Weather] sunrise={sr}, sunset={ss}")
             if sr.get("hours") is not None:
                 sunrise_hour = sr["hours"]
             if ss.get("hours") is not None:
