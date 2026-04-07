@@ -341,8 +341,8 @@ class ExpenseTool(BaseTool):
 
         # Normalize: ถ้า Gemini คืน dict เดียว ให้ wrap เป็น list
         items = extracted if isinstance(extracted, list) else [extracted]
-        items = [it for it in items if isinstance(it, dict) and it.get("amount", 0) > 0]
-        if not items:
+        items = [it for it in items if isinstance(it, dict) and it.get("amount", 0) != 0]
+        if not items or not any(it["amount"] > 0 for it in items):
             return "❌ ไม่สามารถอ่านข้อมูลจากรูปได้ กรุณาลองถ่ายใหม่ให้ชัดขึ้น หรือพิมพ์เอง: /expense 120 อาหาร"
 
         # ดึงชื่อร้านจาก item แรก (ถ้ามี) เพื่อใส่ใน note
@@ -432,6 +432,8 @@ class ExpenseTool(BaseTool):
                 "]}\n"
                 "หมวดหมู่ที่แนะนำ: อาหาร, เครื่องดื่ม, เดินทาง, ช็อปปิ้ง, ของใช้, สาธารณูปโภค, สุขภาพ, บันเทิง, การศึกษา, โอนเงิน, ทั่วไป\n"
                 "amount = ยอดเงินรวมของบรรทัดนั้นตามที่พิมพ์ในใบเสร็จ (ถ้า qty=2 ราคาชิ้นละ 30 แสดง 60 ให้ใส่ 60)\n"
+                "**สำคัญ**: รายการส่วนลด/coupon/discount ให้ใส่เป็นจำนวนติดลบ เช่น CPN3 -31.75 → amount=-31.75\n"
+                "ผลรวมของ amount ทุกรายการ (รวมส่วนลดติดลบ) ควรเท่ากับ grand_total\n"
                 "subtotal = ยอดรวมราคาอาหาร/สินค้าก่อนบวก service charge และ VAT (ถ้าไม่มีใส่ null)\n"
                 "grand_total = ยอดเงินสุทธิที่จ่ายจริงหลังรวม service charge, VAT, ส่วนลด ฯลฯ (ถ้าไม่มีใส่ null)\n"
                 "ถ้าเป็น slip โอนเงินที่มีรายการเดียว ให้คืน items เพียง 1 ตัว\n"
@@ -504,18 +506,42 @@ class ExpenseTool(BaseTool):
             return f"API_ERROR:{e}"
 
     @staticmethod
+    def _net_discounts(items: list[dict]) -> list[dict]:
+        """หักส่วนลด (amount ติดลบ) เข้ารายการก่อนหน้าที่ติดกัน"""
+        result = []
+        for item in items:
+            if item["amount"] < 0 and result and result[-1]["amount"] > 0:
+                # หักส่วนลดเข้ารายการก่อนหน้า
+                result[-1] = {**result[-1], "amount": round(result[-1]["amount"] + item["amount"], 2)}
+            else:
+                result.append(item)
+        # กรองรายการที่ amount <= 0 หลังหักส่วนลดออก
+        return [it for it in result if it["amount"] > 0]
+
+    @staticmethod
     def _apply_grand_total_ratio(items: list[dict], data: dict) -> list[dict]:
-        """ถ้ามี subtotal + grand_total → เฉลี่ย SC/VAT เข้าแต่ละรายการตามสัดส่วน"""
+        """Net ส่วนลดเข้ารายการก่อนหน้า แล้ว reconcile กับ grand_total สำหรับ SC/VAT"""
+        # ขั้น 1: หักส่วนลดเข้ารายการก่อนหน้า
+        items = ExpenseTool._net_discounts(items)
+        if not items:
+            return []
+
         try:
-            subtotal = float(data.get("subtotal") or 0)
             grand_total = float(data.get("grand_total") or 0)
         except (ValueError, TypeError):
             return items
 
-        if subtotal <= 0 or grand_total <= 0 or grand_total == subtotal:
+        if grand_total <= 0:
             return items
 
-        ratio = grand_total / subtotal
+        items_sum = sum(it["amount"] for it in items)
+
+        # ถ้ายอดตรงกับ grand_total แล้ว → ไม่ต้องปรับ
+        if abs(items_sum - grand_total) < 0.5:
+            return items
+
+        # ขั้น 2: ปรับสัดส่วน SC/VAT ให้รวมเป็น grand_total
+        ratio = grand_total / items_sum
         adjusted = []
         running_total = 0.0
         for i, item in enumerate(items):
@@ -523,7 +549,6 @@ class ExpenseTool(BaseTool):
                 new_amount = round(item["amount"] * ratio, 2)
                 running_total += new_amount
             else:
-                # last item gets the remainder to avoid rounding drift
                 new_amount = round(grand_total - running_total, 2)
             adjusted.append({**item, "amount": new_amount})
         return adjusted
@@ -535,7 +560,7 @@ class ExpenseTool(BaseTool):
             amount = float(data.get("amount", 0))
         except (ValueError, TypeError):
             return None
-        if amount <= 0:
+        if amount == 0:
             return None
         return {
             "amount": amount,
