@@ -528,20 +528,26 @@ class ExpenseTool(BaseTool):
 
         try:
             grand_total = float(data.get("grand_total") or 0)
+            subtotal = float(data.get("subtotal") or 0)
         except (ValueError, TypeError):
             return items
 
         if grand_total <= 0:
             return items
 
+        # ขั้น 2: ปรับสัดส่วน SC/VAT เฉพาะเมื่อมี subtotal ที่ต่างจาก grand_total
+        # (เช่น ร้านอาหารที่บวก SC 10% + VAT 7%)
+        # ถ้าไม่มี subtotal หรือ subtotal == grand_total → ไม่ปรับ ratio
+        if subtotal <= 0 or abs(subtotal - grand_total) < 0.5:
+            return items
+
+        ratio = grand_total / subtotal
         items_sum = sum(it["amount"] for it in items)
 
-        # ถ้ายอดตรงกับ grand_total แล้ว → ไม่ต้องปรับ
+        # ถ้ายอดรวม items ตรงกับ grand_total อยู่แล้ว → ไม่ต้องปรับ
         if abs(items_sum - grand_total) < 0.5:
             return items
 
-        # ขั้น 2: ปรับสัดส่วน SC/VAT ให้รวมเป็น grand_total
-        ratio = grand_total / items_sum
         adjusted = []
         running_total = 0.0
         for i, item in enumerate(items):
