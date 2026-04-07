@@ -425,18 +425,25 @@ class ExpenseTool(BaseTool):
 
             prompt = (
                 "วิเคราะห์รูปนี้ซึ่งเป็นใบเสร็จ, บิล, หรือ slip การโอนเงิน\n"
-                "ดึงรายการสินค้า/บริการ **ทุกรายการ** ออกมาเป็น JSON:\n"
+                "ดึงรายการสินค้า/บริการออกมาเป็น JSON:\n"
                 '{"store": "<ชื่อร้าน>", "subtotal": <ยอดรวมก่อน SC/VAT (number หรือ null)>, "grand_total": <ยอดสุทธิที่จ่ายจริง (number หรือ null)>, "items": [\n'
                 '  {"amount": <ยอดเงินรวมของบรรทัดนั้น (number)>, "qty": <จำนวน (number, default 1)>, "category": "<หมวดหมู่>", "note": "<ชื่อรายการสั้นๆ>"},\n'
                 "  ...\n"
                 "]}\n"
+                "\n"
+                "## โครงสร้างใบเสร็จไทย\n"
+                "ใบเสร็จมี 2 column: ชื่อรายการ (ซ้าย) กับ ราคา (ขวา)\n"
+                "- **รายการสินค้า**: มีชื่อสินค้าและราคาอยู่ใน column ขวา → สร้าง item\n"
+                "- **บรรทัดราคาต่อชิ้น**: เยื้องซ้าย แสดง 'จำนวน * ราคา / ชิ้น' เช่น '2 * 29.00 / ชิ้น' → เป็นรายละเอียดของรายการก่อนหน้า **ห้ามสร้าง item แยก** ราคารวมอยู่ในบรรทัดก่อนหน้าแล้ว\n"
+                "- **ส่วนลด/coupon**: เยื้องซ้าย มียอดติดลบ เช่น 'CPN3 - BHT  -31.75' → สร้าง item โดย amount เป็นจำนวนติดลบ\n"
+                "\n"
+                "## กฎ\n"
+                "amount = ยอดเงินรวมของบรรทัดนั้นตามที่พิมพ์ใน column ราคา\n"
+                "ถ้า qty=2 ราคาชิ้นละ 30 แสดง 60 → ใส่ amount=60, qty=2\n"
+                "subtotal = ยอดรวมก่อนบวก service charge และ VAT (ถ้าไม่มีใส่ null)\n"
+                "grand_total = ยอดเงินสุทธิที่จ่ายจริง (ถ้าไม่มีใส่ null)\n"
+                "**ตรวจสอบ**: ผลรวมของ amount ทุกรายการ (รวมส่วนลดติดลบ) ต้องเท่ากับ grand_total\n"
                 "หมวดหมู่ที่แนะนำ: อาหาร, เครื่องดื่ม, เดินทาง, ช็อปปิ้ง, ของใช้, สาธารณูปโภค, สุขภาพ, บันเทิง, การศึกษา, โอนเงิน, ทั่วไป\n"
-                "amount = ยอดเงินรวมของบรรทัดนั้นตามที่พิมพ์ในใบเสร็จ (ถ้า qty=2 ราคาชิ้นละ 30 แสดง 60 ให้ใส่ 60)\n"
-                "**ห้ามนับซ้ำ**: บรรทัดที่แสดงราคาต่อชิ้น เช่น '2 * 29.00 / ชิ้น' หรือ '3 x 50.00' เป็นรายละเอียดของรายการก่อนหน้า ไม่ใช่รายการใหม่ — ห้ามสร้าง item แยก\n"
-                "**สำคัญ**: รายการส่วนลด/coupon/discount ให้ใส่เป็นจำนวนติดลบ เช่น CPN3 -31.75 → amount=-31.75\n"
-                "**ตรวจสอบ**: ผลรวมของ amount ทุกรายการ (รวมส่วนลดติดลบ) ต้องเท่ากับ grand_total — ถ้าไม่ตรงให้ตรวจสอบว่ามีรายการซ้ำหรือขาดหาย\n"
-                "subtotal = ยอดรวมราคาอาหาร/สินค้าก่อนบวก service charge และ VAT (ถ้าไม่มีใส่ null)\n"
-                "grand_total = ยอดเงินสุทธิที่จ่ายจริงหลังรวม service charge, VAT, ส่วนลด ฯลฯ (ถ้าไม่มีใส่ null)\n"
                 "ถ้าเป็น slip โอนเงินที่มีรายการเดียว ให้คืน items เพียง 1 ตัว\n"
                 "ตอบเฉพาะ JSON เท่านั้น ไม่ต้องอธิบายเพิ่ม\n"
                 "ถ้าอ่านไม่ออกหรือไม่ใช่ใบเสร็จ/บิล/slip ให้ตอบ: null"
@@ -507,8 +514,31 @@ class ExpenseTool(BaseTool):
             return f"API_ERROR:{e}"
 
     @staticmethod
-    def _net_discounts(items: list[dict]) -> list[dict]:
-        """หักส่วนลด (amount ติดลบ) เข้ารายการก่อนหน้าที่ติดกัน"""
+    def _dedup_by_grand_total(items: list[dict], grand_total: float) -> list[dict]:
+        """ถ้า items รวมมากกว่า grand_total → ลองตัดรายการซ้ำ (ราคาเท่ากันกับตัวก่อนหน้า) ทีละตัวจนยอดตรง"""
+        if grand_total <= 0:
+            return items
+
+        changed = True
+        while changed:
+            changed = False
+            items_sum = sum(it["amount"] for it in items)
+            diff = items_sum - grand_total
+            if diff < 0.5:
+                break
+            # หา candidate: รายการบวกที่ amount เท่ากับรายการก่อนหน้า แล้วตัดออกทำให้ diff ลดลง
+            for i in range(len(items) - 1, 0, -1):
+                if items[i]["amount"] > 0 and items[i]["amount"] == items[i - 1]["amount"]:
+                    if abs(diff - items[i]["amount"]) < 0.5 or items[i]["amount"] <= diff:
+                        items = items[:i] + items[i + 1:]
+                        changed = True
+                        break
+        return items
+
+    @staticmethod
+    def _net_discounts(items: list[dict], grand_total: float = 0) -> list[dict]:
+        """ตัดรายการซ้ำโดยใช้ grand_total ตรวจสอบ แล้วหักส่วนลด (amount ติดลบ) เข้ารายการก่อนหน้า"""
+        items = ExpenseTool._dedup_by_grand_total(items, grand_total)
         result = []
         for item in items:
             if item["amount"] < 0 and result and result[-1]["amount"] > 0:
@@ -522,16 +552,17 @@ class ExpenseTool(BaseTool):
     @staticmethod
     def _apply_grand_total_ratio(items: list[dict], data: dict) -> list[dict]:
         """Net ส่วนลดเข้ารายการก่อนหน้า แล้ว reconcile กับ grand_total สำหรับ SC/VAT"""
-        # ขั้น 1: หักส่วนลดเข้ารายการก่อนหน้า
-        items = ExpenseTool._net_discounts(items)
-        if not items:
-            return []
-
         try:
             grand_total = float(data.get("grand_total") or 0)
             subtotal = float(data.get("subtotal") or 0)
         except (ValueError, TypeError):
-            return items
+            grand_total = 0
+            subtotal = 0
+
+        # ขั้น 1: ตัดรายการซ้ำ + หักส่วนลดเข้ารายการก่อนหน้า
+        items = ExpenseTool._net_discounts(items, grand_total)
+        if not items:
+            return []
 
         if grand_total <= 0:
             return items
