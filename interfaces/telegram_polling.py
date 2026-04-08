@@ -262,6 +262,8 @@ def _handle_update(update: dict):
             log.exception("process_message failed for %s: %s", user_id, e)
     finally:
         log.info("Finished processing for %s", user_id)
+        from core.db import close_thread_local_connection
+        close_thread_local_connection()
 
 
 def _handle_callback_query(callback_query: dict):
@@ -301,3 +303,6 @@ def _handle_callback_query(callback_query: dict):
     except Exception as e:
         log.error("Callback handler failed: %s", e, exc_info=True)
         answer_callback_query(callback_id, "เกิดข้อผิดพลาด")
+    finally:
+        from core.db import close_thread_local_connection
+        close_thread_local_connection()
