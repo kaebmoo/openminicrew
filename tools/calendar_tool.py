@@ -1,5 +1,6 @@
 """Google Calendar tool using the same per-user Google OAuth token."""
 
+import re
 from datetime import datetime, timedelta
 
 from googleapiclient.discovery import build
@@ -36,12 +37,20 @@ class CalendarTool(BaseTool):
                     result = self._list_events(service)
                 else:
                     sub = tokens[0].lower()
-                    if sub == "add" and len(tokens) >= 5:
-                        result = self._add_event(service, tokens[1], tokens[2], tokens[3], " ".join(tokens[4:]))
+                    if sub == "add":
+                        add_rest = " ".join(tokens[1:])
+                        if not add_rest.strip():
+                            result = "❌ กรุณาระบุชื่อนัดหมาย วันที่ และเวลา\nตัวอย่าง: add ประชุมทีม 2026-04-22 14:00"
+                        else:
+                            try:
+                                date_str, start_time, end_time, title = self._parse_add_args(add_rest)
+                                result = self._add_event(service, date_str, start_time, end_time, title)
+                            except ValueError as ve:
+                                result = f"❌ {ve}\nตัวอย่าง: add ประชุมทีม 2026-04-22 14:00"
                     elif sub == "delete" and len(tokens) >= 2:
                         result = self._delete_event(service, tokens[1])
                     else:
-                        result = "❌ ใช้: /calendar list | /calendar add YYYY-MM-DD HH:MM HH:MM ชื่องาน | /calendar delete <ลำดับหรือ event_id>"
+                        result = "❌ ใช้: /calendar list | /calendar add ชื่องาน YYYY-MM-DD HH:MM | /calendar delete <ลำดับหรือ event_id>"
 
             db.log_tool_usage(
                 user_id=user_id,
@@ -152,6 +161,55 @@ class CalendarTool(BaseTool):
             + "\nกรุณาลองใหม่อีกครั้ง ถ้ายังไม่หายให้ใช้ /authgmail เพื่อเชื่อมต่อใหม่"
         )
 
+    def _parse_add_args(self, raw: str) -> tuple:
+        """Extract date, start_time, end_time, title from flexible input.
+
+        Supports any argument order:
+          - add 2026-04-22 14:00 15:00 ประชุมทีม
+          - add ประชุมทีม 2026-04-22 14:00
+          - add ประชุมทีม 2026-04-22 14:00-15:00
+        End time defaults to start + 1 hour if omitted.
+        """
+        # 1) Extract date YYYY-MM-DD
+        date_m = re.search(r'(\d{4}-\d{2}-\d{2})', raw)
+        if not date_m:
+            raise ValueError("ไม่พบวันที่ (YYYY-MM-DD)")
+        date_str = date_m.group(1)
+        rest = raw[:date_m.start()] + raw[date_m.end():]
+
+        # 2) Try time range HH:MM-HH:MM first
+        range_m = re.search(r'(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})', rest)
+        if range_m:
+            start_time = self._zero_pad_time(range_m.group(1))
+            end_time = self._zero_pad_time(range_m.group(2))
+            rest = rest[:range_m.start()] + rest[range_m.end():]
+        else:
+            # 3) Extract individual HH:MM tokens
+            times = re.findall(r'(?<!\d)(\d{1,2}:\d{2})(?!\d)', rest)
+            if not times:
+                raise ValueError("ไม่พบเวลา (HH:MM)")
+            start_time = self._zero_pad_time(times[0])
+            if len(times) >= 2:
+                end_time = self._zero_pad_time(times[1])
+            else:
+                h, m = int(start_time.split(':')[0]), int(start_time.split(':')[1])
+                end_time = f"{(h + 1) % 24:02d}:{m:02d}"
+            for t in times:
+                rest = re.sub(re.escape(t), '', rest, count=1)
+
+        # 4) Remaining text → title
+        title = re.sub(r'\s+', ' ', rest).strip(' \t\n-–:')
+        if not title:
+            title = "(ไม่มีชื่อ)"
+
+        return date_str, start_time, end_time, title
+
+    @staticmethod
+    def _zero_pad_time(t: str) -> str:
+        """Ensure HH:MM is zero-padded, e.g. '9:00' → '09:00'."""
+        parts = t.split(':')
+        return f"{int(parts[0]):02d}:{parts[1]}"
+
     def _add_event(self, service, date_str: str, start_time: str, end_time: str, title: str) -> str:
         start_dt = f"{date_str}T{start_time}:00+07:00"
         end_dt = f"{date_str}T{end_time}:00+07:00"
@@ -205,7 +263,18 @@ class CalendarTool(BaseTool):
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"args": {"type": "string", "description": "คำสั่ง calendar"}},
+                "properties": {"args": {
+                    "type": "string",
+                    "description": (
+                        "sub-command string. STRICT format:\n"
+                        "• list\n"
+                        "• add YYYY-MM-DD HH:MM HH:MM ชื่องาน  (date MUST be YYYY-MM-DD, time MUST be HH:MM 24h)\n"
+                        "  end time optional → default +1 ชม.\n"
+                        "  examples: 'add 2026-04-22 14:00 15:00 ประชุมทีม' | 'add 2026-04-22 14:00 Claude Cowork'\n"
+                        "• delete <ลำดับ|event_id>\n"
+                        "IMPORTANT: always convert Thai date/time to YYYY-MM-DD HH:MM before calling."
+                    ),
+                }},
                 "required": [],
             },
         }
