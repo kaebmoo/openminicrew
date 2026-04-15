@@ -1,6 +1,7 @@
 """Lotto Tool — ตรวจผลสลากกินแบ่งรัฐบาลผ่าน API"""
 
 import re
+import socket
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -11,13 +12,33 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 API_BASE = "https://lotto.api.rayriffy.com"
+LOTTO_API_HOST = "lotto.api.rayriffy.com"
+LOTTO_API_FALLBACK_IP = "104.21.77.159"
 
-# Session with automatic retry — handles DNS round-robin failures
-# (e.g. one of the resolved IPs is unreachable)
 _session = requests.Session()
-_retry = Retry(total=3, backoff_factor=0.5,
-               status_forcelist=[502, 503, 504])
-_session.mount("https://", HTTPAdapter(max_retries=_retry))
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _lotto_get(url: str, timeout: int = 10) -> requests.Response:
+    """GET with fallback: try DNS first, on connection error retry via known-good IP."""
+    try:
+        return _session.get(url, timeout=timeout)
+    except requests.ConnectionError:
+        log.warning("Lotto API connection failed via DNS, retrying with fallback IP %s",
+                    LOTTO_API_FALLBACK_IP)
+        # Temporarily force DNS to known-good IP and retry
+        # (keeps original URL so SSL/SNI works correctly)
+        def _forced_resolve(host, port, family=0, type=0, proto=0, flags=0):
+            if host == LOTTO_API_HOST:
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, '',
+                         (LOTTO_API_FALLBACK_IP, port))]
+            return _orig_getaddrinfo(host, port, family, type, proto, flags)
+
+        socket.getaddrinfo = _forced_resolve
+        try:
+            return _session.get(url, timeout=timeout)
+        finally:
+            socket.getaddrinfo = _orig_getaddrinfo
 GLO_URL = "https://www.glo.or.th/mission/reward-payment/check-reward"
 
 # Mapping prize id → emoji + Thai name
@@ -141,7 +162,7 @@ class LottoTool(BaseTool):
             else:
                 url = f"{API_BASE}/latest"
 
-            resp = _session.get(url, timeout=10)
+            resp = _lotto_get(url)
             data = resp.json()
 
             if data.get("status") != "success":
@@ -161,7 +182,7 @@ class LottoTool(BaseTool):
     def _fetch_draw_list(self, page: int = 1) -> list | None:
         """Fetch list of available draws from API."""
         try:
-            resp = _session.get(f"{API_BASE}/list/{page}", timeout=10)
+            resp = _lotto_get(f"{API_BASE}/list/{page}")
             data = resp.json()
             if data.get("status") != "success":
                 return None
