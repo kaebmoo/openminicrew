@@ -1,10 +1,7 @@
 """Lotto Tool — ตรวจผลสลากกินแบ่งรัฐบาลผ่าน API"""
 
 import re
-import socket
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 from tools.base import BaseTool
 from core import db
 from core.logger import get_logger
@@ -13,33 +10,26 @@ log = get_logger(__name__)
 
 API_BASE = "https://lotto.api.rayriffy.com"
 LOTTO_API_HOST = "lotto.api.rayriffy.com"
-LOTTO_API_FALLBACK_IP = "104.21.77.159"
-
-_session = requests.Session()
-_orig_getaddrinfo = socket.getaddrinfo
 
 
 def _lotto_get(url: str, timeout: int = 10) -> requests.Response:
-    """GET with fallback: try DNS first, on connection error retry via known-good IP."""
+    """Fetch using requests, fallback to proxy if OS network drops the domain entirely."""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
-        return _session.get(url, timeout=timeout)
-    except requests.ConnectionError:
-        log.warning("Lotto API connection failed via DNS, retrying with fallback IP %s",
-                    LOTTO_API_FALLBACK_IP)
-        # Use a fresh session to avoid cached connection pool,
-        # and temporarily force DNS to known-good IP.
-        def _forced_resolve(host, port, family=0, type=0, proto=0, flags=0):
-            if host == LOTTO_API_HOST:
-                return [(socket.AF_INET, socket.SOCK_STREAM, 6, '',
-                         (LOTTO_API_FALLBACK_IP, port))]
-            return _orig_getaddrinfo(host, port, family, type, proto, flags)
-
-        socket.getaddrinfo = _forced_resolve
+        # ลองดึงข้อมูลตรงๆ ให้เวลาสั้นๆ ถ้าเน็ตเครื่องโดนบล็อกก็จะหลุดไปหา proxy ทันที
+        return requests.get(url, timeout=3, headers=headers)
+    except Exception as e:
+        log.warning(f"Direct fetch failed: {e}. Falling back to proxy for {url}")
         try:
-            with requests.Session() as fallback:
-                return fallback.get(url, timeout=timeout)
-        finally:
-            socket.getaddrinfo = _orig_getaddrinfo
+            # ใช้ api.codetabs.com เพื่อทำ proxy เลี่ยงปัญหาการถูกบล็อกเส้นทางชั่วคราว
+            proxy_url = f"https://api.codetabs.com/v1/proxy/?quest={url}"
+            resp = requests.get(proxy_url, timeout=timeout, headers=headers)
+            return resp
+        except Exception as proxy_e:
+            log.error(f"Proxy fallback failed: {proxy_e}")
+            resp = requests.Response()
+            resp.status_code = 500
+            return resp
 GLO_URL = "https://www.glo.or.th/mission/reward-payment/check-reward"
 
 # Mapping prize id → emoji + Thai name
