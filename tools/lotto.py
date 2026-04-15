@@ -26,8 +26,8 @@ def _lotto_get(url: str, timeout: int = 10) -> requests.Response:
     except requests.ConnectionError:
         log.warning("Lotto API connection failed via DNS, retrying with fallback IP %s",
                     LOTTO_API_FALLBACK_IP)
-        # Temporarily force DNS to known-good IP and retry
-        # (keeps original URL so SSL/SNI works correctly)
+        # Use a fresh session to avoid cached connection pool,
+        # and temporarily force DNS to known-good IP.
         def _forced_resolve(host, port, family=0, type=0, proto=0, flags=0):
             if host == LOTTO_API_HOST:
                 return [(socket.AF_INET, socket.SOCK_STREAM, 6, '',
@@ -36,7 +36,8 @@ def _lotto_get(url: str, timeout: int = 10) -> requests.Response:
 
         socket.getaddrinfo = _forced_resolve
         try:
-            return _session.get(url, timeout=timeout)
+            with requests.Session() as fallback:
+                return fallback.get(url, timeout=timeout)
         finally:
             socket.getaddrinfo = _orig_getaddrinfo
 GLO_URL = "https://www.glo.or.th/mission/reward-payment/check-reward"
