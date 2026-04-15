@@ -2,6 +2,8 @@
 
 import re
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from tools.base import BaseTool
 from core import db
 from core.logger import get_logger
@@ -9,6 +11,13 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 API_BASE = "https://lotto.api.rayriffy.com"
+
+# Session with automatic retry — handles DNS round-robin failures
+# (e.g. one of the resolved IPs is unreachable)
+_session = requests.Session()
+_retry = Retry(total=3, backoff_factor=0.5,
+               status_forcelist=[502, 503, 504])
+_session.mount("https://", HTTPAdapter(max_retries=_retry))
 GLO_URL = "https://www.glo.or.th/mission/reward-payment/check-reward"
 
 # Mapping prize id → emoji + Thai name
@@ -132,7 +141,7 @@ class LottoTool(BaseTool):
             else:
                 url = f"{API_BASE}/latest"
 
-            resp = requests.get(url, timeout=10)
+            resp = _session.get(url, timeout=10)
             data = resp.json()
 
             if data.get("status") != "success":
@@ -152,7 +161,7 @@ class LottoTool(BaseTool):
     def _fetch_draw_list(self, page: int = 1) -> list | None:
         """Fetch list of available draws from API."""
         try:
-            resp = requests.get(f"{API_BASE}/list/{page}", timeout=10)
+            resp = _session.get(f"{API_BASE}/list/{page}", timeout=10)
             data = resp.json()
             if data.get("status") != "success":
                 return None
