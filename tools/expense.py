@@ -5,6 +5,8 @@ import json
 import re
 from datetime import date, timedelta
 
+from google.genai import errors as genai_errors
+
 from core import db
 from core.logger import get_logger
 from tools.base import BaseTool
@@ -333,6 +335,8 @@ class ExpenseTool(BaseTool):
 
         if extracted == "NO_API_KEY":
             return "❌ ยังไม่ได้ตั้งค่า Gemini API key — ไม่สามารถวิเคราะห์รูปได้\nตั้งค่าด้วย: /setkey gemini <key>\nหรือพิมพ์เอง: /expense 104 ช็อปปิ้ง Villa Market"
+        if extracted == "RATE_LIMITED":
+            return "⏳ ระบบอ่านรูปกำลังคิวเต็มชั่วคราว (Gemini quota exhausted) กรุณารอสักครู่แล้วส่งใหม่ หรือพิมพ์เอง: /expense 104 ช็อปปิ้ง Villa Market"
         if isinstance(extracted, str) and extracted.startswith("API_ERROR:"):
             error_detail = extracted.replace("API_ERROR:", "")
             return f"❌ Gemini Vision เกิดข้อผิดพลาด: {error_detail}\nลองส่งรูปใหม่ หรือพิมพ์เอง: /expense 104 ช็อปปิ้ง Villa Market"
@@ -411,7 +415,7 @@ class ExpenseTool(BaseTool):
 
     async def _extract_expense_from_image(self, image_bytes: bytes, hint: str = "") -> list | str | None:
         """ใช้ Gemini Vision วิเคราะห์รูปบิล/slip → return list[dict], error string, หรือ None"""
-        from core.config import GEMINI_API_KEY
+        from core.config import GEMINI_API_KEY, GEMINI_MODEL_CHEAP, GEMINI_MODEL_MID
 
         if not GEMINI_API_KEY:
             log.warning("Gemini API key not configured, cannot analyze receipt image")
@@ -453,11 +457,37 @@ class ExpenseTool(BaseTool):
 
             image_part = genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
             text_part = genai_types.Part.from_text(text=prompt)
+            contents = [genai_types.Content(role="user", parts=[image_part, text_part])]
 
-            resp = await client.aio.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=[genai_types.Content(role="user", parts=[image_part, text_part])],
-            )
+            # Try cheap model first; on 429 fall back to mid model. Other errors fail
+            # immediately so we don't waste quota on the larger model for unrelated issues.
+            # Both models come from .env (GEMINI_MODEL_CHEAP / GEMINI_MODEL_MID) — never
+            # hardcode here, since per-model quotas can throttle independently.
+            models_to_try = [GEMINI_MODEL_CHEAP]
+            if GEMINI_MODEL_MID and GEMINI_MODEL_MID != GEMINI_MODEL_CHEAP:
+                models_to_try.append(GEMINI_MODEL_MID)
+
+            resp = None
+            last_429 = None
+            for idx, model in enumerate(models_to_try):
+                try:
+                    resp = await client.aio.models.generate_content(
+                        model=model,
+                        contents=contents,
+                    )
+                    if idx > 0:
+                        log.info("Gemini Vision succeeded on fallback model %s after 429", model)
+                    break
+                except genai_errors.ClientError as e:
+                    if e.code == 429:
+                        last_429 = e
+                        log.warning("Gemini Vision %s rate-limited (429), trying next model", model)
+                        continue
+                    raise
+
+            if resp is None:
+                log.error("All Gemini models rate-limited for receipt image: %s", last_429)
+                return "RATE_LIMITED"
 
             if not resp.candidates or not resp.candidates[0].content:
                 log.warning("Gemini Vision returned no candidates for receipt image")
