@@ -336,7 +336,7 @@ class ExpenseTool(BaseTool):
         if extracted == "NO_API_KEY":
             return "❌ ยังไม่ได้ตั้งค่า Gemini API key — ไม่สามารถวิเคราะห์รูปได้\nตั้งค่าด้วย: /setkey gemini <key>\nหรือพิมพ์เอง: /expense 104 ช็อปปิ้ง Villa Market"
         if extracted == "RATE_LIMITED":
-            return "⏳ ระบบอ่านรูปกำลังคิวเต็มชั่วคราว (Gemini quota exhausted) กรุณารอสักครู่แล้วส่งใหม่ หรือพิมพ์เอง: /expense 104 ช็อปปิ้ง Villa Market"
+            return "⏳ ระบบ Gemini ขัดข้องชั่วคราว (quota เต็ม / timeout / overload) กรุณารอสักครู่แล้วส่งใหม่ หรือพิมพ์เอง: /expense 104 ช็อปปิ้ง Villa Market"
         if isinstance(extracted, str) and extracted.startswith("API_ERROR:"):
             error_detail = extracted.replace("API_ERROR:", "")
             return f"❌ Gemini Vision เกิดข้อผิดพลาด: {error_detail}\nลองส่งรูปใหม่ หรือพิมพ์เอง: /expense 104 ช็อปปิ้ง Villa Market"
@@ -425,7 +425,7 @@ class ExpenseTool(BaseTool):
             from google import genai
             from google.genai import types as genai_types
 
-            client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 30000})
+            client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 60000})
 
             prompt = (
                 "วิเคราะห์รูปนี้ซึ่งเป็นใบเสร็จ, บิล, หรือ slip การโอนเงิน\n"
@@ -459,16 +459,17 @@ class ExpenseTool(BaseTool):
             text_part = genai_types.Part.from_text(text=prompt)
             contents = [genai_types.Content(role="user", parts=[image_part, text_part])]
 
-            # Try cheap model first; on 429 fall back to mid model. Other errors fail
-            # immediately so we don't waste quota on the larger model for unrelated issues.
-            # Both models come from .env (GEMINI_MODEL_CHEAP / GEMINI_MODEL_MID) — never
-            # hardcode here, since per-model quotas can throttle independently.
+            # Try cheap model first; on transient failures (429 quota, 5xx server-side
+            # timeouts/overload) fall back to the mid model. Hard ClientErrors (400/401)
+            # raise immediately so we don't burn quota on the bigger model for problems
+            # the request itself can't solve. Models come from .env so per-model quotas
+            # can be tuned without code changes.
             models_to_try = [GEMINI_MODEL_CHEAP]
             if GEMINI_MODEL_MID and GEMINI_MODEL_MID != GEMINI_MODEL_CHEAP:
                 models_to_try.append(GEMINI_MODEL_MID)
 
             resp = None
-            last_429 = None
+            last_transient = None
             for idx, model in enumerate(models_to_try):
                 try:
                     resp = await client.aio.models.generate_content(
@@ -476,17 +477,22 @@ class ExpenseTool(BaseTool):
                         contents=contents,
                     )
                     if idx > 0:
-                        log.info("Gemini Vision succeeded on fallback model %s after 429", model)
+                        log.info("Gemini Vision succeeded on fallback model %s after transient failure", model)
                     break
                 except genai_errors.ClientError as e:
                     if e.code == 429:
-                        last_429 = e
+                        last_transient = e
                         log.warning("Gemini Vision %s rate-limited (429), trying next model", model)
                         continue
                     raise
+                except genai_errors.ServerError as e:
+                    # 5xx — Gemini-side timeout/overload/internal. Worth trying the other model.
+                    last_transient = e
+                    log.warning("Gemini Vision %s server error (%s), trying next model", model, getattr(e, "code", "?"))
+                    continue
 
             if resp is None:
-                log.error("All Gemini models rate-limited for receipt image: %s", last_429)
+                log.error("All Gemini models failed transiently for receipt image: %s", last_transient)
                 return "RATE_LIMITED"
 
             if not resp.candidates or not resp.candidates[0].content:
