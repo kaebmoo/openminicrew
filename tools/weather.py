@@ -10,7 +10,7 @@ from tools.base import BaseTool
 from core.config import GOOGLE_MAPS_API_KEY
 from core import db
 from core.logger import get_logger
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_metadata, load_prompt
 
 log = get_logger(__name__)
 
@@ -133,6 +133,7 @@ class WeatherTool(BaseTool):
     direct_output = True
 
     def get_tool_spec(self) -> dict:
+        meta = load_metadata("tools/weather.md")
         return {
             "name": self.name,
             "description": load_prompt("tools/weather.md").strip(),
@@ -141,24 +142,24 @@ class WeatherTool(BaseTool):
                 "properties": {
                     "args": {
                         "type": "string",
-                        "description": "ชื่อเมืองหรือสถานที่ที่ต้องการดูสภาพอากาศ เช่น 'เชียงใหม่', 'Tokyo', 'London'. หากผู้ใช้ถามว่า 'อากาศแถวนี้' หรือไม่ระบุสถานที่ ให้เว้นว่างไว้ ระบบจะใช้ GPS ปัจจุบัน",
+                        "description": meta.get("parameters_args", "").strip(),
                     },
                     "forecast_days": {
                         "type": "integer",
-                        "description": "จำนวนวันที่ต้องการพยากรณ์ล่วงหน้า (1-10). ค่าเริ่มต้น 10. ถ้าผู้ใช้ถามวันที่เจาะจง ให้คำนวณจำนวนวันจากวันนี้ เช่น วันนี้ 4 เมษา ถามวันที่ 11 เมษา = ส่ง 8. ถ้าไม่ระบุให้ใช้ค่าเริ่มต้น 10",
+                        "description": meta.get("parameters_forecast_days", "").strip(),
                     },
                     "show_history": {
                         "type": "boolean",
-                        "description": "ตั้งเป็น True หากผู้ใช้ถามถึงอดีต (เช่น ย้อนหลัง, อดีต, วันก่อน, เมื่อวาน, ที่ผ่านมา, เมื่อกี้)",
+                        "description": meta.get("parameters_show_history", "").strip(),
                     },
                     "history_hours": {
                         "type": "integer",
-                        "description": "จำนวนชั่วโมงย้อนหลังที่ต้องการดู (1-24). ค่าเริ่มต้น 24. ถ้า 'เมื่อวาน' ให้ส่ง 24, 'เมื่อ 2-3 ชั่วโมงก่อน' ให้ส่ง 3",
+                        "description": meta.get("parameters_history_hours", "").strip(),
                     },
                     "target_date": {
                         "type": "string",
-                        "description": "วันที่เจาะจงที่อยากดูพยากรณ์ รูปแบบ YYYY-MM-DD เช่น '2026-04-11'. ถ้าระบุจะแสดงเฉพาะวันนั้น. ถ้าไม่ระบุจะแสดงทั้งหมด",
-                    }
+                        "description": meta.get("parameters_target_date", "").strip(),
+                    },
                 },
             },
         }
