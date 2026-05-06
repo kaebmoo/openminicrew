@@ -66,6 +66,22 @@ class MyTool(BaseTool):
         return "Result"
 ```
 
+> Most tools don't need to override `get_tool_spec()` — `BaseTool` has a default that auto-loads `description` + args description from `prompts/tools/<name>.md` by convention (see [section 5](#5-get_tool_spec--three-modes) for override cases).
+
+### Step 2.5: Create `prompts/tools/<name>.md`
+
+Every tool needs a companion description file in `prompts/tools/` (filename matches `tool.name`):
+
+```markdown
+---
+parameters_args: |
+  Describe the `args` parameter — format, examples, and constraints
+---
+Description used by LLM to decide when to call this tool — write positive case + negative boundary + examples
+```
+
+`BaseTool.get_tool_spec()` (default) reads this file and assembles the tool spec automatically — no Python repetition needed. If the tool has no `args` parameter, omit `parameters_args:`, or add `args_required: false` in frontmatter when `args` is optional.
+
 ### Step 3: (Optional) Add dependencies
 
 ```bash
@@ -98,6 +114,10 @@ python main.py
 
 ## Basic Template
 
+A tool consists of 2 files — Python class + markdown description.
+
+**File 1: `tools/my_tool.py`**
+
 ```python
 """My Tool — Brief description"""
 
@@ -111,31 +131,18 @@ log = get_logger(__name__)
 
 class MyTool(BaseTool):
     name = "my_tool"
-    description = "Description that LLM uses to decide when to call this tool"
+    description = "Fallback description — used when no markdown file exists (e.g. admin tools you don't want exposed to LLM)"
     commands = ["/mytool"]
     direct_output = True       # True = send result directly, False = let LLM summarize
     preferred_tier = "cheap"   # cheap = Haiku/Flash, mid = Sonnet/Pro (used when tool calls LLM internally)
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
-        """
-        Main function — called when user uses /command or LLM selects this tool.
-
-        Parameters:
-            user_id: Telegram chat ID of the user (string)
-            args: text after the command, e.g. "/mytool hello" → args = "hello"
-            **kwargs: extra parameters from LLM
-
-        Returns:
-            string to send back to user
-        """
+        """Main function — called when user uses /command or LLM selects this tool."""
         if not args:
             return "Please specify... e.g. /mytool xxx"
 
         try:
-            # === Main logic ===
             result = f"Result for: {args}"
-
-            # === Log usage (recommended) ===
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
@@ -143,7 +150,6 @@ class MyTool(BaseTool):
                 **db.make_log_field("input", args, kind="tool_command"),
                 **db.make_log_field("output", result, kind="tool_result"),
             )
-
             return result
 
         except Exception as e:
@@ -156,26 +162,18 @@ class MyTool(BaseTool):
                 **db.make_error_fields(str(e)),
             )
             return f"Error: {e}"
+```
 
-    def get_tool_spec(self) -> dict:
-        """
-        Tell LLM what parameters this tool accepts.
-        LLM Router auto-converts format to match provider (Claude/Gemini).
-        """
-        return {
-            "name": self.name,               # ❗ always use self.name, never hardcode
-            "description": "Description that LLM uses to decide",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": "Describe what this parameter is",
-                    }
-                },
-                "required": [],
-            },
-        }
+> No need to override `get_tool_spec()` — `BaseTool` default reads `description` + `args` description from `prompts/tools/my_tool.md` (see [section 5](#5-get_tool_spec--three-modes) for override cases).
+
+**File 2: `prompts/tools/my_tool.md`**
+
+```markdown
+---
+parameters_args: |
+  Describe the `args` parameter — format, examples, constraints
+---
+Description that LLM uses to decide when to call this tool — write positive case, negative boundary, and examples
 ```
 
 Structured logging notes:
@@ -259,23 +257,20 @@ class WeatherTool(BaseTool):
         except Exception as e:
             log.error(f"Weather API error: {e}")
             return f"Failed to fetch weather: {e}"
-
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": "Get today's weather forecast for a city",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": "City name, e.g. Bangkok, London, Tokyo",
-                    }
-                },
-                "required": [],
-            },
-        }
 ```
+
+Companion markdown file — `prompts/tools/weather.md`:
+
+```markdown
+---
+parameters_args: |
+  City name, e.g. 'Bangkok', 'London', 'Tokyo'. Defaults to 'Bangkok' if not provided
+args_required: false
+---
+Get today's weather forecast for a given city — use when user asks about weather conditions
+```
+
+No need to override `get_tool_spec()` — `BaseTool` default reads description + args description from markdown and assembles the tool spec automatically.
 
 **Usage:**
 
@@ -320,6 +315,7 @@ from tools.base import BaseTool
 from core.config import GOOGLE_MAPS_API_KEY
 from core import db
 from core.logger import get_logger
+from core.prompt_loader import load_metadata, load_prompt
 
 log = get_logger(__name__)
 
@@ -419,35 +415,41 @@ class TrafficTool(BaseTool):
         return "🏍 Motorcycle route..."
 
     def get_tool_spec(self) -> dict:
+        meta = load_metadata("tools/traffic.md")
         return {
-            "name": "traffic",
-            "description": (
-                "Check route, distance, travel time, and real-time traffic "
-                "between two locations via Google Maps"
-            ),
+            "name": self.name,
+            "description": load_prompt("tools/traffic.md").strip(),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "args": {
                         "type": "string",
-                        "description": (
-                            "Origin and destination separated by 'to' or 'ไป', e.g. "
-                            "'Siam to Silom', 'Central World ไป Suvarnabhumi'"
-                        ),
+                        "description": meta.get("parameters_args", "").strip(),
                     },
                     "mode": {
                         "type": "string",
                         "enum": ["driving", "walking", "transit", "two_wheeler"],
-                        "description": (
-                            "Travel mode: driving=car, walking=on foot, "
-                            "transit=public transport, two_wheeler=motorcycle"
-                        ),
+                        "description": meta.get("parameters_mode", "").strip(),
                     },
                 },
                 "required": ["args"],
             },
         }
 ```
+
+Companion markdown file — `prompts/tools/traffic.md`:
+
+```markdown
+---
+parameters_args: |
+  Origin and destination separated by 'to' or 'ไป', e.g. 'Siam to Silom', 'Central World ไป Suvarnabhumi'
+parameters_mode: |
+  Travel mode: driving=car, walking=on foot, transit=public transport, two_wheeler=motorcycle
+---
+Check route, distance, travel time, and real-time traffic between two locations via Google Maps
+```
+
+> Tools with multiple parameters (e.g. an `enum` like `mode`) still need to override `get_tool_spec()`, but they load description + parameter descriptions from markdown frontmatter via `load_metadata()` instead of hardcoding strings.
 
 **Key features of the actual Traffic Tool:**
 
@@ -647,29 +649,19 @@ class PlacesTool(BaseTool):
             log.error(f"Places API error: {e}")
             db.log_tool_usage(user_id, self.name, args[:100], status="failed", error_message=str(e))
             return f"Error: {e}"
-
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": "places",
-            "description": (
-                "Search for nearby places, e.g. 'cafe near Siam', "
-                "'restaurant near Sukhumvit', 'hospital near Ladprao'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": (
-                            "Search query with location, e.g. "
-                            "'cafe near Siam', 'restaurant near Sukhumvit'"
-                        ),
-                    }
-                },
-                "required": ["args"],
-            },
-        }
 ```
+
+Companion markdown file — `prompts/tools/places.md`:
+
+```markdown
+---
+parameters_args: |
+  Search query with location, e.g. 'cafe near Siam', 'restaurant near Sukhumvit'
+---
+Search for nearby places, e.g. 'cafe near Siam', 'restaurant near Sukhumvit', 'hospital near Ladprao'
+```
+
+No need to override `get_tool_spec()` — `BaseTool` default auto-loads from markdown
 
 **Key features of the actual Places Tool:**
 
@@ -707,6 +699,7 @@ import requests
 
 from tools.base import BaseTool
 from core.llm import llm_router
+from core.prompt_loader import load_prompt
 from core.user_manager import get_user, get_preference
 from core.logger import get_logger
 
@@ -786,13 +779,7 @@ class NewsSummaryTool(BaseTool):
         user = get_user(user_id) or {}
         provider = get_preference(user, "default_llm")
 
-        system_prompt = (
-            "You are a smart news anchor. Tone: concise, friendly, easy to understand.\n"
-            "1. Group related news together\n"
-            "2. Summarize key points concisely\n"
-            "3. Add reference numbers [1] [2] at the end of each story\n"
-            "4. Do not add URLs — the system appends them automatically"
-        )
+        system_prompt = load_prompt("internal/news_summary_system.md")
 
         chat_resp = await llm_router.chat(
             messages=[{"role": "user", "content": f"Summarize these news ({display_label}):\n{headlines_text}"}],
@@ -807,6 +794,21 @@ class NewsSummaryTool(BaseTool):
 
         return f"📰 News Summary: {display_label}\n\n{summary}\n\n🔗 References:\n{refs_text}"
 ```
+
+Companion markdown file — `prompts/internal/news_summary_system.md`:
+
+```markdown
+---
+description: System prompt that instructs LLM how to summarize news as a bullet list
+---
+You are a smart news anchor. Tone: concise, friendly, easy to understand.
+1. Group related news together
+2. Summarize key points concisely
+3. Add reference numbers [1] [2] at the end of each story
+4. Do not add URLs — the system appends them automatically
+```
+
+> Prompts that the tool sends to the LLM internally (e.g. system prompts for summarization) belong in `prompts/internal/<name>.md` and should be loaded via `load_prompt()` instead of hardcoded in Python — edit the prompt without redeploying.
 
 **Key points:**
 
@@ -859,6 +861,7 @@ resp2 = await llm_router.chat(..., tier="mid", ...)
 
 from tools.base import BaseTool
 from core.llm import llm_router
+from core.prompt_loader import load_prompt
 from core.user_manager import get_user, get_preference
 from core.logger import get_logger
 
@@ -879,10 +882,7 @@ class ResearchSummaryTool(BaseTool):
             user = get_user(user_id) or {}
             provider = get_preference(user, "default_llm")
 
-            system_prompt = (
-                "You are a Senior Data Analyst. "
-                "Analyze data using rigorous logic. State impacts and recommendations."
-            )
+            system_prompt = load_prompt("internal/research_summary_system.md")
 
             resp = await llm_router.chat(
                 messages=[{"role": "user", "content": f"Analyze this topic:\n{args}"}],
@@ -896,23 +896,29 @@ class ResearchSummaryTool(BaseTool):
         except Exception as e:
             log.error(f"Research failed: {e}")
             return f"Analysis failed: {e}"
-
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": "Brainstorm and analyze deeply on difficult or complex topics",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": "The particular topic for in-depth analysis",
-                    }
-                },
-                "required": [],
-            },
-        }
 ```
+
+Companion markdown files — `prompts/tools/research_summary.md` + `prompts/internal/research_summary_system.md`:
+
+```markdown
+# prompts/tools/research_summary.md
+---
+parameters_args: |
+  The particular topic for in-depth analysis
+args_required: false
+---
+Brainstorm and analyze deeply on difficult or complex topics
+```
+
+```markdown
+# prompts/internal/research_summary_system.md
+---
+description: System prompt for research summary tool
+---
+You are a Senior Data Analyst. Analyze data using rigorous logic. State impacts and recommendations.
+```
+
+The tool routing description lives in `prompts/tools/` (BaseTool default uses it directly), while the internal LLM system prompt lives in `prompts/internal/`.
 
 **What happens here:**
 
@@ -1036,53 +1042,107 @@ class BaseTool(ABC):
 - Use `commands` for deterministic slash commands.
 - Use `get_tool_spec()` to help the LLM choose the tool for broader or ambiguous requests — the LLM understands natural language natively, no need to write regex parsers.
 
-### 5. Writing `get_tool_spec()`
+### 5. `get_tool_spec()` — Three Modes
 
-The tool spec uses a **generic format** — LLM Router auto-converts to match the provider:
+Tool spec uses a **generic format** — LLM Router auto-converts to match the provider. There are 3 modes for defining it:
+
+#### Mode 1: No override (use BaseTool default — most tools)
+
+- The `BaseTool` default handles it for you — no Python repetition
+- Loads `description` from the body of `prompts/tools/<name>.md`
+- Loads `args` description from frontmatter key `parameters_args`
+- Set `args_required: false` in frontmatter when args is optional
+- Use for: tools whose only parameter is `args` (string)
 
 ```python
-def get_tool_spec(self) -> dict:
-    return {
-        "name": self.name,             # ❗ always use self.name, never hardcode
-        "description": "Description",  # LLM uses this to decide — clearer is better
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "args": {              # parameter name
-                    "type": "string",  # type: string, integer, boolean
-                    "description": "Describe what this parameter is",
-                }
-            },
-            "required": [],            # list of required parameters
-        },
-    }
+class PromptPayTool(BaseTool):
+    name = "promptpay"
+    # ... no get_tool_spec() override
 ```
 
-**Adding an enum parameter** — lets LLM select a value directly instead of parsing text:
+```markdown
+# prompts/tools/promptpay.md
+---
+parameters_args: |
+  Amount and/or phone number / national ID, e.g. '150', '120 0812345678'
+---
+Generate a PromptPay QR for receiving money...
+```
+
+#### Mode 2: Override + load from markdown (for tools with extra parameters)
+
+- Write `get_tool_spec()` yourself
+- Use `load_prompt("tools/<name>.md")` to load description (body)
+- Use `load_metadata("tools/<name>.md")` to load parameter descriptions from frontmatter
+- Use for: weather (`forecast_days`, `target_date`), traffic (`mode`), oil_price (`compare_date`), exchange_rate (`from`/`to`), schedule (`action`, `repeat`)
 
 ```python
-"properties": {
-    "args": {
-        "type": "string",
-        "description": "Origin and destination separated by 'to'",
-    },
-    "mode": {
-        "type": "string",
-        "enum": ["driving", "walking", "transit", "two_wheeler"],
-        "description": "Travel mode: driving=car, walking=on foot, transit=public transport, two_wheeler=motorcycle",
-    },
+from core.prompt_loader import load_metadata, load_prompt
+
+class WeatherTool(BaseTool):
+    name = "weather"
+
+    def get_tool_spec(self) -> dict:
+        meta = load_metadata("tools/weather.md")
+        return {
+            "name": self.name,
+            "description": load_prompt("tools/weather.md").strip(),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "args": {"type": "string", "description": meta.get("parameters_args", "").strip()},
+                    "forecast_days": {"type": "integer", "description": meta.get("parameters_forecast_days", "").strip()},
+                    "target_date": {"type": "string", "description": meta.get("parameters_target_date", "").strip()},
+                },
+            },
+        }
+```
+
+```markdown
+# prompts/tools/weather.md
+---
+parameters_args: |
+  City or location name, e.g. 'Chiang Mai', 'Tokyo'. Defaults to GPS if not specified
+parameters_forecast_days: |
+  Number of days to forecast (1-10)
+parameters_target_date: |
+  Specific date in YYYY-MM-DD format (e.g. '2026-04-11')
+---
+Get current weather conditions and forecast
+```
+
+#### Mode 3: Return `None` (hide from LLM)
+
+- The tool will not appear in the tool spec the LLM sees — accessible via `/command` only
+- Use for: admin tools, settings, apikeys (anything you don't want the LLM to invoke)
+
+```python
+class ApiKeysTool(BaseTool):
+    name = "apikeys"
+    commands = ["/setkey", "/mykeys", "/removekey"]
+
+    def get_tool_spec(self) -> dict | None:
+        return None  # hide from LLM
+```
+
+#### Tip: enum parameter
+
+In Mode 2, declare `enum` so the LLM picks a valid value directly instead of parsing text:
+
+```python
+"mode": {
+    "type": "string",
+    "enum": ["driving", "walking", "transit", "two_wheeler"],
+    "description": meta.get("parameters_mode", "").strip(),
 },
 ```
 
-LLM sends `mode="walking"` directly → `execute()` receives it via `**kwargs` or as a named param:
+LLM sends `mode="walking"` directly → `execute()` receives it via a named param or `**kwargs`:
 
 ```python
 async def execute(self, user_id: str, args: str = "", mode: str = "driving", **kwargs) -> str:
-    # mode is extracted from kwargs automatically
     ...
 ```
-
-**If tool has no parameters** — don't override `get_tool_spec()` (BaseTool has a default).
 
 ### 6. Error Handling
 
@@ -1173,6 +1233,65 @@ result = await loop.run_in_executor(None, sync_function, arg1, arg2)
 - **Never** create `asyncio.new_event_loop()` inside a tool
 - Symptom of violation: intermittent errors **only** when scheduler runs the tool (manual `/command` works fine)
 
+### 10. Prompts Directory
+
+All system prompts live as markdown files in the `prompts/` directory, not hardcoded in Python — edit a prompt = edit markdown, no redeploy needed.
+
+**Structure:**
+
+- `prompts/system/` — system prompts for the dispatcher (`base.md`, `tool_routing.md`, etc.)
+- `prompts/tools/` — description for each tool (filename matches `tool.name`)
+- `prompts/internal/` — LLM prompts that tools invoke internally (e.g. `expense_vision_extract.md`, `gmail_summary_system.md`)
+
+**Frontmatter syntax:**
+
+```markdown
+---
+description: short description (optional)
+parameters_args: |
+  description of args parameter
+parameters_<param_name>: |
+  description of another parameter (e.g. parameters_forecast_days)
+args_required: false   # set when args is optional (default: true if parameters_args present)
+---
+(body content here)
+```
+
+**Usage in Python:**
+
+```python
+from core.prompt_loader import load_prompt, load_metadata
+
+# Load body
+description = load_prompt("tools/myTool.md")
+
+# Load body + substitute template variables
+prompt = load_prompt("internal/expense_vision_extract.md", user_hint="Villa Market receipt")
+
+# Load frontmatter as a dict
+meta = load_metadata("tools/weather.md")
+args_desc = meta.get("parameters_args", "").strip()
+```
+
+**Hot reload:**
+
+- Set `PROMPT_HOT_RELOAD=1` in `.env` (dev mode) — markdown changes reload automatically when files change
+- Production: leave at `0` (default) — prompts are cached in memory for performance
+
+**JSON literals in body:**
+
+If the body contains a JSON example, escape `{` and `}` with `{{` `}}` because `load_prompt()` uses `str.format()` to substitute variables:
+
+```markdown
+{{"key": "value", "user": "{user_name}"}}
+```
+
+renders to `{"key": "value", "user": "Alice"}` when `user_name="Alice"`.
+
+**Validation:**
+
+`core.prompt_loader.validate_all_prompts()` runs at startup in `main.py`. If any prompt has a syntax error → bot crashes with an error message identifying the offending file.
+
 ---
 
 ## Pre-Deploy Checklist
@@ -1185,15 +1304,17 @@ result = await loop.run_in_executor(None, sync_function, arg1, arg2)
 - [ ] `execute()` has signature: `async def execute(self, user_id: str, args: str = "", **kwargs) -> str`
 - [ ] `execute()` always returns a string (never returns None)
 - [ ] `execute()` wrapped in `try/except` — no unhandled exceptions
-- [ ] `get_tool_spec()` uses `self.name` (**never hardcode** the tool name)
+- [ ] If overriding `get_tool_spec()` — use `self.name`, never hardcode
+- [ ] Companion `prompts/tools/<tool_name>.md` file exists (verify with `python -c "from core.prompt_loader import validate_all_prompts; validate_all_prompts()"`)
 - [ ] `direct_output` set appropriately
 
 ### Recommended (skipping = works but not great)
 
 - [ ] `db.log_tool_usage()` for both success and failed (dispatcher handles failed cases, but success must be logged by the tool)
 - [ ] Set `preferred_tier` if tool calls LLM internally (`"mid"` for complex tasks)
-- [ ] `get_tool_spec()` has a clear description (LLM uses it to decide)
-- [ ] If using enum parameter → use `"enum": [...]` in properties
+- [ ] `prompts/tools/<name>.md` body has a clear description (LLM uses it to decide — write positive case + negative boundary + examples)
+- [ ] If the tool calls LLM internally — move the system prompt to `prompts/internal/<name>.md` and load with `load_prompt()` instead of hardcoding
+- [ ] If using enum parameter → use `"enum": [...]` in properties (requires `get_tool_spec()` Mode 2 override)
 - [ ] If using an API key → added to `.env`, `.env.example`, `core/config.py`
 - [ ] If using a new library → added to `requirements.txt`
 - [ ] Tested via direct `/command`

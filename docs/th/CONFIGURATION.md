@@ -146,6 +146,12 @@ flow ปัจจุบัน:
 | `MAX_CONTEXT_MESSAGES` | `10` | จำนวนข้อความที่ส่งเป็น context ให้ LLM |
 | `CHAT_HISTORY_RETENTION_DAYS` | `30` | จำนวนวันก่อน auto-cleanup |
 
+## Prompt System
+
+| ตัวแปร | Default | คำอธิบาย |
+| --- | --- | --- |
+| `PROMPT_HOT_RELOAD` | `0` | dev mode: ตั้งเป็น `1` เพื่อ auto-reload prompts จาก `prompts/*.md` เมื่อแก้ไฟล์. Production: ปล่อย `0` เพื่อ cache ใน memory |
+
 ## Scheduling
 
 | ตัวแปร | Default | คำอธิบาย |

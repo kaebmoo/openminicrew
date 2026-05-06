@@ -149,6 +149,16 @@ Both share `telegram_common.py`: auth checks, message splitting, rate limiting.
 - Per-user cron schedules (e.g. morning email briefing).
 - Daily cleanup job: prune old chat history, tool logs, processed emails.
 
+### 7. Prompt Loader
+
+All system prompts live as markdown files in the `prompts/` directory rather than hardcoded in Python:
+
+- `prompts/system/` — dispatcher system prompts
+- `prompts/tools/` — description for each tool (matches `tool.name`)
+- `prompts/internal/` — LLM prompts that tools invoke themselves
+
+Use `core.prompt_loader.load_prompt()` to load + `validate_all_prompts()` to syntax-check at startup. Set `PROMPT_HOT_RELOAD=1` in dev mode to auto-reload on markdown changes — see [TOOLS_GUIDE.md](TOOLS_GUIDE.md#10-prompts-directory) for details.
+
 ## Project Structure
 
 ```
@@ -166,8 +176,14 @@ openminicrew/
 │   ├── api_keys.py          # per-user key resolution (user key → shared key)
 │   ├── user_manager.py      # auth, preferences, onboarding
 │   ├── security.py          # OAuth token refresh
+│   ├── prompt_loader.py     # loads prompts from prompts/ + validates at startup
 │   ├── concurrency.py       # semaphores, rate limiting
 │   └── logger.py            # structured logging
+│
+├── prompts/                 # markdown prompts (system + tools + internal)
+│   ├── system/              # dispatcher system prompts
+│   ├── tools/               # tool routing descriptions
+│   └── internal/            # LLM prompts invoked by tools
 │
 ├── tools/                   # tools (auto-discovered)
 │   ├── base.py              # BaseTool abstract class
