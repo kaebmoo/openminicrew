@@ -10,6 +10,7 @@ import requests
 from core import db
 from core.config import BOT_API_EXCHANGE_TOKEN, BOT_API_HOLIDAY_TOKEN
 from core.logger import get_logger
+from core.prompt_loader import load_prompt
 from tools.base import BaseTool
 
 log = get_logger(__name__)
@@ -548,18 +549,7 @@ class ExchangeRateTool(BaseTool):
         currency_list = ", ".join(SUPPORTED_CURRENCIES.keys())
         return {
             "name": self.name,
-            "description": (
-                "ดูอัตราแลกเปลี่ยนเงินตราต่างประเทศเป็นบาทไทย จากธนาคารแห่งประเทศไทย "
-                "รองรับเปรียบเทียบ 2 ช่วงเวลาด้วย compare_date "
-                "สำคัญมาก: เมื่อผู้ใช้พูดถึงอัตราแลกเปลี่ยน ให้เรียก tool นี้ทันที "
-                "ห้ามถามกลับเด็ดขาด ห้ามขอข้อมูลเพิ่ม — ถ้าผู้ใช้ไม่ระบุสกุลเงิน ให้ส่ง args ว่าง (tool จะแสดง USD GBP EUR JPY CNY อัตโนมัติ) "
-                "ถ้าผู้ใช้ไม่ระบุวันที่ ให้ส่ง date ว่าง (tool จะใช้วันทำการล่าสุดอัตโนมัติ) "
-                "ถ้าผู้ใช้ไม่ระบุ period ให้ส่ง period ว่าง (tool จะใช้ daily อัตโนมัติ) "
-                "tool จะจัดการวันหยุด/เสาร์-อาทิตย์เอง โดยหาวันทำการก่อนหน้าให้อัตโนมัติ "
-                "ให้ส่ง date และ period ตามที่ผู้ใช้ระบุเสมอ ไม่ต้องตรวจสอบว่าเป็นวันหยุดหรือไม่ "
-                "เช่น 'เทียบค่าเงินดอลลาร์เดือน ม.ค. กับเดือน มี.ค.', "
-                "'ค่าเงินดอลลาร์เดือนนี้ vs เดือนที่แล้ว'"
-            ),
+            "description": load_prompt("tools/exchange_rate.md").strip(),
             "parameters": {
                 "type": "object",
                 "properties": {

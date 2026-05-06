@@ -1,8 +1,9 @@
 """Chat History Tool — ดูประวัติสนทนาผ่านภาษาธรรมชาติ"""
 
 from core import db
-from tools.base import BaseTool
 from core.logger import get_logger
+from core.prompt_loader import load_prompt
+from tools.base import BaseTool
 
 log = get_logger(__name__)
 
@@ -18,14 +19,7 @@ class ChatHistoryTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": (
-                "ดูประวัติสนทนา / chat history ของผู้ใช้. "
-                "ใช้เมื่อ user พูดถึง 'ดูประวัติสนทนา', 'chat history', "
-                "'เรียกดู chat history', 'แสดงประวัติ', 'history' "
-                "หรือคำที่เกี่ยวข้องกับการดูบันทึกการสนทนาที่ผ่านมา. "
-                "ค่าเริ่มต้นจะแสดงเนื้อหาข้อความของสนทนาล่าสุด. "
-                "ถ้าระบุ mode='list' จะแสดงรายชื่อสนทนาทั้งหมด"
-            ),
+            "description": load_prompt("tools/chat_history.md").strip(),
             "parameters": {
                 "type": "object",
                 "properties": {

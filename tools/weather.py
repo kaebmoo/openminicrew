@@ -10,6 +10,7 @@ from tools.base import BaseTool
 from core.config import GOOGLE_MAPS_API_KEY
 from core import db
 from core.logger import get_logger
+from core.prompt_loader import load_prompt
 
 log = get_logger(__name__)
 
@@ -134,7 +135,7 @@ class WeatherTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": "ดูสภาพอากาศปัจจุบัน และพยากรณ์อากาศล่วงหน้า (ใช้ได้ทั้งเมื่อระบุชื่อเมือง หรือถามอากาศแถวนี้)",
+            "description": load_prompt("tools/weather.md").strip(),
             "parameters": {
                 "type": "object",
                 "properties": {

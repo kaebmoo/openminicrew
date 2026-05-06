@@ -40,34 +40,6 @@ class ConsentTool(BaseTool):
     commands = []  # ไม่มี direct command — /consent อยู่ใน SYSTEM_COMMANDS แล้ว
     direct_output = True
 
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "จัดการ consent/ความยินยอมของผู้ใช้ เปิด-ปิดการเก็บข้อมูล. "
-                "ใช้เมื่อ user พูดเกี่ยวกับการอนุญาต/ยกเลิกการเก็บข้อมูล. "
-                "เช่น 'เปิดยินยอมบันทึกการสนทนา', 'ปิดเก็บตำแหน่ง', "
-                "'ยกเลิกการยินยอมบันทึกการสนทนา', 'ดูสถานะ consent'. "
-                "consent ที่มี: chat (ประวัติสนทนา), location (ตำแหน่ง GPS), gmail (อีเมล)"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": (
-                            "รูปแบบ: '<consent_type> <action>' "
-                            "consent_type: chat | location | gmail "
-                            "action: on | off | status "
-                            "เช่น 'chat on', 'location off', 'chat status' "
-                            "ถ้าไม่ระบุ args หรือแค่ 'status' จะแสดงสถานะทั้งหมด"
-                        ),
-                    }
-                },
-                "required": ["args"],
-            },
-        }
-
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         args = (args or "").strip().lower()
 

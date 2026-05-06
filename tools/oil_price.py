@@ -9,6 +9,7 @@ import requests
 
 from core import db
 from core.logger import get_logger
+from core.prompt_loader import load_prompt
 from tools.base import BaseTool
 
 log = get_logger(__name__)
@@ -575,18 +576,7 @@ class OilPriceTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": (
-                # Positive
-                "เช็คราคาน้ำมันปัจจุบัน (บางจาก/ปตท.) ราคาย้อนหลัง และเปรียบเทียบราคา 2 วัน. "
-                # Negative boundary
-                "ไม่ใช่สำหรับอัตราแลกเปลี่ยนเงินตรา (ใช้ exchange_rate) "
-                "และไม่ใช่สำหรับค้นหาสถานีบริการ/ปั๊มน้ำมัน (ใช้ places). "
-                # Examples
-                "เช่น 'ราคาน้ำมันวันนี้', 'น้ำมันเท่าไหร่', 'ดีเซลราคาเท่าไหร่', "
-                "'ราคาน้ำมันเมื่อวาน', 'ราคาน้ำมัน ปตท', "
-                "'ราคาน้ำมัน 1 ม.ค. กับวันนี้ ต่างกันเท่าไหร่', "
-                "'เทียบน้ำมันเดือนที่แล้วกับเดือนนี้'"
-            ),
+            "description": load_prompt("tools/oil_price.md").strip(),
             "parameters": {
                 "type": "object",
                 "properties": {

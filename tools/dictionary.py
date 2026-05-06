@@ -62,24 +62,3 @@ class DictionaryTool(BaseTool):
             )
             return f"❌ ค้นหาคำศัพท์ไม่สำเร็จ: {e}"
 
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "ค้นหาคำแปลและความหมายของคำศัพท์ภาษาอังกฤษ-ไทย (EN↔TH). "
-                "ใช้เมื่อ user ถาม 'X แปลว่า', 'ความหมายของ X', 'คำว่า X แปลเป็นอังกฤษ', "
-                "'define X', 'X meaning', 'X คือคำอะไร'. "
-                "ไม่ใช่สำหรับค้นหาข้อมูลทั่วไปบนเว็บ (ใช้ web_search). "
-                "เฉพาะคำศัพท์หรือวลีสั้นเท่านั้น ไม่ใช่สำหรับแปลประโยคยาวหรือเอกสาร"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": "คำศัพท์หรือวลีที่ต้องการค้นหาความหมาย เช่น 'managerial' หรือ 'ประชาธิปไตย'",
-                    }
-                },
-                "required": ["args"],
-            },
-        }

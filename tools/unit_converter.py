@@ -223,15 +223,3 @@ class UnitConverterTool(BaseTool):
             "• /convert 1-2-30 เป็น ตารางเมตร"
         )
 
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": "แปลงหน่วยไทยและสากล เช่น '/convert 10 km to mi', '/convert 2 ไร่ เป็น ตารางเมตร', '/convert 3 บาททอง เป็น g' ถ้าไม่ได้ระบุหน่วยปลายทางให้ใช้เป็นหน่วย SI Base Units เสมอ ยกเว้นอุณหภูมิให้ใช้เป็น C เสมอ",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {"type": "string", "description": "ข้อความการแปลงหน่วย เช่น '10 km to mi' หรือ '2 ไร่ เป็น ตารางเมตร'"}
-                },
-                "required": ["args"],
-            },
-        }
