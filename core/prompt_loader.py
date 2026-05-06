@@ -153,7 +153,8 @@ def validate_all_prompts(dummy_vars: dict[str, str] | None = None) -> list[str]:
 
     errors: list[str] = []
     if not PROMPTS_DIR.exists():
-        return [f"PROMPTS_DIR ไม่มีอยู่จริง: {PROMPTS_DIR}"]
+        log.warning("PROMPTS_DIR ไม่มีอยู่จริง: %s — skipping validation", PROMPTS_DIR)
+        return []
 
     for path in PROMPTS_DIR.rglob("*.md"):
         rel = path.relative_to(PROMPTS_DIR).as_posix()

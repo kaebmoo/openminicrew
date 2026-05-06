@@ -35,6 +35,7 @@ from core.security import (
     rotate_encrypted_security_artifacts,
 )
 from core.api_keys import rotate_user_api_key_encryption
+from core.prompt_loader import PROMPTS_DIR, validate_all_prompts
 from tools.registry import registry
 
 try:
@@ -228,26 +229,36 @@ def main():
 
     # 1. Init database
     init_db()
-    log.info("[1/6] Database initialized")
+    log.info("[1/7] Database initialized")
 
     # 2. Init owner user
     init_owner()
-    log.info("[2/6] Owner user initialized")
+    log.info("[2/7] Owner user initialized")
 
     # 3. Auto-check Gmail authorization
     _ensure_gmail_auth()
-    log.info("[3/6] Gmail auth checked")
+    log.info("[3/7] Gmail auth checked")
 
     # 4. Discover tools
     registry.discover()
-    log.info("[4/6] Tools discovered: %s", list(registry.tools.keys()))
+    log.info("[4/7] Tools discovered: %s", list(registry.tools.keys()))
 
-    # 5. Start scheduler
+    # 5. Validate prompts — fail-fast ก่อน serve traffic
+    prompt_errors = validate_all_prompts()
+    if prompt_errors:
+        log.error("Prompt validation failed:")
+        for err in prompt_errors:
+            log.error("  - %s", err)
+        raise SystemExit("Fix prompt errors before starting bot")
+    prompt_count = len(list(PROMPTS_DIR.rglob("*.md"))) if PROMPTS_DIR.exists() else 0
+    log.info("[5/7] Prompt validation passed (%d files checked)", prompt_count)
+
+    # 6. Start scheduler
     init_scheduler()
-    log.info("[5/6] Scheduler started")
+    log.info("[6/7] Scheduler started")
 
-    # 6. Start bot
-    log.info("[6/6] Starting bot in %s mode...", BOT_MODE.upper())
+    # 7. Start bot
+    log.info("[7/7] Starting bot in %s mode...", BOT_MODE.upper())
 
     if BOT_MODE == "webhook":
         from interfaces.telegram_webhook import start_webhook
