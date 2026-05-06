@@ -9,6 +9,7 @@ from googleapiclient.errors import HttpError
 
 from core import db
 from core.llm import llm_router
+from core.prompt_loader import load_metadata, load_prompt
 from core.security import get_gmail_credentials
 from core.user_manager import get_user_by_id, set_preference
 from core.logger import get_logger
@@ -125,10 +126,15 @@ class SmartInboxTool(BaseTool):
         content = []
         for idx, msg in enumerate(messages, 1):
             content.append(f"Email {idx}\nFrom: {msg['from']}\nSubject: {msg['subject']}\nDate: {msg['date']}\nBody: {msg['body']}\n")
+        emails_block = "\n".join(content)
+
+        user_prompt = load_prompt("internal/smart_inbox_action_items.md", emails_block=emails_block)
+        system_prompt = load_metadata("internal/smart_inbox_action_items.md").get("system_prompt", "")
+
         resp = await llm_router.chat(
-            messages=[{"role": "user", "content": "สรุป action items จากอีเมลเหล่านี้เป็น bullet list ภาษาไทย พร้อมบอกว่าควรทำอะไรต่อ\n\n" + "\n".join(content)}],
+            messages=[{"role": "user", "content": user_prompt}],
             tier=self.preferred_tier,
-            system="คุณเป็นผู้ช่วยจัดการ inbox สกัดเฉพาะงานที่ต้องทำ นัดหมายที่ต้องจำ และสิ่งที่ต้องตามต่อ ตอบเป็น bullet list ภาษาไทยที่กระชับ",
+            system=system_prompt,
         )
         return resp.get("content", "ไม่มี action item ที่ชัดเจน")
 
