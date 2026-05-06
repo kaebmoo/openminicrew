@@ -207,6 +207,39 @@ class TestLottoGetFallback:
         resp = _lotto_get("https://lotto.api.rayriffy.com/latest")
         assert resp.status_code == 500
 
+    @patch("tools.lotto.requests.get")
+    def test_direct_200_but_non_json_falls_back(self, mock_get):
+        # Server returns 200 with HTML/empty body — must trigger proxy fallback
+        bad = MagicMock()
+        bad.status_code = 200
+        bad.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+        good = _mock_resp({"status": "success", "response": {}})
+        mock_get.side_effect = [bad, good]
+        resp = _lotto_get("https://lotto.api.rayriffy.com/latest")
+        assert mock_get.call_count == 2
+        assert "codetabs.com" in mock_get.call_args_list[1][0][0]
+        assert resp is good
+
+    @patch("tools.lotto.requests.get")
+    def test_direct_non_200_falls_back(self, mock_get):
+        bad = MagicMock()
+        bad.status_code = 403
+        good = _mock_resp({"status": "success", "response": {}})
+        mock_get.side_effect = [bad, good]
+        resp = _lotto_get("https://lotto.api.rayriffy.com/latest")
+        assert mock_get.call_count == 2
+        assert resp is good
+
+    @patch("tools.lotto.requests.get")
+    def test_proxy_fail_returns_direct_response(self, mock_get):
+        # If direct returns non-JSON 200 AND proxy raises, prefer direct over fake 500
+        bad = MagicMock()
+        bad.status_code = 200
+        bad.json.side_effect = ValueError("nope")
+        mock_get.side_effect = [bad, Exception("proxy down")]
+        resp = _lotto_get("https://lotto.api.rayriffy.com/latest")
+        assert resp is bad
+
 
 # ---------- execute() integration ----------
 @pytest.mark.asyncio
