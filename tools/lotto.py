@@ -13,23 +13,36 @@ LOTTO_API_HOST = "lotto.api.rayriffy.com"
 
 
 def _lotto_get(url: str, timeout: int = 10) -> requests.Response:
-    """Fetch using requests, fallback to proxy if OS network drops the domain entirely."""
+    """Fetch using requests, fallback to proxy if direct call fails or returns garbage."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    direct_resp = None
     try:
         # ลองดึงข้อมูลตรงๆ ให้เวลาสั้นๆ ถ้าเน็ตเครื่องโดนบล็อกก็จะหลุดไปหา proxy ทันที
-        return requests.get(url, timeout=3, headers=headers)
+        direct_resp = requests.get(url, timeout=3, headers=headers)
+        # บาง network ตอบ 200 พร้อม body ว่างเปล่า / HTML challenge / error page
+        # → ถือว่า "ได้ response แต่ใช้ไม่ได้" และ fallback ไป proxy
+        if direct_resp.status_code == 200:
+            try:
+                direct_resp.json()
+                return direct_resp
+            except Exception as je:
+                log.warning(f"Direct fetch returned non-JSON for {url}: {je}. Falling back to proxy")
+        else:
+            log.warning(f"Direct fetch returned HTTP {direct_resp.status_code} for {url}. Falling back to proxy")
     except Exception as e:
         log.warning(f"Direct fetch failed: {e}. Falling back to proxy for {url}")
-        try:
-            # ใช้ api.codetabs.com เพื่อทำ proxy เลี่ยงปัญหาการถูกบล็อกเส้นทางชั่วคราว
-            proxy_url = f"https://api.codetabs.com/v1/proxy/?quest={url}"
-            resp = requests.get(proxy_url, timeout=timeout, headers=headers)
-            return resp
-        except Exception as proxy_e:
-            log.error(f"Proxy fallback failed: {proxy_e}")
-            resp = requests.Response()
-            resp.status_code = 500
-            return resp
+
+    try:
+        # ใช้ api.codetabs.com เพื่อทำ proxy เลี่ยงปัญหาการถูกบล็อกเส้นทางชั่วคราว
+        proxy_url = f"https://api.codetabs.com/v1/proxy/?quest={url}"
+        return requests.get(proxy_url, timeout=timeout, headers=headers)
+    except Exception as proxy_e:
+        log.error(f"Proxy fallback failed: {proxy_e}")
+        if direct_resp is not None:
+            return direct_resp
+        resp = requests.Response()
+        resp.status_code = 500
+        return resp
 GLO_URL = "https://www.glo.or.th/mission/reward-payment/check-reward"
 
 # Mapping prize id → emoji + Thai name
