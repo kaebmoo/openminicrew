@@ -66,6 +66,22 @@ class MyTool(BaseTool):
         return "ผลลัพธ์"
 ```
 
+> ส่วนใหญ่ไม่ต้อง override `get_tool_spec()` — `BaseTool` มี default ที่ auto-load `description` + args description จาก `prompts/tools/<name>.md` ตาม convention (ดูรายละเอียดใน [section 5](#5-get_tool_spec--three-modes))
+
+### Step 2.5: สร้างไฟล์ `prompts/tools/<name>.md`
+
+ทุก tool ต้องมีไฟล์ description คู่กันใน `prompts/tools/` (ชื่อไฟล์ตรงกับ `tool.name`):
+
+```markdown
+---
+parameters_args: |
+  อธิบาย parameter `args` เช่น รูปแบบ ตัวอย่าง และข้อจำกัด
+---
+คำอธิบายที่ LLM ใช้ตัดสินใจเรียก tool — เขียน positive case + negative boundary + examples
+```
+
+`BaseTool.get_tool_spec()` (default) จะอ่านไฟล์นี้แล้วประกอบ tool spec ให้อัตโนมัติ ไม่ต้องเขียน Python ซ้ำ. ถ้า tool ไม่มี parameter `args` ให้ละ `parameters_args:` ไว้ หรือเพิ่ม `args_required: false` ใน frontmatter เมื่อ `args` เป็น optional.
+
 ### Step 3: (Optional) เพิ่ม dependencies
 
 ```bash
@@ -98,6 +114,10 @@ python main.py
 
 ## Template พื้นฐาน
 
+Tool หนึ่งตัวประกอบด้วย 2 ไฟล์ — Python class + markdown description
+
+**ไฟล์ที่ 1: `tools/my_tool.py`**
+
 ```python
 """My Tool — คำอธิบายสั้นๆ"""
 
@@ -111,31 +131,18 @@ log = get_logger(__name__)
 
 class MyTool(BaseTool):
     name = "my_tool"
-    description = "คำอธิบายที่ LLM จะใช้ตัดสินใจว่าจะเรียก tool นี้เมื่อไหร่"
+    description = "คำอธิบายสำรอง — ใช้ตอนไม่มีไฟล์ markdown (เช่น admin tool ที่ไม่อยาก expose ให้ LLM)"
     commands = ["/mytool"]
     direct_output = True       # True = ส่งผลตรงๆ, False = ส่งให้ LLM สรุปอีกที
     preferred_tier = "cheap"   # cheap = Haiku/Flash, mid = Sonnet/Pro (ใช้เมื่อ tool เรียก LLM เอง)
 
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
-        """
-        ฟังก์ชันหลัก — ถูกเรียกเมื่อ user ใช้ /command หรือ LLM เลือก tool นี้
-
-        Parameters:
-            user_id: Telegram chat ID ของ user (string)
-            args: ข้อความที่ตามหลัง command เช่น "/mytool hello" → args = "hello"
-            **kwargs: parameter เพิ่มเติมที่ LLM ส่งมา
-
-        Returns:
-            string ที่จะส่งกลับให้ user
-        """
+        """ฟังก์ชันหลัก — ถูกเรียกเมื่อ user ใช้ /command หรือ LLM เลือก tool นี้"""
         if not args:
             return "กรุณาระบุ... เช่น /mytool xxx"
 
         try:
-            # === ทำงานหลัก ===
             result = f"ผลลัพธ์สำหรับ: {args}"
-
-            # === Log usage (แนะนำ) ===
             db.log_tool_usage(
                 user_id=user_id,
                 tool_name=self.name,
@@ -143,7 +150,6 @@ class MyTool(BaseTool):
                 **db.make_log_field("input", args, kind="tool_command"),
                 **db.make_log_field("output", result, kind="tool_result"),
             )
-
             return result
 
         except Exception as e:
@@ -156,26 +162,18 @@ class MyTool(BaseTool):
                 **db.make_error_fields(str(e)),
             )
             return f"เกิดข้อผิดพลาด: {e}"
+```
 
-    def get_tool_spec(self) -> dict:
-        """
-        บอก LLM ว่า tool นี้รับ parameter อะไร
-        LLM Router จะแปลง format ให้ตรง provider (Claude/Gemini) อัตโนมัติ
-        """
-        return {
-            "name": self.name,               # ❗ ใช้ self.name เสมอ ห้าม hardcode
-            "description": "คำอธิบายที่ LLM จะใช้ตัดสินใจ",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": "อธิบายว่า parameter นี้คืออะไร",
-                    }
-                },
-                "required": [],
-            },
-        }
+> ไม่ต้อง override `get_tool_spec()` — `BaseTool` default จะอ่าน `description` + `args` description จาก `prompts/tools/my_tool.md` (ดูรายละเอียดใน [section 5](#5-get_tool_spec--three-modes) สำหรับกรณีที่ต้อง override)
+
+**ไฟล์ที่ 2: `prompts/tools/my_tool.md`**
+
+```markdown
+---
+parameters_args: |
+  อธิบาย parameter `args` ของ tool นี้ — รูปแบบ ตัวอย่างการใช้ และข้อจำกัด
+---
+คำอธิบายที่ LLM ใช้ตัดสินใจเรียก tool — เขียน positive case, negative boundary และ examples
 ```
 
 หมายเหตุเรื่อง structured logging:
@@ -261,23 +259,20 @@ class WeatherTool(BaseTool):
         except Exception as e:
             log.error(f"Weather API error: {e}")
             return f"ดึงข้อมูลอากาศไม่ได้: {e}"
-
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": "พยากรณ์อากาศวันนี้ตามเมืองที่ระบุ",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": "ชื่อเมือง เช่น กรุงเทพ, เชียงใหม่, ภูเก็ต",
-                    }
-                },
-                "required": [],
-            },
-        }
 ```
+
+ไฟล์ markdown คู่กัน — `prompts/tools/weather.md`:
+
+```markdown
+---
+parameters_args: |
+  ชื่อเมือง เช่น 'กรุงเทพ', 'เชียงใหม่', 'ภูเก็ต'. ถ้าไม่ระบุจะใช้ 'กรุงเทพ' เป็น default
+args_required: false
+---
+พยากรณ์อากาศวันนี้ตามเมืองที่ระบุ — ใช้เมื่อ user ถามเรื่องสภาพอากาศ
+```
+
+ไม่ต้อง override `get_tool_spec()` — `BaseTool` default จะอ่าน description + args description จาก markdown แล้วประกอบ tool spec ให้อัตโนมัติ
 
 **ใช้งาน:**
 ```
@@ -321,6 +316,7 @@ from tools.base import BaseTool
 from core.config import GOOGLE_MAPS_API_KEY
 from core import db
 from core.logger import get_logger
+from core.prompt_loader import load_metadata, load_prompt
 
 log = get_logger(__name__)
 
@@ -420,35 +416,41 @@ class TrafficTool(BaseTool):
         return "🏍 เส้นทางมอเตอร์ไซค์..."
 
     def get_tool_spec(self) -> dict:
+        meta = load_metadata("tools/traffic.md")
         return {
-            "name": "traffic",
-            "description": (
-                "ใช้เช็คเส้นทาง ระยะทาง เวลาเดินทาง และสภาพจราจร real-time "
-                "ระหว่างสองจุด ผ่าน Google Maps"
-            ),
+            "name": self.name,
+            "description": load_prompt("tools/traffic.md").strip(),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "args": {
                         "type": "string",
-                        "description": (
-                            "ต้นทางและปลายทาง คั่นด้วย 'ไป' เช่น "
-                            "'สยาม ไป สีลม', 'Central World ไป สุวรรณภูมิ'"
-                        ),
+                        "description": meta.get("parameters_args", "").strip(),
                     },
                     "mode": {
                         "type": "string",
                         "enum": ["driving", "walking", "transit", "two_wheeler"],
-                        "description": (
-                            "โหมดการเดินทาง: driving=รถยนต์, walking=เดินเท้า, "
-                            "transit=รถโดยสาร, two_wheeler=มอเตอร์ไซค์"
-                        ),
+                        "description": meta.get("parameters_mode", "").strip(),
                     },
                 },
                 "required": ["args"],
             },
         }
 ```
+
+ไฟล์ markdown คู่กัน — `prompts/tools/traffic.md`:
+
+```markdown
+---
+parameters_args: |
+  ต้นทางและปลายทาง คั่นด้วย 'ไป' เช่น 'สยาม ไป สีลม', 'Central World ไป สุวรรณภูมิ'
+parameters_mode: |
+  โหมดการเดินทาง: driving=รถยนต์, walking=เดินเท้า, transit=รถโดยสาร, two_wheeler=มอเตอร์ไซค์
+---
+ใช้เช็คเส้นทาง ระยะทาง เวลาเดินทาง และสภาพจราจร real-time ระหว่างสองจุด ผ่าน Google Maps
+```
+
+> Tool ที่มี parameter หลายตัว (เช่น `mode` enum) ยังต้อง override `get_tool_spec()` แต่โหลด description + parameter descriptions จาก markdown frontmatter ผ่าน `load_metadata()` แทนการ hardcode
 
 **ฟีเจอร์หลักของ Traffic Tool (ใน code จริง):**
 
@@ -648,29 +650,19 @@ class PlacesTool(BaseTool):
             log.error(f"Places API error: {e}")
             db.log_tool_usage(user_id, self.name, args[:100], status="failed", error_message=str(e))
             return f"เกิดข้อผิดพลาด: {e}"
-
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": "places",
-            "description": (
-                "ค้นหาสถานที่ใกล้เคียง เช่น 'ร้านกาแฟแถวสยาม', "
-                "'restaurant near Sukhumvit', 'โรงพยาบาลใกล้ลาดพร้าว'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": (
-                            "สิ่งที่ต้องการค้นหา พร้อมสถานที่ เช่น "
-                            "'ร้านกาแฟแถวสยาม', 'restaurant near Sukhumvit'"
-                        ),
-                    }
-                },
-                "required": ["args"],
-            },
-        }
 ```
+
+ไฟล์ markdown คู่กัน — `prompts/tools/places.md`:
+
+```markdown
+---
+parameters_args: |
+  สิ่งที่ต้องการค้นหา พร้อมสถานที่ เช่น 'ร้านกาแฟแถวสยาม', 'restaurant near Sukhumvit'
+---
+ค้นหาสถานที่ใกล้เคียง เช่น 'ร้านกาแฟแถวสยาม', 'restaurant near Sukhumvit', 'โรงพยาบาลใกล้ลาดพร้าว'
+```
+
+ไม่ต้อง override `get_tool_spec()` — `BaseTool` default จะ auto-load จาก markdown
 
 **ฟีเจอร์หลักของ Places Tool (ใน code จริง):**
 
@@ -707,6 +699,7 @@ import requests
 
 from tools.base import BaseTool
 from core.llm import llm_router
+from core.prompt_loader import load_prompt
 from core.user_manager import get_user, get_preference
 from core.logger import get_logger
 
@@ -786,13 +779,7 @@ class NewsSummaryTool(BaseTool):
         user = get_user(user_id) or {}
         provider = get_preference(user, "default_llm")
 
-        system_prompt = (
-            "คุณเป็นผู้ประกาศข่าวอัจฉริยะ โทนภาษา: กระชับ เป็นกันเอง\n"
-            "1. จัดหมวดหมู่ข่าวที่เกี่ยวข้องเข้าด้วยกัน\n"
-            "2. สรุปใจความสำคัญให้สั้นกระชับ\n"
-            "3. ใส่หมายเลขอ้างอิง [1] [2] ไว้ท้ายแต่ละข่าว\n"
-            "4. ไม่ต้องใส่ URL — ระบบจะแปะให้ท้ายข้อความอัตโนมัติ"
-        )
+        system_prompt = load_prompt("internal/news_summary_system.md")
 
         chat_resp = await llm_router.chat(
             messages=[{"role": "user", "content": f"สรุปข่าว ({display_label}):\n{headlines_text}"}],
@@ -807,6 +794,21 @@ class NewsSummaryTool(BaseTool):
 
         return f"📰 สรุปข่าว: {display_label}\n\n{summary}\n\n🔗 ลิงก์อ้างอิง:\n{refs_text}"
 ```
+
+ไฟล์ markdown คู่กัน — `prompts/internal/news_summary_system.md`:
+
+```markdown
+---
+description: System prompt สำหรับให้ LLM สรุปข่าวเป็น bullet list
+---
+คุณเป็นผู้ประกาศข่าวอัจฉริยะ โทนภาษา: กระชับ เป็นกันเอง
+1. จัดหมวดหมู่ข่าวที่เกี่ยวข้องเข้าด้วยกัน
+2. สรุปใจความสำคัญให้สั้นกระชับ
+3. ใส่หมายเลขอ้างอิง [1] [2] ไว้ท้ายแต่ละข่าว
+4. ไม่ต้องใส่ URL — ระบบจะแปะให้ท้ายข้อความอัตโนมัติ
+```
+
+> Prompt ที่ tool เรียก LLM ภายใน (เช่น system prompt สำหรับ summary) ให้แยกไป `prompts/internal/<name>.md` และโหลดด้วย `load_prompt()` แทนการ hardcode ใน Python — แก้ prompt ไม่ต้อง redeploy
 
 **จุดสำคัญ:**
 
@@ -859,6 +861,7 @@ resp2 = await llm_router.chat(..., tier="mid", ...)
 
 from tools.base import BaseTool
 from core.llm import llm_router
+from core.prompt_loader import load_prompt
 from core.user_manager import get_user, get_preference
 from core.logger import get_logger
 
@@ -879,10 +882,7 @@ class ResearchSummaryTool(BaseTool):
             user = get_user(user_id) or {}
             provider = get_preference(user, "default_llm")
 
-            system_prompt = (
-                "คุณคือนักวิเคราะห์ข้อมูลอาวุโส "
-                "สรุปวิเคราะห์ข้อมูลด้วยหลักเหตุผลลอจิก วิเคราะห์ผลกระทบ และข้อแนะนำ"
-            )
+            system_prompt = load_prompt("internal/research_summary_system.md")
 
             resp = await llm_router.chat(
                 messages=[{"role": "user", "content": f"วิเคราะห์หัวข้อ:\n{args}"}],
@@ -896,23 +896,29 @@ class ResearchSummaryTool(BaseTool):
         except Exception as e:
             log.error(f"Research failed: {e}")
             return f"การวิเคราะห์ล้มเหลว: {e}"
-
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": "ระดมสมองวิเคราะห์หัวข้อยากๆ หรือพิจารณาข้อมูลเชิงลึก",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": "หัวข้อที่จะให้เจาะลึกวิเคราะห์",
-                    }
-                },
-                "required": [],
-            },
-        }
 ```
+
+ไฟล์ markdown คู่กัน — `prompts/tools/research_summary.md` + `prompts/internal/research_summary_system.md`:
+
+```markdown
+# prompts/tools/research_summary.md
+---
+parameters_args: |
+  หัวข้อที่จะให้เจาะลึกวิเคราะห์
+args_required: false
+---
+ระดมสมองวิเคราะห์หัวข้อยากๆ หรือพิจารณาข้อมูลเชิงลึก
+```
+
+```markdown
+# prompts/internal/research_summary_system.md
+---
+description: System prompt สำหรับ research summary tool
+---
+คุณคือนักวิเคราะห์ข้อมูลอาวุโส สรุปวิเคราะห์ข้อมูลด้วยหลักเหตุผลลอจิก วิเคราะห์ผลกระทบ และข้อแนะนำ
+```
+
+Tool routing description อยู่ใน `prompts/tools/` (BaseTool default ใช้ได้เลย) ส่วน system prompt ที่ tool เรียก LLM ภายในอยู่ใน `prompts/internal/`
 
 **สิ่งที่เกิดขึ้น:**
 1. dispatcher รับคำร้องและส่งมาหา Tool ตามปกติ (dispatcher ใช้โมเดลถูก)
@@ -1034,64 +1040,107 @@ class BaseTool(ABC):
 - ใช้ `commands` สำหรับ slash command ที่ deterministic
 - ใช้ `get_tool_spec()` เพื่อช่วยให้ LLM เลือก Tool ได้ถูกในงานที่กว้างหรือกำกวม — LLM เข้าใจภาษาธรรมชาติอยู่แล้ว ไม่ต้องเขียน regex parse เอง
 
-### 5. `get_tool_spec()` เขียนยังไง (Standardized Format)
+### 5. `get_tool_spec()` — Three Modes
 
-Tool spec เป็น **format กลาง** — LLM Router จะแปลงให้ตรง provider อัตโนมัติ.
-สิ่งสำคัญที่สุดคือ **`description`** ต้องเขียนให้ครอบคลุมขอบเขต (Boundary) เพื่อให้ LLM เลือก Tool ได้ถูกต้อง โดยให้ยึดโครงสร้างนี้:
+Tool spec เป็น **format กลาง** — LLM Router แปลงให้ตรง provider อัตโนมัติ. มี 3 mode ในการกำหนด:
 
-1. **Positive:** อธิบายว่า Tool นี้ทำอะไรได้
-2. **Usage Condition:** "ใช้เมื่อ..." อธิบาย pattern คำถามที่ควรเข้า Tool นี้
-3. **Negative Boundary:** "ไม่ใช่สำหรับ..." ดักทางที่ LLM มักจะหลงมาผิด และบอกว่าควรไปใช้ Tool ไหนแทน
-4. **Examples:** "เช่น..." ตัวอย่างคำถามที่ถูกต้อง
+#### Mode 1: ไม่ override (ใช้ BaseTool default — ส่วนใหญ่ของ tool)
+
+- Default ใน `BaseTool` ทำหน้าที่แทน — ไม่ต้องเขียน Python ซ้ำ
+- โหลด `description` จาก body ของ `prompts/tools/<name>.md`
+- โหลด `args` description จาก frontmatter key `parameters_args`
+- ตั้ง `args_required: false` ใน frontmatter ถ้า args เป็น optional
+- ใช้กับ: tool ที่มี parameter เดียวคือ `args` (string)
 
 ```python
-def get_tool_spec(self) -> dict:
-    return {
-        "name": self.name,             # ❗ ใช้ self.name เสมอ ห้าม hardcode
-        "description": (
-            "ค้นหาสถานที่จริงบนแผนที่ เช่น ร้านกาแฟ ร้านอาหาร โรงพยาบาล. "
-            "ใช้เมื่อ user ถามว่า 'มีร้านอะไรแถวนี้' หรือ 'หาร้าน...'. "
-            "ไม่ใช่สำหรับเช็คเส้นทาง/ระยะทาง/จราจร -- ให้ใช้ traffic แทน. "
-            "เช่น 'ร้านกาแฟแถวสยาม', 'ATM ใกล้ MBK'"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "args": {              # ชื่อ parameter
-                    "type": "string",  # ประเภท: string, integer, boolean
-                    "description": "อธิบาย parameter",
-                }
-            },
-            "required": ["args"],      # list ของ parameter ที่จำเป็น
-        },
-    }
+class PromptPayTool(BaseTool):
+    name = "promptpay"
+    # ... ไม่มี get_tool_spec() override
 ```
 
-**เพิ่ม enum parameter** — ให้ LLM เลือกค่าที่ถูกต้องได้ตรงๆ แทนการ regex text:
+```markdown
+# prompts/tools/promptpay.md
+---
+parameters_args: |
+  จำนวนเงินและ/หรือเบอร์โทร/เลขบัตรประชาชน เช่น '150', '120 0812345678'
+---
+สร้าง PromptPay QR สำหรับรับเงิน/รับโอน...
+```
+
+#### Mode 2: Override + load จาก markdown (สำหรับ tool ที่มี parameter พิเศษ)
+
+- เขียน `get_tool_spec()` เอง
+- ใช้ `load_prompt("tools/<name>.md")` โหลด description (body)
+- ใช้ `load_metadata("tools/<name>.md")` โหลด parameter descriptions จาก frontmatter
+- ใช้กับ: weather (`forecast_days`, `target_date`), traffic (`mode`), oil_price (`compare_date`), exchange_rate (`from`/`to`), schedule (`action`, `repeat`)
 
 ```python
-"properties": {
-    "args": {
-        "type": "string",
-        "description": "ต้นทางและปลายทาง คั่นด้วย 'ไป'",
-    },
-    "mode": {
-        "type": "string",
-        "enum": ["driving", "walking", "transit", "two_wheeler"],
-        "description": "โหมดการเดินทาง: driving=รถยนต์, walking=เดินเท้า, transit=รถโดยสาร, two_wheeler=มอเตอร์ไซค์",
-    },
+from core.prompt_loader import load_metadata, load_prompt
+
+class WeatherTool(BaseTool):
+    name = "weather"
+
+    def get_tool_spec(self) -> dict:
+        meta = load_metadata("tools/weather.md")
+        return {
+            "name": self.name,
+            "description": load_prompt("tools/weather.md").strip(),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "args": {"type": "string", "description": meta.get("parameters_args", "").strip()},
+                    "forecast_days": {"type": "integer", "description": meta.get("parameters_forecast_days", "").strip()},
+                    "target_date": {"type": "string", "description": meta.get("parameters_target_date", "").strip()},
+                },
+            },
+        }
+```
+
+```markdown
+# prompts/tools/weather.md
+---
+parameters_args: |
+  ชื่อเมืองหรือสถานที่ เช่น 'เชียงใหม่', 'Tokyo'. ถ้าไม่ระบุจะใช้ GPS ปัจจุบัน
+parameters_forecast_days: |
+  จำนวนวันที่ต้องการพยากรณ์ล่วงหน้า (1-10)
+parameters_target_date: |
+  วันที่เจาะจง รูปแบบ YYYY-MM-DD (เช่น '2026-04-11')
+---
+ดูสภาพอากาศปัจจุบัน และพยากรณ์อากาศล่วงหน้า
+```
+
+#### Mode 3: Return `None` (hide จาก LLM)
+
+- Tool จะไม่ปรากฏใน tool spec ที่ LLM เห็น — ใช้ผ่าน `/command` ตรงเท่านั้น
+- ใช้กับ: admin tools, settings, apikeys (ที่ไม่ต้องการให้ LLM เลือกเอง)
+
+```python
+class ApiKeysTool(BaseTool):
+    name = "apikeys"
+    commands = ["/setkey", "/mykeys", "/removekey"]
+
+    def get_tool_spec(self) -> dict | None:
+        return None  # hide จาก LLM
+```
+
+#### Tip: enum parameter
+
+เมื่อ override (Mode 2) ให้ระบุ `enum` เพื่อให้ LLM เลือกค่าที่ถูกต้องได้ตรงๆ แทนการ regex text:
+
+```python
+"mode": {
+    "type": "string",
+    "enum": ["driving", "walking", "transit", "two_wheeler"],
+    "description": meta.get("parameters_mode", "").strip(),
 },
 ```
 
-LLM จะส่ง `mode="walking"` ตรงๆ → `execute()` รับผ่าน `**kwargs` หรือเป็น named param ก็ได้:
+LLM จะส่ง `mode="walking"` ตรง → `execute()` รับผ่าน named param หรือ `**kwargs` ก็ได้:
 
 ```python
 async def execute(self, user_id: str, args: str = "", mode: str = "driving", **kwargs) -> str:
-    # mode ถูก extract มาจาก kwargs อัตโนมัติ
     ...
 ```
-
-**ถ้า tool ไม่มี parameter** — ไม่ต้อง override `get_tool_spec()` เลย (BaseTool มี default)
 
 ### 6. Error Handling
 
@@ -1203,6 +1252,65 @@ result = await loop.run_in_executor(None, sync_function, arg1, arg2)
 - **ห้าม** สร้าง `asyncio.new_event_loop()` เองใน tool
 - อาการของการทำผิดกฎ: error เป็นบางครั้ง **เฉพาะ** ตอน scheduler รัน tool (สั่งผ่าน `/command` ตรงทำงานปกติ)
 
+### 10. Prompts Directory
+
+Prompt ทั้งหมดของระบบเก็บเป็น markdown files ใน `prompts/` directory แทนการ hardcode ใน Python — แก้ prompt = แก้ markdown ไม่ต้อง redeploy
+
+**โครงสร้าง:**
+
+- `prompts/system/` — system prompts สำหรับ dispatcher (`base.md`, `tool_routing.md`, ฯลฯ)
+- `prompts/tools/` — description ของแต่ละ tool (ชื่อไฟล์ตรงกับ `tool.name`)
+- `prompts/internal/` — LLM prompts ที่ tool เรียกเอง (เช่น `expense_vision_extract.md`, `gmail_summary_system.md`)
+
+**Frontmatter syntax:**
+
+```markdown
+---
+description: short description (optional)
+parameters_args: |
+  description ของ parameter args
+parameters_<param_name>: |
+  description ของ parameter อื่น (เช่น parameters_forecast_days)
+args_required: false   # ถ้า args เป็น optional (default: true เมื่อมี parameters_args)
+---
+(body content here)
+```
+
+**ใช้งานใน Python:**
+
+```python
+from core.prompt_loader import load_prompt, load_metadata
+
+# โหลด body
+description = load_prompt("tools/myTool.md")
+
+# โหลด body + substitute template variables
+prompt = load_prompt("internal/expense_vision_extract.md", user_hint="ใบเสร็จ Villa Market")
+
+# โหลด frontmatter เป็น dict
+meta = load_metadata("tools/weather.md")
+args_desc = meta.get("parameters_args", "").strip()
+```
+
+**Hot reload:**
+
+- ตั้ง `PROMPT_HOT_RELOAD=1` ใน `.env` (dev mode) — แก้ markdown แล้ว reload อัตโนมัติเมื่อไฟล์เปลี่ยน
+- Production: ปล่อยเป็น `0` (default) — cache prompt ใน memory เพื่อ performance
+
+**JSON literals ใน body:**
+
+ถ้า body มี JSON ตัวอย่าง ให้ escape `{` และ `}` ด้วย `{{` `}}` เพราะ `load_prompt()` ใช้ `str.format()` substitute variables — ตัวอย่าง:
+
+```markdown
+{{"key": "value", "user": "{user_name}"}}
+```
+
+จะ render เป็น `{"key": "value", "user": "Alice"}` เมื่อ `user_name="Alice"`
+
+**Validation:**
+
+`core.prompt_loader.validate_all_prompts()` รันตอน startup ใน `main.py` ถ้า prompt มี syntax error → bot crash พร้อม error message ที่ระบุ path ของไฟล์
+
 ---
 
 ## Checklist ก่อน Deploy
@@ -1215,15 +1323,17 @@ result = await loop.run_in_executor(None, sync_function, arg1, arg2)
 - [ ] `execute()` มี signature: `async def execute(self, user_id: str, args: str = "", **kwargs) -> str`
 - [ ] `execute()` return string เสมอ (ไม่ return None)
 - [ ] `execute()` ครอบด้วย `try/except` ไม่ให้ exception หลุด
-- [ ] `get_tool_spec()` ใช้ `self.name` (**ห้าม hardcode** ชื่อ tool)
+- [ ] ถ้า override `get_tool_spec()` — ใช้ `self.name` ห้าม hardcode
+- [ ] สร้างไฟล์ `prompts/tools/<tool_name>.md` ครบ (ตรวจสอบด้วย `python -c "from core.prompt_loader import validate_all_prompts; validate_all_prompts()"`)
 - [ ] ตั้ง `direct_output` ตามที่ต้องการ
 
 ### แนะนำ (ไม่ทำ = ทำงานได้แต่ไม่ดี)
 
 - [ ] `db.log_tool_usage()` ทั้ง success และ failed (dispatcher จัดการ failed ให้แล้ว แต่ success ต้อง log เอง)
 - [ ] ตั้ง `preferred_tier` ถ้า tool เรียก LLM เอง (`"mid"` สำหรับงานซับซ้อน)
-- [ ] `get_tool_spec()` มี description ชัดเจน (LLM ใช้ตัดสินใจ)
-- [ ] ถ้าใช้ enum parameter → ระบุ `"enum": [...]` ใน properties
+- [ ] `prompts/tools/<name>.md` body มี description ชัดเจน (LLM ใช้ตัดสินใจ — เขียน positive case + negative boundary + examples)
+- [ ] ถ้า tool เรียก LLM ภายใน — ย้าย system prompt ไป `prompts/internal/<name>.md` ใช้ `load_prompt()` แทน hardcode
+- [ ] ถ้าใช้ enum parameter → ระบุ `"enum": [...]` ใน properties (ต้อง override `get_tool_spec()` Mode 2)
 - [ ] ถ้าใช้ API key → เพิ่มใน `.env`, `.env.example`, `core/config.py`
 - [ ] ถ้าใช้ library ใหม่ → เพิ่มใน `requirements.txt`
 - [ ] ทดสอบผ่าน `/command` ตรง

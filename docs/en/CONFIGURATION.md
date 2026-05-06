@@ -146,6 +146,12 @@ Production notes:
 | `MAX_CONTEXT_MESSAGES` | `10` | Messages sent as LLM context |
 | `CHAT_HISTORY_RETENTION_DAYS` | `30` | Days before auto-cleanup |
 
+## Prompt System
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PROMPT_HOT_RELOAD` | `0` | Dev mode: set to `1` to auto-reload prompts from `prompts/*.md` on file change. Production: leave `0` to cache in memory |
+
 ## Scheduling
 
 | Variable | Default | Description |

@@ -149,6 +149,16 @@ tools/
 - Per-user cron schedules (เช่น สรุปอีเมลเช้า)
 - Daily cleanup job: ลบ chat history, tool logs, processed emails เก่า
 
+### 7. Prompt Loader
+
+ทุก prompt ของระบบเก็บเป็น markdown files ใน `prompts/` directory แทนการ hardcode ใน Python code:
+
+- `prompts/system/` — system prompts สำหรับ dispatcher
+- `prompts/tools/` — description ของแต่ละ tool (ตรงกับ `tool.name`)
+- `prompts/internal/` — LLM prompts ที่ tool เรียกเอง
+
+ใช้ `core.prompt_loader.load_prompt()` โหลด + `validate_all_prompts()` ตรวจ syntax ตอน startup. ตั้ง `PROMPT_HOT_RELOAD=1` ใน dev mode เพื่อ reload อัตโนมัติเมื่อแก้ markdown — รายละเอียดดู [TOOLS_GUIDE.md](TOOLS_GUIDE.md#10-prompts-directory).
+
 ## โครงสร้างโปรเจกต์
 
 ```
@@ -166,8 +176,14 @@ openminicrew/
 │   ├── api_keys.py          # per-user key resolution (user key → shared key)
 │   ├── user_manager.py      # auth, preferences, onboarding
 │   ├── security.py          # OAuth token refresh
+│   ├── prompt_loader.py     # โหลด prompts จาก prompts/ + validate ตอน startup
 │   ├── concurrency.py       # semaphores, rate limiting
 │   └── logger.py            # structured logging
+│
+├── prompts/                 # markdown prompts (system + tools + internal)
+│   ├── system/              # dispatcher system prompts
+│   ├── tools/               # tool routing descriptions
+│   └── internal/            # LLM prompts ที่ tool เรียกเอง
 │
 ├── tools/                   # tools (auto-discovered)
 │   ├── base.py              # BaseTool abstract class
