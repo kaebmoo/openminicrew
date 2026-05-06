@@ -176,6 +176,9 @@ def validate_all_prompts(dummy_vars: dict[str, str] | None = None) -> list[str]:
         return []
 
     for path in PROMPTS_DIR.rglob("*.md"):
+        # Skip documentation files — README.md ไม่ใช่ template
+        if path.name.lower() == "readme.md":
+            continue
         rel = path.relative_to(PROMPTS_DIR).as_posix()
         try:
             cached = _read_prompt_file(rel)
