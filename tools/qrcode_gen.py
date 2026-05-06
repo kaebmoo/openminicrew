@@ -53,20 +53,3 @@ class QRCodeGenTool(BaseTool):
                 **db.make_error_fields(str(e)),
             )
             return f"❌ สร้าง QR Code ไม่สำเร็จ: {e}"
-
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "สร้าง QR Code จากข้อความหรือ URL ทั่วไป (ไม่ใช่ PromptPay). "
-                "ถ้า user ต้องการ QR รับเงิน/พร้อมเพย์ ให้ใช้ promptpay แทน. "
-                "เช่น '/qr https://example.com', '/qr hello world', '/qr WiFi:mynetwork'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {"type": "string", "description": "ข้อความหรือ URL ที่จะนำไปสร้าง QR Code"}
-                },
-                "required": ["args"],
-            },
-        }

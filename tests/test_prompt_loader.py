@@ -78,3 +78,23 @@ def test_escaped_braces_not_treated_as_vars(tmp_path):
     p.write_text('{{"key": "{value}"}}', encoding="utf-8")
     rendered = prompt_loader.load_prompt("json.md", value="x")
     assert rendered == '{"key": "x"}'
+
+
+def test_frontmatter_block_scalar(tmp_path):
+    """frontmatter รองรับ key: | สำหรับ multi-line value"""
+    p = tmp_path / "blk.md"
+    p.write_text(
+        "---\n"
+        "name: my-tool\n"
+        "parameters_args: |\n"
+        "  line 1\n"
+        "  line 2 with 'quotes'\n"
+        "  line 3\n"
+        "---\n"
+        "Body here",
+        encoding="utf-8",
+    )
+    meta = prompt_loader.load_metadata("blk.md")
+    assert meta["name"] == "my-tool"
+    assert meta["parameters_args"] == "line 1\nline 2 with 'quotes'\nline 3"
+    assert prompt_loader.load_prompt("blk.md") == "Body here"

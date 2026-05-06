@@ -42,11 +42,12 @@ _cache_lock = Lock()
 def _split_frontmatter(text: str) -> tuple[dict, str]:
     """แยก YAML frontmatter ออกจาก body ถ้ามี
 
-    Format:
-        ---
-        key: value
-        ---
-        body content here
+    รองรับ:
+        key: value          (single line)
+        key: "quoted value" (single line with quotes)
+        key: |              (block scalar — รวม indented lines ตามมา)
+          line 1
+          line 2
     """
     if not text.startswith("---\n"):
         return {}, text
@@ -59,13 +60,31 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
     body = parts[1].lstrip("\n")
 
     metadata: dict = {}
-    for line in frontmatter_text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+    lines = frontmatter_text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            i += 1
             continue
         if ":" in line:
             key, _, value = line.partition(":")
-            metadata[key.strip()] = value.strip().strip('"').strip("'")
+            key = key.strip()
+            value = value.strip()
+            if value == "|":
+                block_lines: list[str] = []
+                i += 1
+                while i < len(lines):
+                    nxt = lines[i]
+                    if nxt and not (nxt.startswith(" ") or nxt.startswith("\t")):
+                        break
+                    block_lines.append(nxt.lstrip() if nxt.strip() else "")
+                    i += 1
+                metadata[key] = "\n".join(block_lines).rstrip()
+                continue
+            metadata[key] = value.strip('"').strip("'")
+        i += 1
 
     return metadata, body
 

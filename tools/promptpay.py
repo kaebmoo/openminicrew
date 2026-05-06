@@ -297,28 +297,3 @@ class PromptPayTool(BaseTool):
             )
             return f"สร้าง PromptPay QR ไม่สำเร็จ: {e}"
 
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "สร้าง PromptPay QR สำหรับรับเงิน/รับโอน. "
-                "ใช้เมื่อ user ต้องการรับเงิน สร้าง QR พร้อมเพย์ รับโอน เก็บเงิน. "
-                "ห้ามใช้ expense เมื่อ user ต้องการรับเงิน ให้ใช้ tool นี้แทน. "
-                "เช่น 'รับเงิน 150 บาท', 'QR 500', 'พร้อมเพย์ 200', "
-                "'รับโอน 300 บาท', '/pay 120 0812345678'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": (
-                            "จำนวนเงินและ/หรือเบอร์โทร/เลขบัตรประชาชน "
-                            "เช่น '150', '120 0812345678', '500 1-2345-67890-12-1' "
-                            "ถ้าไม่ระบุเบอร์/เลขบัตร จะใช้ข้อมูลจาก /setphone หรือ /setid"
-                        ),
-                    }
-                },
-                "required": [],
-            },
-        }

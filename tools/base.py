@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from core.logger import get_logger
+from core.prompt_loader import load_metadata, load_prompt
 from tools.response import MediaResponse
+
+log = get_logger(__name__)
 
 
 class BaseTool(ABC):
@@ -20,17 +24,36 @@ class BaseTool(ABC):
         ...
 
     def get_tool_spec(self) -> dict:
-        """
-        Return generic tool spec — LLM Router จะแปลง format ให้ตรง provider
+        """Default get_tool_spec() — โหลด description จาก prompts/tools/<name>.md
 
-        Override ถ้า tool มี parameters
+        ถ้าไฟล์ markdown ไม่มี → fallback ไป self.description (backward compat ระหว่าง migration)
+
+        Override ถ้า tool มี parameters มากกว่า args เดียว
         """
+        prompt_path = f"tools/{self.name}.md"
+        try:
+            description = load_prompt(prompt_path).strip()
+            metadata = load_metadata(prompt_path)
+            args_desc = metadata.get("parameters_args", "")
+        except FileNotFoundError:
+            description = self.description
+            args_desc = ""
+
+        properties: dict = {}
+        required: list[str] = []
+        if args_desc:
+            properties["args"] = {
+                "type": "string",
+                "description": args_desc.strip(),
+            }
+            required.append("args")
+
         return {
             "name": self.name,
-            "description": self.description,
+            "description": description,
             "parameters": {
                 "type": "object",
-                "properties": {},
-                "required": [],
+                "properties": properties,
+                "required": required,
             },
         }
