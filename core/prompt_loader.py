@@ -167,6 +167,15 @@ def validate_all_prompts(dummy_vars: dict[str, str] | None = None) -> list[str]:
         "today": "2026-01-01",
         "user_name": "TestUser",
         "tool_name": "test_tool",
+        # nested system prompts loaded by dispatcher._build_system_prompt
+        "tool_routing": "[tool_routing dummy]",
+        "anti_hallucination": "[anti_hallucination dummy]",
+        "privacy": "[privacy dummy]",
+        # internal/* template vars
+        "emails_block": "[emails_block dummy]",
+        "now_str": "01 Jan 2026 09:00",
+        "user_hint": "",
+        "word": "test",
     }
     merged = {**default_dummies, **dummy_vars}
 
