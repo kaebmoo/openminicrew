@@ -9,6 +9,7 @@ from tools.base import BaseTool
 from core.config import GOOGLE_MAPS_API_KEY
 from core import db
 from core.logger import get_logger
+from core.prompt_loader import load_metadata, load_prompt
 
 log = get_logger(__name__)
 
@@ -73,41 +74,22 @@ class TrafficTool(BaseTool):
     )
 
     def get_tool_spec(self) -> dict:
+        description = load_prompt("tools/traffic.md").strip()
+        meta = load_metadata("tools/traffic.md")
         return {
             "name": self.name,
-            "description": (
-                "เช็คเส้นทาง ระยะทาง เวลาเดินทาง และสภาพจราจร real-time "
-                "ระหว่างสองจุดผ่าน Google Maps. "
-                "ใช้เมื่อ user ถามว่า 'ไปยังไง' 'ใช้เวลาเท่าไหร่' 'รถติดไหม'. "
-                "ไม่ใช่สำหรับค้นหาร้าน/สถานที่ -- ให้ใช้ places แทน. "
-                "เช่น 'สยามไปสีลม', 'จากบ้านไปสนามบิน', 'รถติดไหม ลาดพร้าวไปสาทร'"
-            ),
+            "description": description,
             "parameters": {
                 "type": "object",
                 "properties": {
                     "args": {
                         "type": "string",
-                        "description": (
-                            "ต้นทางและปลายทาง คั่นด้วย 'ไป', 'to', '→' "
-                            "เช่น 'สยาม ไป สีลม', 'MBK to Asiatique' "
-                            "ถ้าผู้ใช้ไม่ระบุต้นทาง ให้ใช้ 'ที่นี่ ไป <ปลายทาง>' "
-                            "เช่น ผู้ใช้ถาม 'ไปบางรักรถติดไหม' → args = 'ที่นี่ ไป บางรัก' "
-                            "ถ้าผู้ใช้ระบุว่าไม่ขึ้นทางด่วนทั้งหมด ให้ต่อท้ายด้วย 'ไม่ขึ้นทางด่วน' "
-                            "ถ้าผู้ใช้ต้องการหลีกเลี่ยงทางด่วนเส้นใดเส้นหนึ่งโดยเฉพาะ "
-                            "ให้ต่อท้ายด้วย 'ไม่ขึ้น <ชื่อทางด่วน>' "
-                            "เช่น → args = 'จันทน์ ไป แจ้งวัฒนะ ไม่ขึ้น ดอนเมืองโทลเวย์'"
-                        ),
+                        "description": meta.get("parameters_args", "").strip(),
                     },
                     "mode": {
                         "type": "string",
                         "enum": ["driving", "walking", "transit", "two_wheeler"],
-                        "description": (
-                            "โหมดการเดินทาง: "
-                            "'driving' = รถยนต์ (default), "
-                            "'walking' = เดินเท้า, "
-                            "'transit' = รถโดยสาร/รถไฟฟ้า/BTS/MRT, "
-                            "'two_wheeler' = มอเตอร์ไซค์"
-                        ),
+                        "description": meta.get("parameters_mode", "").strip(),
                     },
                 },
                 "required": ["args"],
