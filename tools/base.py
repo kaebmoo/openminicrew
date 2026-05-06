@@ -31,6 +31,7 @@ class BaseTool(ABC):
         Override ถ้า tool มี parameters มากกว่า args เดียว
         """
         prompt_path = f"tools/{self.name}.md"
+        metadata: dict = {}
         try:
             description = load_prompt(prompt_path).strip()
             metadata = load_metadata(prompt_path)
@@ -46,7 +47,10 @@ class BaseTool(ABC):
                 "type": "string",
                 "description": args_desc.strip(),
             }
-            required.append("args")
+            # default: args required. Opt-out ด้วย frontmatter args_required: false
+            args_required = metadata.get("args_required", "true").lower()
+            if args_required not in ("false", "0", "no"):
+                required.append("args")
 
         return {
             "name": self.name,

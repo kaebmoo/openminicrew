@@ -18,26 +18,6 @@ class NewsSummaryTool(BaseTool):
     description = "สรุปข่าวเด่นวันนี้ หรือหาข่าวตามเรื่องที่สนใจจาก Google News"
     commands = ["/news"]
 
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "ค้นหาและสรุปข่าวล่าสุดจาก Google News. "
-                "ใช้เมื่อ user ถามเรื่องข่าว ข่าวสาร สิ่งที่เกิดขึ้นล่าสุด. "
-                "ไม่ใช่สำหรับค้นหาข้อมูลทั่วไป (ใช้ web_search). "
-                "เช่น 'ข่าววันนี้', 'ข่าวเทคโนโลยี', 'มีข่าวอะไรใหม่'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": "หัวข้อข่าวที่สนใจ เช่น 'เทคโนโลยี', 'การเมือง', 'หุ้น', หรือปล่อยว่างเพื่อดูข่าวเด่นรวบยอด",
-                    }
-                },
-            },
-        }
-
     async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
         topic = (args or "").strip()
 

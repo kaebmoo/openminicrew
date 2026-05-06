@@ -276,21 +276,3 @@ class WebSearchTool(BaseTool):
                     }
                 )
         return results
-
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "ค้นหาข้อมูลบนเว็บจากคำถามของ user แล้วคืนผลลัพธ์ดิบให้ LLM สรุป. "
-                "ใช้สำหรับค้นหาข้อมูลทั่วไป ข้อเท็จจริง รีวิว ราคา. "
-                "ไม่ใช่สำหรับค้นหาข่าว/สรุปข่าว (ใช้ news_summary), "
-                "ไม่ใช่สำหรับค้นหาสถานที่บนแผนที่ (ใช้ places), "
-                "และไม่ใช่สำหรับค้นหาคำแปลหรือความหมายของคำศัพท์ (ใช้ dictionary). "
-                "เช่น 'AI คืออะไร', 'รีวิว iPhone 16', 'วิธีทำ pad thai'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"args": {"type": "string", "description": "คำค้นหาเว็บ"}},
-                "required": ["args"],
-            },
-        }
