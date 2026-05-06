@@ -611,31 +611,3 @@ class WorkEmailTool(BaseTool):
             )
             return f"เกิดข้อผิดพลาด: {e}"
 
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "ดึงและสรุปอีเมลที่ทำงานผ่านระบบ IMAP ขององค์กร. "
-                "ต้องเรียก tool นี้ทุกครั้งที่ user ถามเรื่อง work email, เมลงาน, อีเมลงาน, อีเมลที่ทำงาน "
-                "ไม่ว่าจะเป็นสรุป, ค้นหา, นับจำนวน, รวมยอด, หาค่าใช้จ่าย, หาข้อมูล. "
-                "tool จะดึงอีเมลมาให้ แล้วคุณค่อยสรุป/คำนวณ/ตอบจากผลลัพธ์. "
-                "ห้ามตอบเองว่าทำไม่ได้ — เรียก tool ก่อนเสมอ. "
-                "ไม่ใช่สำหรับ Gmail ส่วนตัว (ใช้ gmail_summary). "
-                "เช่น 'มีเมลงานเข้าไหม', 'สรุปเมลงานวันนี้', 'เมลจาก hr', "
-                "'ค่าใช้จ่ายใน work email 30 วัน'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "args": {
-                        "type": "string",
-                        "description": (
-                            "ช่วงเวลา (1d, 3d, 7d, 30d), "
-                            "ค้นหาตามช่อง (from:{xx}, to:{xx}, subject:{xx}, body:{xx}, folder:{xx}), "
-                            "force (บังคับสรุปซ้ำ)"
-                        ),
-                    }
-                },
-                "required": [],
-            },
-        }

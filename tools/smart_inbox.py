@@ -132,18 +132,3 @@ class SmartInboxTool(BaseTool):
         )
         return resp.get("content", "ไม่มี action item ที่ชัดเจน")
 
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "วิเคราะห์อีเมลจาก Gmail เพื่อหา action items สิ่งที่ต้องทำ หรือนัดหมาย. "
-                "ใช้เมื่อ user ต้องการคัดกรองว่ามีงานอะไรต้องทำจากอีเมลบ้าง. "
-                "ไม่ใช่แค่สรุปอีเมลเฉยๆ (ใช้ gmail_summary) และไม่ใช่เมลงาน (ใช้ work_email). "
-                "เช่น 'มีเมลไหนต้องทำบ้าง', 'ดึงงานจากอีเมลให้หน่อย'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"args": {"type": "string", "description": "คำสั่ง smart inbox"}},
-                "required": [],
-            },
-        }
