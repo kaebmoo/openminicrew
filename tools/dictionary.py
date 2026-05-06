@@ -2,6 +2,7 @@
 
 from core import db
 from core.llm import llm_router
+from core.prompt_loader import load_prompt
 from core.user_manager import get_user_by_id, get_preference
 from core.logger import get_logger
 from tools.base import BaseTool
@@ -24,13 +25,7 @@ class DictionaryTool(BaseTool):
             user = get_user_by_id(user_id) or {}
             provider = get_preference(user, "default_llm")
 
-            prompt = (
-                f"ให้ข้อมูลคำศัพท์ '{word}':\n"
-                "- คำแปล EN↔TH\n"
-                "- ประเภทคำ (noun/verb/adj/adv ฯลฯ)\n"
-                "- ตัวอย่างประโยค 1-2 ประโยค\n"
-                "ตอบกระชับ เป็นภาษาไทย"
-            )
+            prompt = load_prompt("internal/dictionary_lookup.md", word=word)
 
             resp = await llm_router.chat(
                 messages=[{"role": "user", "content": prompt}],

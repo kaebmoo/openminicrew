@@ -7,6 +7,7 @@ import requests
 
 from tools.base import BaseTool
 from core.llm import llm_router
+from core.prompt_loader import load_prompt
 from core.user_manager import get_user_by_id, get_preference
 from core.logger import get_logger
 
@@ -73,18 +74,7 @@ class NewsSummaryTool(BaseTool):
         user = get_user_by_id(user_id) or {}
         provider = get_preference(user, "default_llm")
 
-        system_prompt = (
-            "คุณเป็นผู้ประกาศข่าวอัจฉริยะ โทนภาษา: กระชับ เป็นกันเอง เข้าใจง่าย\n"
-            "ข้อมูลที่ได้รับคือหัวข้อข่าวล่าสุด แต่ละข่าวมีหมายเลขอ้างอิง [1], [2], ...\n"
-            "หน้าที่ของคุณ:\n"
-            "1. จัดหมวดหมู่ข่าวที่เกี่ยวข้องเข้าด้วยกัน\n"
-            "2. สรุปใจความสำคัญให้สั้นกระชับ\n"
-            "3. ใส่หมายเลขอ้างอิง [1] [2] ไว้ท้ายแต่ละข่าว เพื่อให้ user ไปดูลิงก์ได้\n\n"
-            "ข้อห้ามเด็ดขาด:\n"
-            "- ห้ามใส่ URL หรือลิงก์ใดๆ ทั้งสิ้น — ระบบจะแปะลิงก์ให้อัตโนมัติ\n"
-            "- ห้ามสร้างส่วน 'แหล่งที่มา' หรือ 'อ้างอิง' หรือ 'ลิงก์' ท้ายข้อความ\n"
-            "- ตอบเฉพาะเนื้อหาสรุปข่าวเท่านั้น จบแล้วหยุดเลย"
-        )
+        system_prompt = load_prompt("internal/news_summary_system.md")
 
         prompt_text = f"กรุณาสรุปข่าวต่อไปนี้ ({display_label}):\n{headlines_text}"
 

@@ -25,6 +25,7 @@ from core.config import (
 )
 from core import db
 from core.llm import llm_router
+from core.prompt_loader import load_prompt
 from core.user_manager import get_user_by_id, get_preference
 from core.logger import get_logger
 
@@ -552,19 +553,9 @@ class WorkEmailTool(BaseTool):
                     included_count += 1
 
             now_str = datetime.now().strftime("%d %b %Y %H:%M")
-            system_prompt = (
-                f"คุณเป็นผู้ช่วยสรุปอีเมลที่ทำงาน สรุปให้กระชับ เข้าใจง่าย เป็นภาษาไทย\n"
-                f"เวลาปัจจุบันที่คุณกำลังอ่านและสรุปคือ: {now_str}\n"
-                f"คำแนะนำสำคัญเรื่องเวลา (โปรดทำตาม 2 ขั้นตอนนี้อย่างเคร่งครัด): \n"
-                f"1. ทำความเข้าใจเวลาของเหตุการณ์เปรียบเทียบจาก 'วันที่ส่งอีเมล (Date)' เช่น ถ้าย้อนดูอีเมลที่ส่งวันที่ 9 และเนื้อหาบอกว่า 'เมื่อวาน' = เหตุการณ์คือวันที่ 8, 'พรุ่งนี้' = เหตุการณ์คือวันที่ 10, หรือ '10 มี.ค.' = เหตุการณ์คือ 10 มี.ค.\n"
-                f"2. เวลาพิมพ์สรุปให้ผู้ใช้ ให้แปลงวันที่จากข้อ 1 มาเทียบกับ 'เวลาปัจจุบัน ({now_str})' เสมอ เช่น ถ้าเหตุการณ์จากข้อ 1 คือวันที่ 10 มี.ค. และเวลาปัจจุบันคือ 10 มี.ค. ต้องใช้คำว่า 'วันนี้' หรือ 'เช้านี้' หรือ '10 มี.ค.' ห้ามสรุปว่า 'พรุ่งนี้' เด็ดขาด!\n\n"
-                "รูปแบบการสรุป:\n"
-                "- ภาพรวม: สรุปสั้นๆ ว่ามีกี่ฉบับ เรื่องอะไรบ้าง\n"
-                "- ต้องดำเนินการ: เมลที่ต้องทำอะไร (ตอบกลับ, อนุมัติ, ตรวจสอบ)\n"
-                "- จัดกลุ่มตามประเภท: งาน, การเงิน, HR, IT, อื่นๆ\n"
-                "- ไฟล์แนบสำคัญ: สรุปเนื้อหาไฟล์แนบที่สำคัญ (ถ้ามี)\n"
-                "- สรุปท้าย: สิ่งที่ควรให้ความสำคัญก่อน\n\n"
-                "จัดระเบียบให้มีความชัดเจน ใช้ bullet points และ emoji ให้อ่านง่าย"
+            system_prompt = load_prompt(
+                "internal/work_email_summary.md",
+                now_str=now_str,
             )
             
             prompt_count_text = f"{included_count} ฉบับ (จากทั้งหมด {len(emails_data)} ฉบับ)" if included_count < len(emails_data) else f"{len(emails_data)} ฉบับ"
