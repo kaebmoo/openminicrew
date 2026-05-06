@@ -12,6 +12,7 @@ from core import db
 from core.config import TIMEZONE
 from core.user_manager import is_owner, get_user_by_id
 from core.logger import get_logger
+from core.prompt_loader import load_prompt
 
 log = get_logger(__name__)
 
@@ -459,16 +460,7 @@ class ScheduleTool(BaseTool):
     def get_tool_spec(self) -> dict:
         return {
             "name": self.name,
-            "description": (
-                "ตั้งเวลา/ตั้งนาฬิกาปลุก/schedule ให้ bot รัน tool อัตโนมัติตามเวลาที่กำหนด "
-                "ใช้เมื่อผู้ใช้พูดว่า: ตั้งเวลา, เตือน, ทุกเช้า, ทุกวัน, ตอนกี่โมง, "
-                "schedule, alarm, remind, cron "
-                "เช่น 'ตั้งเวลาเช็คอีเมลทุกเช้า 7 โมง' 'เตือนดูข่าวตอน 8 โมง' "
-                "'ตั้งเวลาเช็คอัตราแลกเปลี่ยนตอน 9 โมง' "
-                "action=add เพิ่ม, action=remove ลบ, action=list ดูรายการ "
-                "ถ้าผู้ใช้บอกเวลาและ tool → add ทันที ถ้าถามว่าตั้งอะไรไว้ → list. "
-                "ไม่ใช่สำหรับเตือนครั้งเดียว (ใช้ reminder) หรือจดงาน (ใช้ todo)."
-            ),
+            "description": load_prompt("tools/schedule.md").strip(),
             "parameters": {
                 "type": "object",
                 "properties": {

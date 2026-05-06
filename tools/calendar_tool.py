@@ -252,29 +252,3 @@ class CalendarTool(BaseTool):
         ).execute()
         return self._prepare_list_items(result.get("items", []))
 
-    def get_tool_spec(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "จัดการ Google Calendar (ดู/เพิ่ม/ลบนัดหมาย). "
-                "ใช้เมื่อ user ถามตารางงาน นัดหมาย หรือให้ลงปฏิทิน. "
-                "ไม่ใช่สำหรับการจดงาน (ใช้ todo) หรือตั้งเตือนปลุก (ใช้ reminder/schedule). "
-                "เช่น 'พรุ่งนี้มีนัดไหม', 'ดึงตารางงาน', 'เพิ่มนัดประชุม 10 โมง'"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"args": {
-                    "type": "string",
-                    "description": (
-                        "sub-command string. STRICT format:\n"
-                        "• list\n"
-                        "• add YYYY-MM-DD HH:MM HH:MM ชื่องาน  (date MUST be YYYY-MM-DD, time MUST be HH:MM 24h)\n"
-                        "  end time optional → default +1 ชม.\n"
-                        "  examples: 'add 2026-04-22 14:00 15:00 ประชุมทีม' | 'add 2026-04-22 14:00 Claude Cowork'\n"
-                        "• delete <ลำดับ|event_id>\n"
-                        "IMPORTANT: always convert Thai date/time to YYYY-MM-DD HH:MM before calling."
-                    ),
-                }},
-                "required": [],
-            },
-        }
