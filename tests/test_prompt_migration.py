@@ -92,7 +92,62 @@ def test_system_section_files_exist():
 
 
 def test_internal_section_files_exist():
-    """ไฟล์ใน prompts/internal/"""
+    """ไฟล์ทั้ง 6 ใน prompts/internal/ — guardrail ป้องกันลบ/rename โดยไม่ตั้งใจ
+
+    ทุกไฟล์ใน internal/ มี Python caller ที่ load_prompt() ตรง ๆ —
+    ถ้าหายจะทำให้ tool ที่เกี่ยวข้องพังตอนรัน
+    """
     base = prompt_loader.PROMPTS_DIR / "internal"
-    for name in ("expense_vision_extract.md", "smart_inbox_action_items.md"):
+    expected = (
+        "expense_vision_extract.md",      # tools/expense.py::_extract_expense_from_image
+        "smart_inbox_action_items.md",    # tools/smart_inbox.py::_extract_action_items
+        "work_email_summary.md",          # tools/work_email.py system prompt
+        "news_summary_system.md",         # tools/news_summary.py system prompt
+        "dictionary_lookup.md",           # tools/dictionary.py user prompt
+        "gmail_summary_system.md",        # tools/gmail_summary.py system prompt
+    )
+    for name in expected:
         assert (base / name).exists(), f"Missing internal/{name}"
+
+
+def test_internal_prompts_render():
+    """ทุกไฟล์ใน internal/ render ได้ด้วย template vars ที่ caller ส่งมา"""
+    # expense_vision_extract: user_hint
+    p = prompt_loader.load_prompt(
+        "internal/expense_vision_extract.md", user_hint=""
+    )
+    assert "JSON" in p
+    assert p.count("{") == p.count("}")
+
+    # smart_inbox_action_items: emails_block + system_prompt metadata
+    p = prompt_loader.load_prompt(
+        "internal/smart_inbox_action_items.md", emails_block="x"
+    )
+    assert "action" in p.lower()
+    meta = prompt_loader.load_metadata("internal/smart_inbox_action_items.md")
+    assert meta.get("system_prompt", "")
+
+    # work_email_summary: now_str
+    p = prompt_loader.load_prompt(
+        "internal/work_email_summary.md", now_str="01 Jan 2026 09:00"
+    )
+    assert "01 Jan 2026 09:00" in p
+    assert "อีเมล" in p
+
+    # news_summary_system: no template vars
+    p = prompt_loader.load_prompt("internal/news_summary_system.md")
+    assert "ข่าว" in p
+    assert "[1]" in p
+
+    # dictionary_lookup: word
+    p = prompt_loader.load_prompt(
+        "internal/dictionary_lookup.md", word="managerial"
+    )
+    assert "managerial" in p
+
+    # gmail_summary_system: now_str
+    p = prompt_loader.load_prompt(
+        "internal/gmail_summary_system.md", now_str="01 Jan 2026 09:00"
+    )
+    assert "01 Jan 2026 09:00" in p
+    assert "อีเมล" in p
