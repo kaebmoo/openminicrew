@@ -262,6 +262,61 @@ def test_calendar_delete_accepts_visible_list_index():
     assert "evt-delete-1" in result
 
 
+def test_calendar_add_structured_persists_description_and_location():
+    tool = CalendarTool()
+    service = MagicMock()
+    service.events.return_value.insert.return_value.execute.return_value = {"id": "evt-new"}
+
+    with patch("tools.calendar_tool.get_gmail_credentials", return_value=object()), \
+         patch("tools.calendar_tool.build", return_value=service):
+        result = asyncio.run(tool.execute(
+            "u1",
+            action="add",
+            date="2026-05-18",
+            start_time="09:00",
+            end_time="12:00",
+            title="โครงการประกวด AIaaS",
+            description="https://zoom.us/j/96329148511?pwd=Y3y",
+            location="ห้องประชุม A",
+        ))
+
+    insert_call = service.events.return_value.insert.call_args
+    body = insert_call.kwargs["body"]
+    assert body["summary"] == "โครงการประกวด AIaaS"
+    assert body["description"] == "https://zoom.us/j/96329148511?pwd=Y3y"
+    assert body["location"] == "ห้องประชุม A"
+    assert body["start"]["dateTime"] == "2026-05-18T09:00:00+07:00"
+    assert body["end"]["dateTime"] == "2026-05-18T12:00:00+07:00"
+    assert "evt-new" in result
+    assert "ห้องประชุม A" in result
+
+
+def test_calendar_add_text_path_extracts_url_into_description():
+    tool = CalendarTool()
+    service = MagicMock()
+    service.events.return_value.insert.return_value.execute.return_value = {"id": "evt-text"}
+
+    with patch("tools.calendar_tool.get_gmail_credentials", return_value=object()), \
+         patch("tools.calendar_tool.build", return_value=service):
+        asyncio.run(tool.execute(
+            "u1",
+            "add 2026-05-18 09:00-12:00 ประชุม AIaaS https://zoom.us/j/96329148511",
+        ))
+
+    body = service.events.return_value.insert.call_args.kwargs["body"]
+    assert "https://zoom.us/j/96329148511" not in body["summary"]
+    assert body["description"] == "https://zoom.us/j/96329148511"
+
+
+def test_calendar_get_tool_spec_exposes_structured_params():
+    spec = CalendarTool().get_tool_spec()
+    props = spec["parameters"]["properties"]
+    assert "action" in props
+    assert "description" in props
+    assert "location" in props
+    assert spec["parameters"]["required"] == ["action"]
+
+
 def test_calendar_error_access_not_configured_is_human_friendly():
     tool = CalendarTool()
     resp = MagicMock()

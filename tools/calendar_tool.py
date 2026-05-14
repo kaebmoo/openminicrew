@@ -24,12 +24,88 @@ class CalendarTool(BaseTool):
     commands = ["/cal", "/calendar"]
     direct_output = False
 
-    async def execute(self, user_id: str, args: str = "", **kwargs) -> str:
+    def get_tool_spec(self) -> dict:
+        from core.prompt_loader import load_prompt
+        try:
+            desc = load_prompt(f"tools/{self.name}.md").strip()
+        except FileNotFoundError:
+            desc = self.description
+        return {
+            "name": self.name,
+            "description": desc,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "delete"],
+                        "description": "list = ดูนัดหมาย, add = เพิ่ม, delete = ลบ",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "วันที่รูปแบบ YYYY-MM-DD (ปี ค.ศ.) — ต้องแปลงจากวันที่ไทย/พ.ศ. ก่อน",
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "เวลาเริ่มรูปแบบ HH:MM (24h) เช่น 09:00",
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "เวลาสิ้นสุด HH:MM (24h). ถ้าไม่ระบุจะ default = เริ่ม + 1 ชม.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "ชื่อ/หัวข้อนัดหมาย (สรุปสั้น ๆ ไม่ต้องใส่ URL/สถานที่)",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "รายละเอียดเพิ่มเติม — ใส่ URL (Zoom/Meet/Teams), agenda, หมายเหตุ. Google Calendar จะตรวจจับ URL ให้กลายเป็นปุ่ม join อัตโนมัติ",
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "สถานที่จริง (ตึก/ห้อง/ที่อยู่). ถ้าเป็นประชุมออนไลน์ปล่อยว่าง แล้วใส่ลิงก์ใน description แทน",
+                    },
+                    "event_ref": {
+                        "type": "string",
+                        "description": "ใช้กับ action=delete: ลำดับจาก list หรือ event_id",
+                    },
+                },
+                "required": ["action"],
+            },
+        }
+
+    async def execute(
+        self,
+        user_id: str,
+        args: str = "",
+        action: str | None = None,
+        date: str | None = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        title: str | None = None,
+        description: str = "",
+        location: str = "",
+        event_ref: str | None = None,
+        **kwargs,
+    ) -> str:
         raw_args = (args or "").strip()
         try:
             creds = get_gmail_credentials(user_id)
             if not creds:
                 result = "❌ ยังไม่ได้เชื่อมต่อ Google Calendar/Gmail\nกรุณาใช้ /authgmail แล้ว authorize ใหม่"
+            elif action:
+                service = build("calendar", "v3", credentials=creds)
+                result = self._dispatch_structured(
+                    service,
+                    action=action,
+                    date=date,
+                    start_time=start_time,
+                    end_time=end_time,
+                    title=title,
+                    description=description,
+                    location=location,
+                    event_ref=event_ref,
+                )
             else:
                 service = build("calendar", "v3", credentials=creds)
                 tokens = raw_args.split()
@@ -43,8 +119,11 @@ class CalendarTool(BaseTool):
                             result = "❌ กรุณาระบุชื่อนัดหมาย วันที่ และเวลา\nตัวอย่าง: add ประชุมทีม 2026-04-22 14:00"
                         else:
                             try:
-                                date_str, start_time, end_time, title = self._parse_add_args(add_rest)
-                                result = self._add_event(service, date_str, start_time, end_time, title)
+                                date_str, start_t, end_t, title_t, desc_t, loc_t = self._parse_add_args(add_rest)
+                                result = self._add_event(
+                                    service, date_str, start_t, end_t, title_t,
+                                    description=desc_t, location=loc_t,
+                                )
                             except ValueError as ve:
                                 result = f"❌ {ve}\nตัวอย่าง: add ประชุมทีม 2026-04-22 14:00"
                     elif sub == "delete" and len(tokens) >= 2:
@@ -162,20 +241,33 @@ class CalendarTool(BaseTool):
         )
 
     def _parse_add_args(self, raw: str) -> tuple:
-        """Extract date, start_time, end_time, title from flexible input.
+        """Extract date, start_time, end_time, title, description, location.
 
-        Supports any argument order:
+        Supports any argument order. URLs are pulled into description
+        and an optional '@สถานที่' marker is pulled into location.
           - add 2026-04-22 14:00 15:00 ประชุมทีม
-          - add ประชุมทีม 2026-04-22 14:00
-          - add ประชุมทีม 2026-04-22 14:00-15:00
+          - add ประชุมทีม 2026-04-22 14:00 https://zoom.us/j/123
+          - add ประชุมทีม 2026-04-22 14:00-15:00 @ห้องประชุม A
         End time defaults to start + 1 hour if omitted.
         """
+        # 0) Pull URLs out → description
+        urls = re.findall(r'https?://\S+', raw)
+        rest = re.sub(r'https?://\S+', '', raw)
+        description = "\n".join(urls)
+
+        # 0b) Pull '@location' marker (until next whitespace+@ or end)
+        location = ""
+        loc_m = re.search(r'@(\S[^@]*?)(?=\s+@|$)', rest)
+        if loc_m:
+            location = loc_m.group(1).strip()
+            rest = rest[:loc_m.start()] + rest[loc_m.end():]
+
         # 1) Extract date YYYY-MM-DD
-        date_m = re.search(r'(\d{4}-\d{2}-\d{2})', raw)
+        date_m = re.search(r'(\d{4}-\d{2}-\d{2})', rest)
         if not date_m:
             raise ValueError("ไม่พบวันที่ (YYYY-MM-DD)")
         date_str = date_m.group(1)
-        rest = raw[:date_m.start()] + raw[date_m.end():]
+        rest = rest[:date_m.start()] + rest[date_m.end():]
 
         # 2) Try time range HH:MM-HH:MM first
         range_m = re.search(r'(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})', rest)
@@ -202,7 +294,7 @@ class CalendarTool(BaseTool):
         if not title:
             title = "(ไม่มีชื่อ)"
 
-        return date_str, start_time, end_time, title
+        return date_str, start_time, end_time, title, description, location
 
     @staticmethod
     def _zero_pad_time(t: str) -> str:
@@ -210,7 +302,16 @@ class CalendarTool(BaseTool):
         parts = t.split(':')
         return f"{int(parts[0]):02d}:{parts[1]}"
 
-    def _add_event(self, service, date_str: str, start_time: str, end_time: str, title: str) -> str:
+    def _add_event(
+        self,
+        service,
+        date_str: str,
+        start_time: str,
+        end_time: str,
+        title: str,
+        description: str = "",
+        location: str = "",
+    ) -> str:
         start_dt = f"{date_str}T{start_time}:00+07:00"
         end_dt = f"{date_str}T{end_time}:00+07:00"
         event = {
@@ -218,8 +319,56 @@ class CalendarTool(BaseTool):
             "start": {"dateTime": start_dt, "timeZone": "Asia/Bangkok"},
             "end": {"dateTime": end_dt, "timeZone": "Asia/Bangkok"},
         }
+        if description:
+            event["description"] = description
+        if location:
+            event["location"] = location
         created = service.events().insert(calendarId="primary", body=event).execute()
-        return f"✅ เพิ่มนัดหมายแล้ว\n{title}\n{start_dt} - {end_dt}\nid: {created.get('id')}"
+        extras = []
+        if location:
+            extras.append(f"📍 {location}")
+        if description:
+            extras.append(description)
+        extras_block = ("\n" + "\n".join(extras)) if extras else ""
+        return f"✅ เพิ่มนัดหมายแล้ว\n{title}\n{start_dt} - {end_dt}{extras_block}\nid: {created.get('id')}"
+
+    def _dispatch_structured(
+        self,
+        service,
+        action: str,
+        date: str | None,
+        start_time: str | None,
+        end_time: str | None,
+        title: str | None,
+        description: str,
+        location: str,
+        event_ref: str | None,
+    ) -> str:
+        act = (action or "").strip().lower()
+        if act == "list":
+            return self._list_events(service)
+        if act == "delete":
+            if not event_ref:
+                return "❌ ต้องระบุ event_ref (ลำดับหรือ event_id)"
+            return self._delete_event(service, event_ref)
+        if act == "add":
+            if not date or not start_time or not title:
+                return "❌ add ต้องมี date (YYYY-MM-DD), start_time (HH:MM) และ title"
+            try:
+                start_t = self._zero_pad_time(start_time)
+                if end_time:
+                    end_t = self._zero_pad_time(end_time)
+                else:
+                    h, m = int(start_t.split(":")[0]), int(start_t.split(":")[1])
+                    end_t = f"{(h + 1) % 24:02d}:{m:02d}"
+            except (ValueError, IndexError):
+                return "❌ start_time/end_time ต้องเป็นรูปแบบ HH:MM"
+            return self._add_event(
+                service, date, start_t, end_t, title,
+                description=description or "",
+                location=location or "",
+            )
+        return f"❌ action ไม่ถูกต้อง: {action!r} (ใช้ list / add / delete)"
 
     def _delete_event(self, service, event_ref: str) -> str:
         event_id = self._resolve_event_id_for_delete(service, event_ref)
