@@ -407,6 +407,7 @@ class ExpenseTool(BaseTool):
             note = item.get("note", "")
             lines.append(f"  • {amount:,.2f} — {category}" + (f": {note}" if note else ""))
         lines.append(f"\nรวม {total:,.2f} บาท")
+        lines.append(f"วันที่: {receipt_date}")
         lines.append("\nเลือกวิธีบันทึก:")
 
         preview_text = "\n".join(lines)

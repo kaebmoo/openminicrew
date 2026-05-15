@@ -210,6 +210,26 @@ def test_receipt_photo_falls_back_to_today_when_receipt_date_missing(tmp_path, m
     assert today in result
 
 
+def test_multi_item_preview_shows_receipt_date(tmp_path, monkeypatch):
+    from tools.response import InlineKeyboardResponse
+
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tool = ExpenseTool()
+    extracted = [
+        {"amount": 100.0, "category": "อาหาร", "note": "ข้าวผัด", "store": "ร้าน X", "receipt_date": "2026-05-10"},
+        {"amount": 50.0, "category": "เครื่องดื่ม", "note": "ชา", "store": "ร้าน X", "receipt_date": "2026-05-10"},
+    ]
+    with patch("interfaces.telegram_common.download_telegram_photo", return_value=b"img-multi"), \
+         patch.object(tool, "_extract_expense_from_image", new=AsyncMock(return_value=extracted)):
+        result = asyncio.run(tool.execute("u1", "__photo:file-multi"))
+
+    assert isinstance(result, InlineKeyboardResponse)
+    assert "วันที่: 2026-05-10" in result.text
+
+
 def test_pending_split_propagates_receipt_date_to_all_rows(tmp_path, monkeypatch):
     from core.callback_handler import _handle_expense_split, store_pending_expense
 
