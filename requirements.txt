@@ -26,6 +26,7 @@ tavily-python>=0.5.0
 duckduckgo-search>=6.3.0
 httpx>=0.28.0
 cryptography>=43.0.0
+urlextract>=1.9.0
 
 # Testing
 pytest>=9.0.0

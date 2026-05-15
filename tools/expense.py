@@ -353,6 +353,16 @@ class ExpenseTool(BaseTool):
         # ดึงชื่อร้านจาก item แรก (ถ้ามี) เพื่อใส่ใน note
         store = items[0].get("store", "")
 
+        # receipt_date อยู่บนทุก item (เท่ากันเพราะมาจากใบเสร็จเดียวกัน).
+        # ถ้า Gemini ไม่เห็นวันที่ในใบเสร็จ → ใช้วันที่ส่งข้อมูล (วันนี้) แทน
+        # การปล่อยว่าง เพื่อให้ทั้ง pending flow และ message ที่ส่งกลับ user
+        # ใช้วันที่เดียวกันชัดเจน
+        receipt_date = items[0].get("receipt_date", "") if items else ""
+        if not receipt_date:
+            receipt_date = date.today().isoformat()
+            for it in items:
+                it["receipt_date"] = receipt_date
+
         # รายการเดียว → บันทึกทันที
         if len(items) == 1:
             item = items[0]
@@ -366,6 +376,7 @@ class ExpenseTool(BaseTool):
                 amount=amount,
                 category=category,
                 note=note,
+                expense_date=receipt_date,
                 source_type=self.RECEIPT_SOURCE_TYPE,
                 source_hash=source_hash,
             )
@@ -373,6 +384,7 @@ class ExpenseTool(BaseTool):
                 f"📸 บันทึกรายจ่ายจากรูปแล้ว\n"
                 f"  [#{expense_id}] {amount:,.2f} บาท — {category}"
                 + (f": {note}" if note else "")
+                + f"\n  วันที่: {receipt_date}"
             )
 
         # หลายรายการ → แสดง preview + inline keyboard ให้ user เลือก
@@ -506,12 +518,14 @@ class ExpenseTool(BaseTool):
             # Format: {"store": "...", "subtotal": ..., "grand_total": ..., "items": [...]}
             if "items" in data and isinstance(data["items"], list):
                 store = data.get("store", "")
+                receipt_date = self._normalize_receipt_date(data.get("receipt_date"))
                 items = []
                 for it in data["items"]:
                     if isinstance(it, dict):
                         normalized = self._normalize_item(it)
                         if normalized:
                             normalized["store"] = store
+                            normalized["receipt_date"] = receipt_date
                             items.append(normalized)
                 if not items:
                     return None
@@ -522,7 +536,10 @@ class ExpenseTool(BaseTool):
 
             # Fallback: single item {"amount": ..., "category": ..., "note": ...}
             normalized = self._normalize_item(data)
-            return [normalized] if normalized else None
+            if normalized:
+                normalized["receipt_date"] = self._normalize_receipt_date(data.get("receipt_date"))
+                return [normalized]
+            return None
 
         except Exception as e:
             log.error("Failed to extract expense from image: %s", e, exc_info=True)
@@ -605,6 +622,29 @@ class ExpenseTool(BaseTool):
                 new_amount = round(grand_total - running_total, 2)
             adjusted.append({**item, "amount": new_amount})
         return adjusted
+
+    @staticmethod
+    def _normalize_receipt_date(value) -> str:
+        """Validate ค่า receipt_date จาก Gemini → คืน YYYY-MM-DD หรือ "" ถ้าไม่ถูกต้อง.
+
+        Gemini ถูก prompt ให้คืนเป็น YYYY-MM-DD ค.ศ. แล้ว — ตรงนี้แค่ guard
+        ป้องกัน hallucination/format แปลก (เช่น พ.ศ.หลุดมา) ด้วย date.fromisoformat.
+        """
+        if not value or not isinstance(value, str):
+            return ""
+        candidate = value.strip()
+        if not candidate or candidate.lower() == "null":
+            return ""
+        try:
+            parsed = date.fromisoformat(candidate)
+        except ValueError:
+            log.warning("Invalid receipt_date from Gemini: %r — falling back to today", value)
+            return ""
+        # Sanity check: ปี ค.ศ. ปกติอยู่ในช่วง 2000-2100 — กัน Gemini ส่ง พ.ศ. หลุดมา
+        if parsed.year < 2000 or parsed.year > 2100:
+            log.warning("receipt_date year out of range: %s — treating as invalid", parsed.year)
+            return ""
+        return parsed.isoformat()
 
     @staticmethod
     def _normalize_item(data: dict) -> dict | None:

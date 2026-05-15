@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from urlextract import URLExtract
 
 from core import db
 from core.security import get_gmail_credentials
@@ -12,6 +13,9 @@ from core.logger import get_logger
 from tools.base import BaseTool
 
 log = get_logger(__name__)
+
+# URLExtract instance reused — first init downloads TLD list to cache dir
+_url_extractor = URLExtract()
 
 LIST_WINDOW_DAYS = 30
 LIST_MAX_ITEMS = 10
@@ -250,9 +254,18 @@ class CalendarTool(BaseTool):
           - add ประชุมทีม 2026-04-22 14:00-15:00 @ห้องประชุม A
         End time defaults to start + 1 hour if omitted.
         """
-        # 0) Pull URLs out → description
-        urls = re.findall(r'https?://\S+', raw)
-        rest = re.sub(r'https?://\S+', '', raw)
+        # 0) Pull URLs out → description (urlextract handles Unicode/IDN, parens,
+        # and many edge cases the previous regex missed).
+        # with_schema_only=True → drop scheme-less hosts so we never auto-link bare
+        # words that happen to look like domains. Trailing punctuation that
+        # urlextract still includes is trimmed below.
+        urls_raw = _url_extractor.find_urls(raw, only_unique=True, with_schema_only=True)
+        urls: list[str] = []
+        rest = raw
+        for u in urls_raw:
+            cleaned = u.rstrip(".,;:!?)]}>\"'")
+            urls.append(cleaned)
+            rest = rest.replace(u, "")
         description = "\n".join(urls)
 
         # 0b) Pull '@location' marker (until next whitespace+@ or end)

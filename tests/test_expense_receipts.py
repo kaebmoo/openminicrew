@@ -156,6 +156,82 @@ def test_pending_expense_split_persists_source_hash_for_all_rows(tmp_path, monke
     assert rows[1]["note"]
 
 
+def test_normalize_receipt_date_accepts_valid_iso():
+    assert ExpenseTool._normalize_receipt_date("2026-05-10") == "2026-05-10"
+
+
+def test_normalize_receipt_date_rejects_thai_buddhist_and_garbage():
+    # Gemini bug: ส่งพ.ศ. หลุดมาเป็น ค.ศ. — ปี 2569 อยู่นอกช่วง 2000-2100
+    assert ExpenseTool._normalize_receipt_date("2569-05-10") == ""
+    assert ExpenseTool._normalize_receipt_date("18/05/2569") == ""
+    assert ExpenseTool._normalize_receipt_date("null") == ""
+    assert ExpenseTool._normalize_receipt_date(None) == ""
+    assert ExpenseTool._normalize_receipt_date("") == ""
+
+
+def test_receipt_photo_uses_receipt_date_when_provided(tmp_path, monkeypatch):
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tool = ExpenseTool()
+    extracted = [{
+        "amount": 120.0, "category": "อาหาร", "note": "lunch",
+        "store": "Cafe A", "receipt_date": "2026-05-10",
+    }]
+    with patch("interfaces.telegram_common.download_telegram_photo", return_value=b"img-bytes-1"), \
+         patch.object(tool, "_extract_expense_from_image", new=AsyncMock(return_value=extracted)):
+        result = asyncio.run(tool.execute("u1", "__photo:file-A"))
+
+    rows = db.list_expenses("u1")
+    assert len(rows) == 1
+    assert rows[0]["expense_date"] == "2026-05-10"
+    assert "2026-05-10" in result
+
+
+def test_receipt_photo_falls_back_to_today_when_receipt_date_missing(tmp_path, monkeypatch):
+    from datetime import date as _date
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tool = ExpenseTool()
+    extracted = [{
+        "amount": 80.0, "category": "เครื่องดื่ม", "note": "coffee",
+        "store": "Cafe B", "receipt_date": "",
+    }]
+    with patch("interfaces.telegram_common.download_telegram_photo", return_value=b"img-bytes-2"), \
+         patch.object(tool, "_extract_expense_from_image", new=AsyncMock(return_value=extracted)):
+        result = asyncio.run(tool.execute("u1", "__photo:file-B"))
+
+    today = _date.today().isoformat()
+    rows = db.list_expenses("u1")
+    assert rows[0]["expense_date"] == today
+    assert today in result
+
+
+def test_pending_split_propagates_receipt_date_to_all_rows(tmp_path, monkeypatch):
+    from core.callback_handler import _handle_expense_split, store_pending_expense
+
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    pending_id = store_pending_expense(
+        "u1",
+        [
+            {"amount": 50.0, "category": "อาหาร", "note": "ก๋วยเตี๋ยว", "receipt_date": "2026-05-10"},
+            {"amount": 25.0, "category": "เครื่องดื่ม", "note": "ชา", "receipt_date": "2026-05-10"},
+        ],
+        "Food Court",
+    )
+
+    _handle_expense_split("u1", pending_id)
+    rows = db.list_expenses("u1")
+    assert len(rows) == 2
+    assert all(r["expense_date"] == "2026-05-10" for r in rows)
+
+
 def test_apply_grand_total_ratio_distributes_sc_vat():
     """SC/VAT should be distributed proportionally across items"""
     tool = ExpenseTool()
@@ -233,7 +309,7 @@ def test_extract_expense_from_image_does_not_log_plaintext_response(monkeypatch)
          patch("tools.expense.log.warning") as mock_log_warning:
         result = asyncio.run(tool.extract_for_test(b"fake-image-bytes"))
 
-    assert result == [{"amount": 120.0, "category": "อาหาร", "note": "เลขบัตร 1234", "store": "Secret Shop"}]
+    assert result == [{"amount": 120.0, "category": "อาหาร", "note": "เลขบัตร 1234", "store": "Secret Shop", "receipt_date": ""}]
     info_messages = " ".join(str(call.args) for call in mock_log_info.call_args_list)
     warning_messages = " ".join(str(call.args) for call in mock_log_warning.call_args_list)
     assert response_text not in info_messages

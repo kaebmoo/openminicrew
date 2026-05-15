@@ -145,18 +145,22 @@ def _handle_expense_split(user_id: str, pending_id: str) -> str:
 
     lines = [f"💸 บันทึกแยก {len(items)} รายการแล้ว:"]
     total = 0.0
+    receipt_date = ""
     for item in items:
         amount = item["amount"]
         category = item.get("category", "ทั่วไป")
         note = item.get("note", "")
         if store and store not in note:
             note = f"{store} — {note}" if note else store
+        item_date = item.get("receipt_date", "")
+        receipt_date = receipt_date or item_date
 
         expense_id = db.add_expense(
             user_id,
             amount=amount,
             category=category,
             note=note,
+            expense_date=item_date,
             source_type=source_type,
             source_hash=source_hash,
         )
@@ -168,6 +172,8 @@ def _handle_expense_split(user_id: str, pending_id: str) -> str:
 
     if len(items) > 1:
         lines.append(f"\nรวม {total:,.2f} บาท")
+    if receipt_date:
+        lines.append(f"วันที่: {receipt_date}")
     return "\n".join(lines)
 
 
@@ -184,6 +190,7 @@ def _handle_expense_combine(user_id: str, pending_id: str) -> str:
     source_type = pending.get("source_type", "")
     source_hash = pending.get("source_hash", "")
     total = sum(it["amount"] for it in items)
+    receipt_date = next((it.get("receipt_date", "") for it in items if it.get("receipt_date")), "")
 
     # ใช้หมวดหมู่จากรายการที่แพงที่สุด
     main_item = max(items, key=lambda x: x["amount"])
@@ -201,10 +208,12 @@ def _handle_expense_combine(user_id: str, pending_id: str) -> str:
         amount=total,
         category=category,
         note=note,
+        expense_date=receipt_date,
         source_type=source_type,
         source_hash=source_hash,
     )
-    return f"💸 บันทึกรวม 1 รายการแล้ว\n  [#{expense_id}] {total:,.2f} บาท — {category}: {note}"
+    date_hint = f"\n  วันที่: {receipt_date}" if receipt_date else ""
+    return f"💸 บันทึกรวม 1 รายการแล้ว\n  [#{expense_id}] {total:,.2f} บาท — {category}: {note}{date_hint}"
 
 
 def _handle_consent_callback(user_id: str, data: str) -> str:
