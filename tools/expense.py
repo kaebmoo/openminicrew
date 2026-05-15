@@ -568,14 +568,58 @@ class ExpenseTool(BaseTool):
                         break
         return items
 
+    # Note "โปรโมชั่นราคาพิเศษ Xบ" / "ราคาพิเศษ X บาท" ที่ระบุ "ราคาหลังลด"
+    # — ใช้สำหรับจับคู่ discount กับ item ที่ถูกต้อง (CJ More, 7-11)
+    _SPECIAL_PRICE_PATTERN = re.compile(
+        r"ราคาพิเศษ\s*([\d,]+(?:\.\d+)?)\s*(?:บ|บาท)",
+    )
+
+    @staticmethod
+    def _extract_special_price(note: str) -> float | None:
+        """ดึงราคา 'หลังลด' จาก note เช่น 'โปรโมชั่นราคาพิเศษ 102บ' → 102.0"""
+        if not note:
+            return None
+        m = ExpenseTool._SPECIAL_PRICE_PATTERN.search(note)
+        if not m:
+            return None
+        try:
+            return float(m.group(1).replace(",", ""))
+        except ValueError:
+            return None
+
     @staticmethod
     def _net_discounts(items: list[dict], grand_total: float = 0) -> list[dict]:
-        """ตัดรายการซ้ำโดยใช้ grand_total ตรวจสอบ แล้วหักส่วนลด (amount ติดลบ) เข้ารายการก่อนหน้า"""
+        """ตัดรายการซ้ำ แล้วหักส่วนลด (amount ติดลบ) เข้า item ที่ถูกต้อง.
+
+        ใช้กลยุทธ์ 2 ชั้น:
+        1. ถ้า note ของ discount มี 'ราคาพิเศษ X บ' → จับคู่กับ item ที่
+           ราคาเดิม + discount ≈ X (รูปแบบ CJ More/7-11 ที่รวมส่วนลดท้ายใบ)
+        2. ไม่ match → หักเข้า item ก่อนหน้า (รูปแบบ discount ติดทันทีหลัง item)
+        """
         items = ExpenseTool._dedup_by_grand_total(items, grand_total)
-        result = []
+        result: list[dict] = []
         for item in items:
-            if item["amount"] < 0 and result and result[-1]["amount"] > 0:
-                # หักส่วนลดเข้ารายการก่อนหน้า
+            if item["amount"] >= 0:
+                result.append(item)
+                continue
+
+            # discount: ลอง match จาก 'ราคาพิเศษ X บ' ก่อน
+            target = ExpenseTool._extract_special_price(item.get("note", ""))
+            matched_idx = None
+            if target is not None:
+                for i in range(len(result) - 1, -1, -1):
+                    candidate = result[i]
+                    if candidate["amount"] > 0 and abs((candidate["amount"] + item["amount"]) - target) < 0.5:
+                        matched_idx = i
+                        break
+
+            if matched_idx is not None:
+                result[matched_idx] = {
+                    **result[matched_idx],
+                    "amount": round(result[matched_idx]["amount"] + item["amount"], 2),
+                }
+            elif result and result[-1]["amount"] > 0:
+                # Fallback: discount ติดหลัง item ใน column เดียวกัน
                 result[-1] = {**result[-1], "amount": round(result[-1]["amount"] + item["amount"], 2)}
             else:
                 result.append(item)

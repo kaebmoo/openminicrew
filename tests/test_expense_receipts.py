@@ -274,6 +274,44 @@ def test_apply_grand_total_ratio_distributes_sc_vat():
         assert adj["amount"] > orig["amount"]
 
 
+def test_net_discounts_matches_special_price_grouped_at_bottom():
+    """CJ More: discounts รวมท้ายใบ + note 'ราคาพิเศษ Xบ' → ต้องจับคู่ item ถูก
+    ไม่ใช่กองทุกส่วนลดลงรายการสุดท้ายให้ยอดตรง"""
+    items = [
+        {"amount": 24.0, "category": "เครื่องดื่ม", "note": "ซีโอโซดา"},
+        {"amount": 39.0, "category": "เครื่องดื่ม", "note": "ดีน่านม"},
+        {"amount": 69.0, "category": "อาหาร", "note": "โก๋แก่"},
+        {"amount": 128.0, "category": "เครื่องดื่ม", "note": "น้ำแร่ 1500ml"},
+        {"amount": 455.0, "category": "เครื่องดื่ม", "note": "เบียร์"},
+        {"amount": -26.0, "category": "ทั่วไป", "note": "โปรโมชั่นราคาพิเศษ 102บ"},
+        {"amount": -4.0, "category": "ทั่วไป", "note": "โปรโมชั่นราคาพิเศษ 35บ"},
+        {"amount": -3.0, "category": "ทั่วไป", "note": "โปรโมชั่นราคาพิเศษ 66บ"},
+    ]
+    result = ExpenseTool._net_discounts(items, grand_total=682.0)
+
+    assert len(result) == 5
+    amounts = {r["note"]: r["amount"] for r in result}
+    assert amounts["ซีโอโซดา"] == 24.0           # ไม่ลด
+    assert amounts["ดีน่านม"] == 35.0             # 39 - 4
+    assert amounts["โก๋แก่"] == 66.0              # 69 - 3
+    assert amounts["น้ำแร่ 1500ml"] == 102.0      # 128 - 26
+    assert amounts["เบียร์"] == 455.0             # เบียร์ไม่ลด ห้ามยัด
+    assert sum(r["amount"] for r in result) == 682.0
+
+
+def test_net_discounts_falls_back_to_preceding_item_when_no_special_price_hint():
+    """ส่วนลดติดทันทีหลัง item (รูปแบบ A) ไม่มี 'ราคาพิเศษ' hint → ใช้ heuristic เดิม"""
+    items = [
+        {"amount": 100.0, "category": "อาหาร", "note": "ข้าวผัด"},
+        {"amount": -10.0, "category": "ทั่วไป", "note": "CPN3 - BHT"},
+        {"amount": 50.0, "category": "เครื่องดื่ม", "note": "ชา"},
+    ]
+    result = ExpenseTool._net_discounts(items, grand_total=140.0)
+    amounts = {r["note"]: r["amount"] for r in result}
+    assert amounts["ข้าวผัด"] == 90.0
+    assert amounts["ชา"] == 50.0
+
+
 def test_apply_grand_total_ratio_no_change_when_missing():
     """When subtotal/grand_total are missing, items stay unchanged"""
     tool = ExpenseTool()
