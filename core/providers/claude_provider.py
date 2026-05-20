@@ -11,7 +11,7 @@ from core.providers.base import BaseLLMProvider
 from core.config import (
     ANTHROPIC_API_KEY, OWNER_TELEGRAM_CHAT_ID,
     CLAUDE_MODEL_CHEAP, CLAUDE_MODEL_MID,
-    CLAUDE_HTTPS_PROXY,
+    CLAUDE_HTTPS_PROXY, CLAUDE_BASE_URL,
 )
 from core.logger import get_logger
 
@@ -34,13 +34,24 @@ _CLAUDE_HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=
 
 
 def _build_anthropic_kwargs(api_key: str) -> dict:
-    """รวม kwargs ที่ส่งเข้า anthropic.AsyncAnthropic — รวม proxy ถ้าตั้งไว้
+    """รวม kwargs ที่ส่งเข้า anthropic.AsyncAnthropic
 
-    หมายเหตุ: ถ้ามี CLAUDE_HTTPS_PROXY → สร้าง httpx.AsyncClient เอง
-    เพื่อให้ traffic ทั้งหมดของ Claude ผ่าน proxy (Gemini/Telegram ไม่กระทบ)
+    Precedence ของ network routing:
+    1. CLAUDE_BASE_URL (reverse proxy เช่น nginx บน VPS) — ทางที่แนะนำ
+    2. CLAUDE_HTTPS_PROXY (HTTP CONNECT proxy เช่น tinyproxy)
+    3. Default (ตรงไปยัง api.anthropic.com)
     """
     kwargs: dict[str, Any] = {"api_key": api_key, "timeout": _CLAUDE_HTTPX_TIMEOUT}
+
+    if CLAUDE_BASE_URL:
+        # Reverse-proxy mode — SDK ยิง path ตรงไปยัง base_url ของเรา
+        # ไม่ต้องใช้ http proxy แยก (port 443 ผ่าน firewall ปกติ)
+        kwargs["base_url"] = CLAUDE_BASE_URL.rstrip("/")
+        log.info(f"[claude] using base_url: {kwargs['base_url']}")
+        return kwargs
+
     if CLAUDE_HTTPS_PROXY:
+        # HTTP CONNECT proxy fallback
         # httpx>=0.26 ใช้ proxy=; รุ่นเก่ากว่าใช้ proxies=
         try:
             http_client = httpx.AsyncClient(

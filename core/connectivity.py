@@ -33,14 +33,41 @@ _CACHE_TTL_SECONDS = 60.0
 
 
 def _proxy_for_provider(name: str) -> str | None:
-    """Return proxy URL ที่ provider นี้ใช้ — ถ้า reachability ต้องตรงกับ runtime จริง"""
+    """Return proxy URL ที่ provider นี้ใช้ — ถ้า reachability ต้องตรงกับ runtime จริง
+
+    หมายเหตุ: ถ้า provider ใช้ base_url (reverse proxy) → ไม่ต้องใช้ HTTP proxy
+    เพราะ traffic ออกตรงไป base_url อยู่แล้ว
+    """
     if name == "claude":
         try:
-            from core.config import CLAUDE_HTTPS_PROXY
+            from core.config import CLAUDE_HTTPS_PROXY, CLAUDE_BASE_URL
+            if CLAUDE_BASE_URL:
+                return None  # reverse proxy mode — ไม่ใช้ HTTP proxy
             return CLAUDE_HTTPS_PROXY or None
         except Exception:
             return None
     return None
+
+
+def _override_url_for_provider(name: str, default_url: str) -> str:
+    """Return URL จริงที่ใช้ตอน runtime — ถ้า provider ใช้ base_url ต้องเปลี่ยน host"""
+    if name == "claude":
+        try:
+            from core.config import CLAUDE_BASE_URL
+            if CLAUDE_BASE_URL:
+                # default คือ https://api.anthropic.com/v1/messages
+                # ต้องเปลี่ยนเป็น <base_url>/v1/messages
+                from urllib.parse import urlparse, urlunparse
+                base = urlparse(CLAUDE_BASE_URL.rstrip("/"))
+                default = urlparse(default_url)
+                return urlunparse((
+                    base.scheme, base.netloc,
+                    base.path.rstrip("/") + default.path,
+                    "", "", "",
+                ))
+        except Exception:
+            pass
+    return default_url
 
 
 async def _check_one(name: str, url: str) -> dict:
@@ -135,6 +162,8 @@ async def check_llm_connectivity(only_configured: bool = True) -> dict:
         url = getattr(provider, "health_check_url", "") or ""
         if not url:
             continue
+        # override ด้วย base_url ถ้า provider ตั้ง reverse proxy ไว้
+        url = _override_url_for_provider(name, url)
         is_configured = bool(provider.is_configured())
         if is_configured:
             configured_names.add(name)

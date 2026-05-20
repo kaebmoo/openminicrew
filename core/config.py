@@ -48,6 +48,12 @@ GEMINI_API_KEY = _optional("GEMINI_API_KEY", "")
 # หมายเหตุ: proxy ต้องเป็นของคุณเอง (private) เพราะ traffic มี API key + prompt content
 CLAUDE_HTTPS_PROXY = _optional("CLAUDE_HTTPS_PROXY", "")
 
+# Optional: ใช้ reverse-proxy domain แทน api.anthropic.com (เช่น nginx บน VPS ของคุณเอง)
+# ตัวอย่าง: CLAUDE_BASE_URL=https://anthropic.your-domain.com
+# nginx ที่ proxy ต้องตั้ง Host header = api.anthropic.com และ proxy_ssl_server_name on
+# มี precedence สูงกว่า CLAUDE_HTTPS_PROXY (ถ้าตั้งทั้งคู่ base_url ชนะ)
+CLAUDE_BASE_URL = _optional("CLAUDE_BASE_URL", "")
+
 CLAUDE_MODEL_CHEAP = _optional("CLAUDE_MODEL_CHEAP", "claude-haiku-4-5-20251001")
 CLAUDE_MODEL_MID = _optional("CLAUDE_MODEL_MID", "claude-sonnet-4-5-20250929")
 
