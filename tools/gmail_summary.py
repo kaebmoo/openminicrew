@@ -133,54 +133,71 @@ class GmailSummaryTool(BaseTool):
         # ใช้ LLM ตาม user preference (fallback เป็น default)
         user = get_user_by_id(user_id) or {}
         provider = get_preference(user, "default_llm")
+        log.info(f"[gmail_summary] start user={user_id} provider={provider} force={force} newer_than={newer_than} search={search_query!r}")
         # สร้าง label สำหรับแสดงผล
         display_label = time_label
         if search_query:
             display_label = f"{time_label} ค้นหา: \"{search_query}\""
 
         # 1. ดึง Gmail credentials
+        log.info(f"[gmail_summary] user={user_id} loading credentials...")
         creds = get_gmail_credentials(user_id)
         if not creds:
+            log.warning(f"[gmail_summary] user={user_id} no credentials")
             from core.config import WEBHOOK_HOST
             if WEBHOOK_HOST:
                 return "❌ ยังไม่ได้เชื่อมต่อ Gmail\nกรุณาพิมพ์ /authgmail เพื่อ authorize"
             return "❌ ยังไม่ได้เชื่อมต่อ Gmail\nกรุณารัน: python main.py --auth-gmail"
+        log.info(f"[gmail_summary] user={user_id} credentials OK (valid={creds.valid}, expired={creds.expired})")
 
         try:
             loop = asyncio.get_running_loop()
-            service = build("gmail", "v1", credentials=creds)
+            log.info(f"[gmail_summary] user={user_id} building service...")
+            service = await loop.run_in_executor(
+                None,
+                lambda: build("gmail", "v1", credentials=creds),
+            )
+            log.info(f"[gmail_summary] user={user_id} service built")
 
             # 2. ดึงเมลตามช่วงเวลา + search query
             query = self._build_gmail_query(force, newer_than, search_query)
             log.info(f"Gmail query: {query}")
 
             # run_in_executor เพื่อไม่ block event loop (Gmail API เป็น sync)
-            results = await loop.run_in_executor(
-                None,
-                lambda: service.users().messages().list(
-                    userId="me", q=query, maxResults=GMAIL_MAX_RESULTS
-                ).execute()
+            results = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: service.users().messages().list(
+                        userId="me", q=query, maxResults=GMAIL_MAX_RESULTS
+                    ).execute()
+                ),
+                timeout=30,
             )
 
             messages = results.get("messages", [])
+            log.info(f"[gmail_summary] user={user_id} list() returned {len(messages)} messages")
             if not messages:
                 return f"ไม่พบอีเมลที่ตรงกับ: {display_label}"
 
             # 3. ดึงรายละเอียดแต่ละฉบับ (ข้ามที่เคยสรุปแล้ว ยกเว้น force)
             emails_data = []
             skipped = 0
-            for msg_meta in messages:
+            for idx, msg_meta in enumerate(messages, 1):
                 msg_id = msg_meta["id"]
 
                 if not force and db.is_email_processed(user_id, msg_id):
                     skipped += 1
                     continue
 
-                msg = await loop.run_in_executor(
-                    None,
-                    lambda mid=msg_id: service.users().messages().get(
-                        userId="me", id=mid, format="full"
-                    ).execute()
+                log.info(f"[gmail_summary] user={user_id} fetching msg {idx}/{len(messages)} id={msg_id}")
+                msg = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda mid=msg_id: service.users().messages().get(
+                            userId="me", id=mid, format="full"
+                        ).execute()
+                    ),
+                    timeout=20,
                 )
 
                 headers = {h["name"]: h["value"]
@@ -223,12 +240,18 @@ class GmailSummaryTool(BaseTool):
             user_msg = f"สรุปอีเมล {len(emails_data)} ฉบับ ({display_label}):\n{emails_text}"
             if user_request:
                 user_msg += f"\n\n--- คำขอของผู้ใช้ ---\n{user_request}\nให้ตอบตามคำขอของผู้ใช้โดยอิงจากข้อมูลอีเมลข้างต้น"
-            resp = await llm_router.chat(
-                messages=[{"role": "user", "content": user_msg}],
-                provider=provider,
-                tier=self.preferred_tier,
-                system=system,
+            log.info(f"[gmail_summary] user={user_id} calling LLM provider={provider} tier={self.preferred_tier} emails={len(emails_data)} prompt_chars={len(user_msg)}")
+            resp = await asyncio.wait_for(
+                llm_router.chat(
+                    messages=[{"role": "user", "content": user_msg}],
+                    provider=provider,
+                    tier=self.preferred_tier,
+                    system=system,
+                    user_id=user_id,
+                ),
+                timeout=90,
             )
+            log.info(f"[gmail_summary] user={user_id} LLM done model={resp.get('model')} tokens={resp.get('token_used')}")
 
             # 5. บันทึกว่าสรุปแล้ว
             for em in emails_data:
@@ -247,6 +270,15 @@ class GmailSummaryTool(BaseTool):
 
             return f"📬 สรุปอีเมล {len(emails_data)} ฉบับ ({display_label}):\n\n{resp['content']}"
 
+        except asyncio.TimeoutError as e:
+            log.error(f"[gmail_summary] user={user_id} TIMEOUT in inner step: {e!r}", exc_info=True)
+            db.log_tool_usage(
+                user_id=user_id,
+                tool_name=self.name,
+                status="failed",
+                **db.make_error_fields(f"inner timeout: {e!r}"),
+            )
+            return "⏱ ดึง/สรุปอีเมลใช้เวลานานเกินไป กรุณาลองใหม่ (ตรวจสอบ network / LLM provider)"
         except Exception as e:
             log.error(f"Email summary failed for {user_id}: {e}", exc_info=True)
             db.log_tool_usage(
