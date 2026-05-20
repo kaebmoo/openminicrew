@@ -28,6 +28,11 @@ from core.db import init_db
 from core.user_manager import init_owner
 from core.logger import get_logger
 from core.readiness import STATUS_FAIL, STATUS_WARN, collect_startup_readiness, summarize_startup_readiness
+from core.connectivity import (
+    run_connectivity_check_sync,
+    format_connectivity_report,
+    build_owner_alert_message,
+)
 from core.security import (
     authorize_gmail_interactive,
     get_gmail_token_path,
@@ -242,6 +247,37 @@ def main():
     # 4. Discover tools
     registry.discover()
     log.info("[4/7] Tools discovered: %s", list(registry.tools.keys()))
+
+    # 4b. Discover LLM providers + ตรวจ connectivity จริง (TCP/TLS reach)
+    #     เป้าหมาย: รู้ก่อน user ใช้ ว่า provider ไหน network ออกไม่ได้
+    try:
+        from core.llm import provider_registry as _llm_registry
+        _llm_registry.discover()
+    except Exception as _e:  # pragma: no cover — discover ทำใน llm.py แล้วปกติ
+        log.warning("LLM provider discovery raised: %s", _e)
+
+    try:
+        connectivity = run_connectivity_check_sync(timeout=30.0)
+        for line in format_connectivity_report(connectivity):
+            if line.startswith("[OK]"):
+                log.info(line)
+            else:
+                log.error(line)
+
+        alert_msg = build_owner_alert_message(connectivity)
+        if alert_msg:
+            log.error(
+                "LLM connectivity issue detected — owner will be notified once Telegram is reachable"
+            )
+            # พยายามแจ้ง owner ทาง Telegram (best-effort, อย่าให้ล้มถ้าส่งไม่ได้)
+            try:
+                if OWNER_TELEGRAM_CHAT_ID:
+                    from interfaces.telegram_common import send_message
+                    send_message(int(OWNER_TELEGRAM_CHAT_ID), alert_msg, parse_mode=None)
+            except Exception as notify_err:
+                log.warning("Failed to notify owner via Telegram: %s", notify_err)
+    except Exception as conn_err:  # pragma: no cover — connectivity เป็น best-effort
+        log.error("Connectivity check raised unexpectedly: %s", conn_err, exc_info=True)
 
     # 5. Validate prompts — fail-fast ก่อน serve traffic
     prompt_errors = validate_all_prompts()

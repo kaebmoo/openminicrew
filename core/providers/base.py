@@ -6,6 +6,9 @@ from typing import Any
 
 class BaseLLMProvider(ABC):
     name: str = ""
+    # URL ที่ใช้ทดสอบ network reachability ตอน startup / /health
+    # ควรเป็น HTTPS endpoint ที่ตอบ HTTP layer ได้ (อาจ 401/404 ก็พอ — สำคัญที่ TCP+TLS ผ่าน)
+    health_check_url: str = ""
 
     @abstractmethod
     def is_configured(self) -> bool:

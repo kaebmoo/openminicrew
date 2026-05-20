@@ -42,6 +42,12 @@ FALLBACK_DAILY_QUOTA = int(_optional("FALLBACK_DAILY_QUOTA", "0"))  # 0 = ไม
 ANTHROPIC_API_KEY = _optional("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY = _optional("GEMINI_API_KEY", "")
 
+# Optional HTTPS proxy เฉพาะสำหรับ Claude API
+# ใช้กรณี server บล็อก outbound ไป api.anthropic.com แต่ออก proxy ได้
+# ตัวอย่าง: CLAUDE_HTTPS_PROXY=http://122.155.209.163:8888
+# หมายเหตุ: proxy ต้องเป็นของคุณเอง (private) เพราะ traffic มี API key + prompt content
+CLAUDE_HTTPS_PROXY = _optional("CLAUDE_HTTPS_PROXY", "")
+
 CLAUDE_MODEL_CHEAP = _optional("CLAUDE_MODEL_CHEAP", "claude-haiku-4-5-20251001")
 CLAUDE_MODEL_MID = _optional("CLAUDE_MODEL_MID", "claude-sonnet-4-5-20250929")
 

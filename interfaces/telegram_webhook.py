@@ -163,10 +163,22 @@ async def health_check():
     db_health = db.check_health()
     llm_health = llm_router.health_check()
     last_schedule = db.get_last_scheduler_run()
+
+    # Live LLM connectivity check (cached 60s เพื่อกัน hammering)
+    from core.connectivity import check_llm_connectivity_cached
+    try:
+        llm_connectivity = await check_llm_connectivity_cached()
+    except Exception as e:
+        log.warning("connectivity check failed: %s", e)
+        llm_connectivity = {"error": str(e), "any_configured_fail": True, "providers": []}
+
     status = readiness["status"]
     if db_health.get("db") != "ok":
         status = STATUS_FAIL
     elif api_key_hygiene["status"] != "ok" and status == "ok":
+        status = "degraded"
+    # หาก provider ที่ configured เชื่อมไม่ได้ → degraded
+    if llm_connectivity.get("any_configured_fail") and status == "ok":
         status = "degraded"
 
     return {
@@ -178,6 +190,7 @@ async def health_check():
         "security_audit": audit_summary,
         "db": db_health,
         "llm": llm_health,
+        "llm_connectivity": llm_connectivity,
         "last_scheduler_run": last_schedule,
         "timestamp": datetime.now().isoformat(),
     }

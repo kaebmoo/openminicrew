@@ -21,6 +21,7 @@ _GEMINI_HTTP_OPTS = {"timeout": 60000}  # 60s timeout (milliseconds)
 
 class GeminiProvider(BaseLLMProvider):
     name = "gemini"
+    health_check_url = "https://generativelanguage.googleapis.com/v1beta/models"
 
     def __init__(self):
         self._client: genai.Client | None = None
