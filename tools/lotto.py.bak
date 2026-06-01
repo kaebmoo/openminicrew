@@ -1,15 +1,5 @@
-"""Lotto Tool — ตรวจผลสลากกินแบ่งรัฐบาลไทย
+"""Lotto Tool — ตรวจผลสลากกินแบ่งรัฐบาลผ่าน API"""
 
-แหล่งข้อมูล: Sanook (news.sanook.com)
-  - ผลรางวัลเต็มงวด (รางวัลที่ 1-5 + ข้างเคียง + เลขหน้า/ท้าย) ดึงจากหน้า HTML
-    ของ Sanook ที่ฝัง JSON-LD `articleBody` ไว้ → /lotto/check/<DDMMYYYY>/
-  - งวดล่าสุด + รายการงวดย้อนหลัง ดึงจาก RSS feed ของ Sanook
-
-หมายเหตุ: API เดิม lotto.api.rayriffy.com ปิดตัวไปแล้ว (ตอบ body ว่าง)
-สำรองโค้ดเดิมไว้ที่ tools/lotto.py.bak
-"""
-
-import html as _html
 import re
 import requests
 from tools.base import BaseTool
@@ -18,56 +8,42 @@ from core.logger import get_logger
 
 log = get_logger(__name__)
 
-# --- Sanook sources ---
-SANOOK_CHECK_BASE = "https://news.sanook.com/lotto/check"
-SANOOK_RSS_URL = "https://rssfeeds.sanook.com/rss/feeds/sanook/news.lotto.xml"
-
-GLO_URL = "https://www.glo.or.th/mission/reward-payment/check-reward"
-
-# ชื่อเดือนไทย → เลขเดือน (ใช้ตรวจว่า Sanook ส่งหน้างวดที่ขอจริง ไม่ใช่ fallback งวดล่าสุด)
-_THAI_MONTHS = {
-    "มกราคม": "01", "กุมภาพันธ์": "02", "มีนาคม": "03", "เมษายน": "04",
-    "พฤษภาคม": "05", "มิถุนายน": "06", "กรกฎาคม": "07", "สิงหาคม": "08",
-    "กันยายน": "09", "ตุลาคม": "10", "พฤศจิกายน": "11", "ธันวาคม": "12",
-}
+API_BASE = "https://lotto.api.rayriffy.com"
+LOTTO_API_HOST = "lotto.api.rayriffy.com"
 
 
-def _thai_date_to_id(date_str: str) -> str | None:
-    """'1 มิถุนายน 2569' → '01062569' (DDMMYYYY). คืน None ถ้าแปลงไม่ได้"""
-    m = re.search(r"(\d{1,2})\s+(\S+)\s+(\d{4})", date_str)
-    if not m:
-        return None
-    day, month_name, year = m.groups()
-    month = _THAI_MONTHS.get(month_name)
-    if not month:
-        return None
-    return f"{int(day):02d}{month}{year}"
-
-
-def _http_get_text(url: str, timeout: int = 10) -> str | None:
-    """ดึงหน้าเว็บเป็น text — ลองตรงๆ ก่อน ถ้าล้มเหลว/ถูกบล็อกค่อย fallback ไป proxy"""
+def _lotto_get(url: str, timeout: int = 10) -> requests.Response:
+    """Fetch using requests, fallback to proxy if direct call fails or returns garbage."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    direct_text = None
+    direct_resp = None
     try:
-        # ลองดึงตรงๆ ให้เวลาสั้นๆ ถ้าเน็ตเครื่องโดนบล็อกจะหลุดไปหา proxy เร็ว
-        resp = requests.get(url, timeout=5, headers=headers)
-        if resp.status_code == 200 and resp.text:
-            return resp.text
-        direct_text = resp.text or None
-        log.warning(f"Direct fetch HTTP {resp.status_code} for {url}. Falling back to proxy")
+        # ลองดึงข้อมูลตรงๆ ให้เวลาสั้นๆ ถ้าเน็ตเครื่องโดนบล็อกก็จะหลุดไปหา proxy ทันที
+        direct_resp = requests.get(url, timeout=3, headers=headers)
+        # บาง network ตอบ 200 พร้อม body ว่างเปล่า / HTML challenge / error page
+        # → ถือว่า "ได้ response แต่ใช้ไม่ได้" และ fallback ไป proxy
+        if direct_resp.status_code == 200:
+            try:
+                direct_resp.json()
+                return direct_resp
+            except Exception as je:
+                log.warning(f"Direct fetch returned non-JSON for {url}: {je}. Falling back to proxy")
+        else:
+            log.warning(f"Direct fetch returned HTTP {direct_resp.status_code} for {url}. Falling back to proxy")
     except Exception as e:
         log.warning(f"Direct fetch failed: {e}. Falling back to proxy for {url}")
 
     try:
-        # codetabs proxy เลี่ยงปัญหาการถูกบล็อกเส้นทางชั่วคราว
+        # ใช้ api.codetabs.com เพื่อทำ proxy เลี่ยงปัญหาการถูกบล็อกเส้นทางชั่วคราว
         proxy_url = f"https://api.codetabs.com/v1/proxy/?quest={url}"
-        resp = requests.get(proxy_url, timeout=timeout, headers=headers)
-        if resp.status_code == 200 and resp.text:
-            return resp.text
+        return requests.get(proxy_url, timeout=timeout, headers=headers)
     except Exception as proxy_e:
         log.error(f"Proxy fallback failed: {proxy_e}")
-
-    return direct_text
+        if direct_resp is not None:
+            return direct_resp
+        resp = requests.Response()
+        resp.status_code = 500
+        return resp
+GLO_URL = "https://www.glo.or.th/mission/reward-payment/check-reward"
 
 # Mapping prize id → emoji + Thai name
 PRIZE_DISPLAY = {
@@ -182,153 +158,42 @@ class LottoTool(BaseTool):
     # ------------------------------------------------------------------
     # API Calls
     # ------------------------------------------------------------------
-    # --- Header keyword → (prize id, expected number length) ---
-    # ตรวจตามลำดับ: "ข้างเคียง" ต้องมาก่อน "รางวัลที่ 1"
-    _PRIZE_RULES = [
-        ("prizeFirstNear",          ("ข้างเคียง",),            6),
-        ("runningNumberFrontThree", ("เลขหน้า 3 ตัว",),        3),
-        ("runningNumberBackThree",  ("เลขท้าย 3 ตัว",),        3),
-        ("runningNumberBackTwo",    ("เลขท้าย 2 ตัว",),        2),
-        ("prizeFirst",              ("รางวัลที่ 1",),          6),
-        ("prizeSecond",             ("รางวัลที่ 2",),          6),
-        ("prizeThird",              ("รางวัลที่ 3",),          6),
-        ("prizeForth",              ("รางวัลที่ 4",),          6),
-        ("prizeFifth",              ("รางวัลที่ 5",),          6),
-    ]
-    _RUNNING_IDS = {
-        "runningNumberFrontThree",
-        "runningNumberBackThree",
-        "runningNumberBackTwo",
-    }
-
-    def _classify_header(self, line: str):
-        """ถ้า line เป็นหัวข้อรางวัล → คืน (prize_id, expected_len, reward) มิฉะนั้น None"""
-        for pid, keywords, exp_len in self._PRIZE_RULES:
-            if all(kw in line for kw in keywords):
-                m = re.search(r"รางวัล(?:ๆ)?ละ\s*([\d,]+)\s*บาท", line)
-                reward = m.group(1).replace(",", "") if m else ""
-                return pid, exp_len, reward
-        return None
-
-    def _parse_article_body(self, body: str, date_id: str) -> dict | None:
-        """แปลง articleBody ของ Sanook → dict รูปแบบเดียวกับ API เดิม
-
-        คืน dict: {date, endpoint, prizes:[{id,reward,number}], runningNumbers:[...]}
-        """
-        body = _html.unescape(body).replace("\xa0", " ")
-        lines = body.splitlines()
-
-        # date string จากบรรทัด "...ตรวจหวย 1 มิถุนายน 2569"
-        date_str = ""
-        for ln in lines[:3]:
-            m = re.search(r"ตรวจหวย\s+(.+?)\s*$", ln)
-            if m:
-                date_str = m.group(1).strip()
-                break
-
-        buckets: dict[str, dict] = {}
-        order: list[str] = []
-        current = None
-        for ln in lines:
-            header = self._classify_header(ln)
-            if header:
-                pid, exp_len, reward = header
-                if pid not in buckets:
-                    buckets[pid] = {"id": pid, "reward": reward, "number": [], "_len": exp_len}
-                    order.append(pid)
-                current = buckets[pid]
-                continue
-            if current is not None:
-                exp_len = current["_len"]
-                for tok in re.findall(r"\d+", ln):
-                    if len(tok) == exp_len:
-                        current["number"].append(tok)
-
-        if not buckets:
-            return None
-
-        prizes = [{"id": b["id"], "reward": b["reward"], "number": b["number"]}
-                  for pid in order for b in [buckets[pid]] if pid not in self._RUNNING_IDS]
-        running = [{"id": b["id"], "reward": b["reward"], "number": b["number"]}
-                   for pid in order for b in [buckets[pid]] if pid in self._RUNNING_IDS]
-
-        # ต้องมีรางวัลที่ 1 อย่างน้อย ถึงจะถือว่าใช้ได้
-        if not any(p["id"] == "prizeFirst" and p["number"] for p in prizes):
-            return None
-
-        return {
-            "date": date_str or date_id,
-            "endpoint": f"{SANOOK_CHECK_BASE}/{date_id}/",
-            "prizes": prizes,
-            "runningNumbers": running,
-        }
-
     def _fetch_lotto(self, date_id: str = None) -> dict | None:
-        """ดึงผลสลากเต็มงวดจากหน้า Sanook. ถ้าไม่ระบุ date_id ใช้งวดล่าสุดจาก RSS"""
+        """Fetch lotto data from API. Returns response dict or None on failure."""
         try:
-            explicit = bool(date_id)
-            if not date_id:
-                items = self._fetch_rss_items()
-                if not items:
-                    return None
-                date_id = items[0]["id"]
+            if date_id:
+                url = f"{API_BASE}/lotto/{date_id}"
+            else:
+                url = f"{API_BASE}/latest"
 
-            html = _http_get_text(f"{SANOOK_CHECK_BASE}/{date_id}/")
-            if not html:
+            resp = _lotto_get(url)
+            data = resp.json()
+
+            if data.get("status") != "success":
                 return None
 
-            m = re.search(r'"articleBody"\s*:\s*"((?:[^"\\]|\\.)*)"', html)
-            if not m:
-                log.warning(f"articleBody not found for date_id={date_id}")
+            response = data.get("response", {})
+            # API returns empty date and empty number arrays for non-existent dates
+            if not response or not response.get("date"):
                 return None
 
-            import json
-            try:
-                body = json.loads('"' + m.group(1) + '"')
-            except Exception:
-                body = m.group(1)
-
-            result = self._parse_article_body(body, date_id)
-
-            # Sanook ตอบงวดล่าสุดแทนเมื่อ date_id ไม่มีจริง (ไม่ 404)
-            # → ถ้าวันที่ในหน้าไม่ตรงกับที่ขอ ถือว่า "ไม่มีงวดนั้น"
-            if result and explicit:
-                actual_id = _thai_date_to_id(result.get("date", ""))
-                if actual_id and actual_id != date_id:
-                    log.info(f"Requested {date_id} but page is {actual_id}; treating as not-found")
-                    return None
-
-            return result
+            return response
 
         except Exception as e:
-            log.error(f"Lotto fetch error (Sanook HTML): {e}")
+            log.error(f"Lotto API error: {e}")
             return None
-
-    def _fetch_rss_items(self) -> list:
-        """ดึงรายการงวดจาก Sanook RSS → [{id, date}, ...] (ใหม่สุดก่อน)"""
-        try:
-            xml = _http_get_text(SANOOK_RSS_URL)
-            if not xml:
-                return []
-            items = []
-            for block in re.findall(r"<item>(.*?)</item>", xml, re.DOTALL):
-                lm = re.search(r"/lotto/check/(\d{8})/", block)
-                if not lm:
-                    continue
-                date_id = lm.group(1)
-                tm = re.search(r"ตรวจหวย\s+([^\]<]+?)\s*\]?\]?\s*</title>", block)
-                date_str = tm.group(1).strip() if tm else date_id
-                items.append({"id": date_id, "date": date_str})
-            return items
-        except Exception as e:
-            log.error(f"Lotto RSS error: {e}")
-            return []
 
     def _fetch_draw_list(self, page: int = 1) -> list | None:
-        """รายการงวดที่ตรวจได้ — Sanook RSS มีหน้าเดียว (งวดล่าสุด ~10 งวด)"""
-        if page and page > 1:
-            return []
-        return self._fetch_rss_items()
+        """Fetch list of available draws from API."""
+        try:
+            resp = _lotto_get(f"{API_BASE}/list/{page}")
+            data = resp.json()
+            if data.get("status") != "success":
+                return None
+            return data.get("response", [])
+        except Exception as e:
+            log.error(f"Lotto list API error: {e}")
+            return None
 
     def _find_nearby_draws(self, date_id: str) -> str:
         """When a date_id doesn't exist, find and show nearby draws."""
