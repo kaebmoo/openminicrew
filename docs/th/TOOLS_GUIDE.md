@@ -1357,7 +1357,7 @@ args_desc = meta.get("parameters_args", "").strip()
 | **exchange_rate** — อัตราแลกเปลี่ยน | `/fx`, `/rate`, `/exchange` | Bank of Thailand API | cheap | `BOT_API_EXCHANGE_TOKEN`, `BOT_API_HOLIDAY_TOKEN` |
 | **news_summary** — สรุปข่าว | `/news` | Google News RSS + LLM | cheap | ไม่ต้อง (RSS ฟรี) |
 | **web_search** — ค้นหาเว็บ | `/search`, `/google` | Google Custom Search + LLM | cheap | `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_CX` |
-| **lotto** — ตรวจสลากกินแบ่ง | `/lotto` | lotto.api.rayriffy.com | cheap | ไม่ต้อง (API ฟรี) |
+| **lotto** — ตรวจสลากกินแบ่ง | `/lotto` | Sanook (HTML JSON-LD + RSS) | cheap | ไม่ต้อง (เว็บสาธารณะ) |
 | **todo** — จัดการ to-do list | `/todo` | SQLite | cheap | ไม่ต้อง |
 | **reminder** — ตั้งเตือนครั้งเดียว | `/remind` | SQLite + asyncio scheduler | cheap | ไม่ต้อง |
 | **schedule** — ตั้งเวลา tool อัตโนมัติ | `/schedule` | SQLite + asyncio scheduler | cheap | ไม่ต้อง |
