@@ -249,6 +249,17 @@ async def _process_update(data: dict):
             )
         return
 
+    # ก่อน dispatcher: ถ้าอยู่ใน edit mode (OCR) ให้ดักข้อความ text ไปจัดการก่อน
+    # วางก่อน photo handling เพื่อไม่ให้รูป (text="") โดนดัก และให้รูปใหม่เริ่ม OCR ปกติ
+    from core.callback_handler import get_active_edit_pending, handle_edit_reply
+    edit_pending = get_active_edit_pending(user_id)
+    if edit_pending and text:
+        if text.startswith("/"):
+            edit_pending["edit_state"] = None  # slash command → ออกจาก edit mode ไป dispatcher ปกติ
+        else:
+            await handle_edit_reply(user_id, edit_pending, text, chat_id, message_id)
+            return
+
     # Handle photo messages (e.g. expense receipt)
     photo_list = message.get("photo")
     if photo_list and not text:

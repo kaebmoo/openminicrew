@@ -232,6 +232,32 @@ def _handle_update(update: dict):
             )
         return
 
+    # ก่อน dispatcher: ถ้าอยู่ใน edit mode (OCR) ให้ดักข้อความ text ไปจัดการก่อน
+    # polling เป็น sync → รัน coroutine บน shared loop เหมือนตอนเรียก process_message
+    # วางก่อน photo handling เพื่อไม่ให้รูป (text="") โดนดัก และให้รูปใหม่เริ่ม OCR ปกติ
+    from core.callback_handler import get_active_edit_pending, handle_edit_reply
+    edit_pending = get_active_edit_pending(user_id)
+    if edit_pending and text:
+        if text.startswith("/"):
+            edit_pending["edit_state"] = None  # slash command → ออกจาก edit mode ไป dispatcher ปกติ
+        else:
+            loop = _async_runtime.ensure_loop()
+            future = asyncio.run_coroutine_threadsafe(
+                handle_edit_reply(user_id, edit_pending, text, chat_id, message_id),
+                loop,
+            )
+            try:
+                future.result()
+            except Exception as e:
+                if _is_expected_dispatch_failure(e):
+                    log.warning("handle_edit_reply interrupted for %s: %s", user_id, e)
+                else:
+                    log.exception("handle_edit_reply failed for %s: %s", user_id, e)
+            finally:
+                from core.db import close_thread_local_connection
+                close_thread_local_connection()
+            return
+
     # Handle photo messages (e.g. expense receipt)
     photo_list = message.get("photo")
     if photo_list and not text:
