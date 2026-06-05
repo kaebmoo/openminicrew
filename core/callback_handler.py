@@ -282,6 +282,8 @@ def _handle_expense_split(user_id: str, pending_id: str) -> str:
         return "⏰ หมดเวลาแล้ว กรุณาส่งรูปใหม่"
 
     items = pending["items"]
+    if not items:
+        return "ℹ️ ไม่มีรายการให้บันทึก"
     store = pending.get("store", "")
     source_type = pending.get("source_type", "")
     source_hash = pending.get("source_hash", "")
@@ -330,6 +332,8 @@ def _handle_expense_combine(user_id: str, pending_id: str) -> str:
         return "⏰ หมดเวลาแล้ว กรุณาส่งรูปใหม่"
 
     items = pending["items"]
+    if not items:
+        return "ℹ️ ไม่มีรายการให้บันทึก"
     store = pending.get("store", "")
     source_type = pending.get("source_type", "")
     source_hash = pending.get("source_hash", "")
@@ -471,8 +475,32 @@ def _send_final_preview(pending: dict, chat_id):
     send_inline_keyboard(chat_id, "\n".join(lines), buttons)
 
 
+def _discard_empty_pending(pending: dict, chat_id):
+    """ไม่มีรายการเหลือ (ลบหมด) → log canceled, ลบ pending, แจ้ง user
+
+    กัน _send_final_preview แสดง [แยก]/[รวม] บนบิลว่าง ซึ่งทำให้ combine เรียก max([]) แล้ว error
+    """
+    from core import db
+    pending["edit_state"] = None
+    tid = pending.get("telemetry_id")
+    if tid:
+        db.update_ocr_action(
+            tid, "canceled",
+            edits_count=len(pending.get("edit_history") or []),
+            free_text_edit_used=bool(pending.get("free_text_used")),
+        )
+    with _pending_lock:
+        _pending_expenses.pop(pending["pending_id"], None)
+    if chat_id:
+        from interfaces.telegram_common import send_message
+        send_message(chat_id, "🗑 ลบรายการหมดแล้ว ไม่มีอะไรให้บันทึก — ยกเลิกการอ่านบิลนี้")
+
+
 def _advance_or_finish(pending: dict, chat_id):
     """หาบรรทัดถัดไปที่ confidence != high → ถ้ามีถามต่อ, ถ้าไม่มีจบ edit → preview สุดท้าย"""
+    if not pending["items"]:
+        _discard_empty_pending(pending, chat_id)
+        return
     nxt = _next_unconfident_line(pending["items"])
     if nxt is not None:
         pending["edit_state"] = f"awaiting_line_{nxt}"
@@ -511,12 +539,16 @@ def _apply_operations(items: list[dict], operations: list[dict]) -> int:
                 amount = float(op.get("amount") or 0)
             except (TypeError, ValueError):
                 amount = 0
+            # สืบทอด receipt_date จากรายการเดิม — split อ่าน date จาก item, ไม่งั้นรายการที่เพิ่ม
+            # จากบิลเก่าจะถูกบันทึกเป็นวันนี้แทนวันที่ในบิล
+            receipt_date = next((it.get("receipt_date") for it in items if it.get("receipt_date")), "")
             items.append({
                 "amount": amount,
                 "category": op.get("category", "ทั่วไป"),
                 "note": op.get("note", ""),
                 "confidence": "high",
                 "raw_guess": "",
+                "receipt_date": receipt_date,
             })
             applied += 1
 
@@ -587,6 +619,12 @@ def _handle_apply_freetext(user_id: str, pending_id: str, chat_id, message_id):
         if chat_id and message_id:
             edit_message_text(chat_id, message_id, "⏰ หมดเวลาแล้ว กรุณาส่งรูปใหม่")
         return
+    # ปุ่มเก่า/หมดอายุ (เช่น ออกจาก edit ด้วย slash command หรือถูก reset ไปแล้ว) → ไม่ apply
+    if pending.get("edit_state") != "awaiting_free_text_confirm" or not pending.get("staged_operations"):
+        pending["staged_operations"] = None
+        if chat_id and message_id:
+            edit_message_text(chat_id, message_id, "ℹ️ ตัวเลือกนี้หมดอายุแล้ว")
+        return
     ops = pending.get("staged_operations") or []
     applied = _apply_operations(pending["items"], ops)
     pending["staged_operations"] = None
@@ -604,6 +642,12 @@ def _handle_cancel_freetext(user_id: str, pending_id: str, chat_id, message_id):
     if not pending:
         if chat_id and message_id:
             edit_message_text(chat_id, message_id, "⏰ หมดเวลาแล้ว กรุณาส่งรูปใหม่")
+        return
+    # ปุ่มเก่า/หมดอายุ → แค่ทิ้ง staged ไม่ดึงกลับเข้า edit mode
+    if pending.get("edit_state") != "awaiting_free_text_confirm":
+        pending["staged_operations"] = None
+        if chat_id and message_id:
+            edit_message_text(chat_id, message_id, "ℹ️ ตัวเลือกนี้หมดอายุแล้ว")
         return
     pending["staged_operations"] = None
     return_line = pending.get("edit_return_line") or _next_unconfident_line(pending["items"]) or 1

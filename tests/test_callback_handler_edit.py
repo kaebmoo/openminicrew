@@ -254,3 +254,68 @@ def test_cancel_freetext_returns_to_guided_line():
     assert p["staged_operations"] is None
     assert p["edit_state"] == "awaiting_line_1"
     assert len(p["items"]) == 1  # ไม่ได้ลบจริง
+
+
+# ---- regression: review findings ------------------------------------------
+
+def test_delete_last_item_discards_pending_without_crash():
+    """P1: ลบจนไม่เหลือรายการ → pending ถูกทิ้ง ไม่ไปต่อ final preview (กัน combine max([]) error)"""
+    items = [{"amount": 10.0, "category": "อาหาร", "note": "?", "confidence": "low", "raw_guess": ""}]
+    pid, p = _mk_pending(items)
+    p["edit_state"] = "awaiting_line_1"
+    cap = _Capture()
+    _run_reply(cap, p, "ลบ")
+    assert p["items"] == []
+    assert pid not in ch._pending_expenses  # discarded
+    assert p["edit_state"] is None
+    assert any(k == "message" for k, *_ in cap.events)
+
+
+def test_combine_on_empty_items_returns_friendly_message():
+    """P1 defensive: _handle_expense_combine บน items ว่าง ต้องไม่ crash (max([]))"""
+    pid, _p = _mk_pending([])
+    result = ch._handle_expense_combine("u1", pid)
+    assert "ไม่มีรายการ" in result
+
+
+def test_split_on_empty_items_returns_friendly_message():
+    pid, _p = _mk_pending([])
+    result = ch._handle_expense_split("u1", pid)
+    assert "ไม่มีรายการ" in result
+
+
+def test_stale_apply_freetext_is_noop_after_exit():
+    """P2: ออกจาก edit (edit_state=None) แล้วกด [ยืนยัน] เก่า → ต้องไม่ apply staged ops"""
+    items = [{"amount": 90.0, "category": "อาหาร", "note": "ข้าว", "confidence": "high", "raw_guess": ""}]
+    pid, p = _mk_pending(items)
+    p["edit_state"] = None  # จำลองออกจาก edit ด้วย slash command
+    p["staged_operations"] = [{"op": "edit", "line": 1, "note": "เปลี่ยนผิด"}]
+    cap = _Capture()
+    p_inline, p_msg, p_edit = _patches(cap)
+    with p_inline, p_msg, p_edit:
+        ch._handle_apply_freetext("u1", pid, chat_id=5, message_id=6)
+    assert p["items"][0]["note"] == "ข้าว"  # ไม่ถูก apply
+    assert p.get("staged_operations") is None
+    assert any("หมดอายุ" in t for k, t, _ in cap.events if k == "edit")
+
+
+def test_stale_cancel_freetext_does_not_reenter_edit():
+    """P2: กด [ยกเลิกการแก้] เก่าหลังออกจาก edit → ต้องไม่ดึงกลับเข้า edit mode"""
+    items = [{"amount": 90.0, "category": "อาหาร", "note": "ข้าว", "confidence": "high", "raw_guess": ""}]
+    pid, p = _mk_pending(items)
+    p["edit_state"] = None
+    p["staged_operations"] = [{"op": "delete", "line": 1}]
+    cap = _Capture()
+    p_inline, p_msg, p_edit = _patches(cap)
+    with p_inline, p_msg, p_edit:
+        ch._handle_cancel_freetext("u1", pid, chat_id=5, message_id=6)
+    assert p["edit_state"] is None  # ไม่กลับเข้า edit mode
+    assert p.get("staged_operations") is None
+
+
+def test_apply_operations_add_inherits_receipt_date():
+    """P2: add op ต้องสืบทอด receipt_date จากรายการเดิม (split อ่าน date จาก item)"""
+    items = [{"amount": 40.0, "category": "อาหาร", "note": "ข้าว", "receipt_date": "2026-05-10"}]
+    ch._apply_operations(items, [{"op": "add", "note": "ชา", "amount": 20, "category": "เครื่องดื่ม"}])
+    assert items[-1]["receipt_date"] == "2026-05-10"
+    assert items[-1]["note"] == "ชา"
