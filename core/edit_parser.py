@@ -116,16 +116,18 @@ async def parse_edit_intent(items: list[dict], user_message: str, user_id: str =
         log.error("edit_parse prompt load failed: %s", e)
         return {**_FAIL, "error": "prompt_load_failed"}
 
+    messages = [{"role": "user", "content": prompt}]
     try:
-        resp = await llm_router.chat(
-            messages=[{"role": "user", "content": prompt}],
-            provider="gemini",
-            tier="cheap",
-            user_id=user_id,
-        )
+        resp = await llm_router.chat(messages=messages, provider="gemini", tier="cheap", user_id=user_id)
     except Exception as e:
-        log.warning("edit_parse LLM call failed: %s", e)
-        return {**_FAIL, "error": "llm_failed"}
+        # Gemini ล้ม (transient/server/rate-limit ฯลฯ — router fallback เฉพาะ auth error)
+        # → ลอง provider default ของ router อีกครั้งก่อนยอมแพ้ไป guided flow
+        log.warning("edit_parse gemini call failed: %s — trying default provider", e)
+        try:
+            resp = await llm_router.chat(messages=messages, tier="cheap", user_id=user_id)
+        except Exception as e2:
+            log.warning("edit_parse fallback provider failed: %s", e2)
+            return {**_FAIL, "error": "llm_failed"}
 
     data = _extract_json((resp or {}).get("content", ""))
     if data is None:

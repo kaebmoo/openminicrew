@@ -104,3 +104,17 @@ def test_parse_llm_exception_is_graceful():
         result = asyncio.run(edit_parser.parse_edit_intent(_ITEMS, "msg", user_id="u1"))
     assert result["operations"] == [] and result["confidence"] == "low"
     assert result["error"] == "llm_failed"
+    assert fake.await_count == 2  # gemini + default provider ทั้งคู่ล้ม
+
+
+def test_parse_falls_back_to_default_provider_on_gemini_failure():
+    """P3: Gemini call ล้ม (transient) → retry provider default ของ router"""
+    content = '{"operations": [{"op": "delete", "line": 1}], "confidence": "high"}'
+    fake = AsyncMock(side_effect=[RuntimeError("gemini down"), {"content": content}])
+    with patch.object(edit_parser.llm_router, "chat", fake):
+        result = asyncio.run(edit_parser.parse_edit_intent(_ITEMS, "msg", user_id="u1"))
+    assert result["operations"] == [{"op": "delete", "line": 1}]
+    assert fake.await_count == 2
+    # call แรกบังคับ gemini, call ที่สองไม่บังคับ provider (ใช้ default)
+    assert fake.await_args_list[0].kwargs.get("provider") == "gemini"
+    assert "provider" not in fake.await_args_list[1].kwargs
