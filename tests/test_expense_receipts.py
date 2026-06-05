@@ -515,6 +515,56 @@ def test_single_high_confidence_item_auto_saves_and_logs_telemetry(tmp_path, mon
     assert row["user_action"] == "split" and row["total_items"] == 1 and row["overall_confidence"] == "high"
 
 
+def _single_confirm_buttons(result):
+    return [b for row in result.buttons for b in row]
+
+
+def test_single_high_handwritten_item_requires_confirm(tmp_path, monkeypatch):
+    """Hybrid: 1 รายการ high แต่เป็นลายมือ → ไม่ auto-save, แสดงปุ่ม [✅ บันทึก][✏️ แก้][❌ ยกเลิก]"""
+    from tools.response import InlineKeyboardResponse
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    items = [{"amount": 80.0, "category": "อาหาร", "note": "ข้าว", "confidence": "high",
+              "store": "ร้าน", "receipt_date": "2026-05-10", "is_handwritten": True, "grand_total": None}]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-hw-single")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-hw"))
+
+    assert isinstance(result, InlineKeyboardResponse)
+    assert db.list_expenses("u1") == []  # ไม่ auto-save
+    btns = _single_confirm_buttons(result)
+    labels = [b["text"] for b in btns]
+    cds = [b["callback_data"] for b in btns]
+    assert "✅ บันทึก" in labels
+    assert any(c.startswith("exp_split:") for c in cds)   # บันทึก = exp_split
+    assert any(c.startswith("exp_edit:") for c in cds)
+    assert not any(c.startswith("exp_combine:") for c in cds)       # 1 รายการ ไม่มีรวม/แยกซ้ำซ้อน
+    assert not any(c.startswith("exp_type_manually:") for c in cds)  # high → ไม่ใช่ปุ่มพิมพ์เอง
+
+
+def test_single_high_sum_mismatch_requires_confirm(tmp_path, monkeypatch):
+    """Hybrid: 1 รายการ high พิมพ์ แต่ยอดไม่ตรงกับบิล → ต้อง confirm"""
+    from tools.response import InlineKeyboardResponse
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    # amount 80 แต่ grand_total 200 → sum ไม่ตรง
+    items = [{"amount": 80.0, "category": "อาหาร", "note": "ข้าว", "confidence": "high",
+              "store": "ร้าน", "receipt_date": "2026-05-10", "is_handwritten": False, "grand_total": 200.0}]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-mismatch-single")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-mm"))
+
+    assert isinstance(result, InlineKeyboardResponse)
+    assert db.list_expenses("u1") == []
+    assert "ไม่ตรงกับยอดในบิล" in result.text
+    cds = [b["callback_data"] for b in _single_confirm_buttons(result)]
+    assert any(c.startswith("exp_split:") for c in cds)
+
+
 # === Phase A: terminal action telemetry wiring (Step 10) ===
 
 def _ocr_row(telemetry_id):

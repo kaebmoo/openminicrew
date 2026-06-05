@@ -465,13 +465,19 @@ def _send_final_preview(pending: dict, chat_id):
         note = it.get("note") or "?"
         lines.append(f"{idx}. {note} — {it['amount']:,.2f} ({it.get('category', 'ทั่วไป')})")
     lines.append(f"\nรวม {total:,.2f} บาท")
-    buttons = [
-        [
-            {"text": f"📋 แยก {len(items)} รายการ", "callback_data": f"exp_split:{pending_id}"},
-            {"text": "📦 รวม 1 รายการ", "callback_data": f"exp_combine:{pending_id}"},
-        ],
-        [{"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"}],
-    ]
+    if len(items) == 1:
+        buttons = [
+            [{"text": "✅ บันทึก", "callback_data": f"exp_split:{pending_id}"}],
+            [{"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"}],
+        ]
+    else:
+        buttons = [
+            [
+                {"text": f"📋 แยก {len(items)} รายการ", "callback_data": f"exp_split:{pending_id}"},
+                {"text": "📦 รวม 1 รายการ", "callback_data": f"exp_combine:{pending_id}"},
+            ],
+            [{"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"}],
+        ]
     send_inline_keyboard(chat_id, "\n".join(lines), buttons)
 
 

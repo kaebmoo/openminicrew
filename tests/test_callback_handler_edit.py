@@ -139,7 +139,10 @@ def test_reserved_skip_uses_raw_guess_and_advances():
 
 
 def test_reserved_done_finishes_with_split_combine():
-    items = [{"amount": 10.0, "category": "อาหาร", "note": "?", "confidence": "low", "raw_guess": ""}]
+    items = [
+        {"amount": 10.0, "category": "อาหาร", "note": "?", "confidence": "low", "raw_guess": ""},
+        {"amount": 20.0, "category": "อาหาร", "note": "ข้าว", "confidence": "high", "raw_guess": ""},
+    ]
     _pid, p = _mk_pending(items)
     p["edit_state"] = "awaiting_line_1"
     cap = _Capture()
@@ -149,6 +152,18 @@ def test_reserved_done_finishes_with_split_combine():
     flat = cap.callbacks()
     assert any(c.startswith("exp_split:") for c in flat)
     assert any(c.startswith("exp_combine:") for c in flat)
+
+
+def test_reserved_done_single_item_shows_save_button_only():
+    items = [{"amount": 10.0, "category": "อาหาร", "note": "ข้าว", "confidence": "high", "raw_guess": ""}]
+    _pid, p = _mk_pending(items)
+    p["edit_state"] = "awaiting_line_1"
+    cap = _Capture()
+    _run_reply(cap, p, "เสร็จ")
+
+    flat = cap.callbacks()
+    assert any(c.startswith("exp_split:") for c in flat)       # [✅ บันทึก]
+    assert not any(c.startswith("exp_combine:") for c in flat)  # 1 รายการ ไม่มีปุ่มรวม
 
 
 def test_reserved_cancel_exits_to_confidence_buttons():

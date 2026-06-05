@@ -378,8 +378,9 @@ class ExpenseTool(BaseTool):
         low_conf_items = sum(1 for it in items if it.get("confidence") == "low")
         store_provided = bool(caption.strip())
 
-        # รายการเดียว + มั่นใจสูง → บันทึกทันที (พฤติกรรมเดิม ไม่ต้อง confirm)
-        if len(items) == 1 and overall_confidence == "high":
+        # รายการเดียว → auto-save เฉพาะที่ปลอดภัยจริง (Hybrid):
+        # confidence สูง + ไม่ใช่ลายมือ + ยอดตรงกับบิล; นอกนั้นให้ confirm ก่อน
+        if len(items) == 1 and overall_confidence == "high" and not is_handwritten and sum_matches:
             item = items[0]
             amount = item["amount"]
             category = item.get("category", "ทั่วไป")
@@ -475,7 +476,16 @@ class ExpenseTool(BaseTool):
         preview_text = "\n".join(lines)
 
         # ---- ปุ่มตาม confidence (Option C) ----
-        if overall_confidence == "high":
+        if overall_confidence == "high" and len(items) == 1:
+            # high แต่ไม่เข้าเงื่อนไข auto-save (ลายมือ/ยอดไม่ตรง) → confirm ปุ่มเดี่ยว
+            buttons = [
+                [
+                    {"text": "✅ บันทึก", "callback_data": f"exp_split:{pending_id}"},
+                    {"text": "✏️ แก้รายการ", "callback_data": f"exp_edit:{pending_id}"},
+                ],
+                [{"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"}],
+            ]
+        elif overall_confidence == "high":
             buttons = [
                 [
                     {"text": f"📋 แยก {len(items)} รายการ", "callback_data": f"exp_split:{pending_id}"},
