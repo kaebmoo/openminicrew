@@ -566,3 +566,157 @@ def _handle_cancel_freetext(user_id: str, pending_id: str, chat_id, message_id):
     if chat_id and message_id:
         edit_message_text(chat_id, message_id, "↩️ ยกเลิกการแก้นี้ กลับไปแก้ทีละบรรทัด")
     _send_edit_line_prompt(pending, chat_id or pending.get("chat_id"), return_line)
+
+
+def _current_edit_line(pending: dict) -> int | None:
+    """ดึงเลขบรรทัดปัจจุบันจาก edit_state 'awaiting_line_N'"""
+    state = pending.get("edit_state") or ""
+    if state.startswith("awaiting_line_"):
+        try:
+            return int(state.rsplit("_", 1)[1])
+        except ValueError:
+            return None
+    return None
+
+
+def _confidence_buttons(pending: dict) -> list:
+    """ปุ่มตาม overall_confidence เดิม (ใช้ตอน user ออกจาก edit mode โดยไม่จบการแก้)"""
+    pid = pending["pending_id"]
+    n = len(pending["items"])
+    if pending.get("overall_confidence", "high") == "high":
+        return [
+            [
+                {"text": f"📋 แยก {n} รายการ", "callback_data": f"exp_split:{pid}"},
+                {"text": "📦 รวม 1 รายการ", "callback_data": f"exp_combine:{pid}"},
+            ],
+            [
+                {"text": "✏️ แก้รายการ", "callback_data": f"exp_edit:{pid}"},
+                {"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pid}"},
+            ],
+        ]
+    return [
+        [{"text": "✏️ แก้รายการ", "callback_data": f"exp_edit:{pid}"}],
+        [
+            {"text": "⌨️ พิมพ์เอง", "callback_data": f"exp_type_manually:{pid}"},
+            {"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pid}"},
+        ],
+    ]
+
+
+def _send_exit_edit_preview(pending: dict, chat_id):
+    """ออกจาก edit mode (ไม่จบการแก้) → แสดงปุ่มเดิมตาม confidence"""
+    from interfaces.telegram_common import send_inline_keyboard
+    items = pending["items"]
+    total = sum(it["amount"] for it in items)
+    lines = ["↩️ ออกจากโหมดแก้ไข — เลือกได้:"]
+    for idx, it in enumerate(items, 1):
+        lines.append(f"{idx}. {it.get('note') or '?'} — {it['amount']:,.2f} ({it.get('category', 'ทั่วไป')})")
+    lines.append(f"\nรวม {total:,.2f} บาท")
+    send_inline_keyboard(chat_id, "\n".join(lines), _confidence_buttons(pending))
+
+
+def _send_freetext_confirm(pending: dict, chat_id, operations: list[dict]):
+    """แสดงสรุป operations ที่ parse ได้ พร้อมปุ่ม [ยืนยัน]/[ยกเลิกการแก้]"""
+    from interfaces.telegram_common import send_inline_keyboard
+    lines = ["จะปรับตามนี้:"]
+    for op in operations:
+        kind = op.get("op")
+        ln = op.get("line")
+        if kind == "edit":
+            parts = []
+            if op.get("note"):
+                parts.append(f'ชื่อ→"{op["note"]}"')
+            if op.get("amount") is not None:
+                parts.append(f'ราคา→{op["amount"]}')
+            if op.get("category"):
+                parts.append(f'หมวด→{op["category"]}')
+            lines.append(f"- แก้บรรทัด {ln}: " + ", ".join(parts))
+        elif kind == "delete":
+            lines.append(f"- ลบบรรทัด {ln}")
+        elif kind == "add":
+            lines.append(f'- เพิ่ม "{op.get("note", "")}" {op.get("amount", "")} ({op.get("category", "ทั่วไป")})')
+    buttons = [[
+        {"text": "✅ ยืนยัน", "callback_data": f"exp_apply_freetext:{pending['pending_id']}"},
+        {"text": "✖️ ยกเลิกการแก้", "callback_data": f"exp_cancel_freetext:{pending['pending_id']}"},
+    ]]
+    send_inline_keyboard(chat_id, "\n".join(lines), buttons)
+
+
+# keyword ที่บ่งบอกว่าเป็นคำสั่งแก้แบบ free-text (ต้องใช้ LLM parse)
+_EDIT_KEYWORDS = ("บรรทัด", "เพิ่ม", "ลบ", "แก้", "ใส่")
+
+
+async def handle_edit_reply(user_id: str, pending: dict, text: str, chat_id, message_id):
+    """ประมวลผลข้อความ text ที่ user ตอบระหว่างอยู่ใน edit mode
+
+    ลำดับ: reserved tokens → ตอบสั้นไม่มี keyword (guided ชื่อใหม่) → free-text (LLM parse + confirm)
+    """
+    from interfaces.telegram_common import send_message
+
+    text = (text or "").strip()
+    if not text:
+        return
+
+    # ถ้ากำลังรอ confirm free-text แต่ user พิมพ์ใหม่ → ทิ้ง staged แล้วประมวลผลข้อความใหม่
+    if pending.get("edit_state") == "awaiting_free_text_confirm":
+        pending["staged_operations"] = None
+        ret = pending.get("edit_return_line") or _next_unconfident_line(pending["items"]) or 1
+        pending["edit_state"] = f"awaiting_line_{ret}"
+
+    low = text.lower()
+    n = _current_edit_line(pending)
+    items = pending["items"]
+
+    # ---- Reserved tokens ----
+    if low in ("ยกเลิก", "ยกเลิกการแก้"):
+        pending["edit_state"] = None
+        _send_exit_edit_preview(pending, chat_id)
+        return
+
+    if low in ("เสร็จ", "พอ", "จบ"):
+        pending["edit_state"] = None
+        _send_final_preview(pending, chat_id)
+        return
+
+    if low == "ลบ":
+        if n and 1 <= n <= len(items):
+            del items[n - 1]
+            pending.setdefault("edit_history", []).append(f"line {n}: deleted")
+        _advance_or_finish(pending, chat_id)
+        return
+
+    if low == "ข้าม":
+        if n and 1 <= n <= len(items):
+            it = items[n - 1]
+            raw = it.get("raw_guess", "")
+            it["note"] = (f"{raw} (ไม่ชัวร์)") if raw else (it.get("note") or "? (อ่านไม่ออก)")
+            it["confidence"] = "high"  # ให้ advance ข้ามบรรทัดนี้
+            pending.setdefault("edit_history", []).append(f"line {n}: skipped")
+        _advance_or_finish(pending, chat_id)
+        return
+
+    # ---- guided (ตอบสั้น ไม่มี keyword) vs free-text ----
+    is_short = len(text) < 30
+    has_keyword = any(kw in text for kw in _EDIT_KEYWORDS)
+    if is_short and not has_keyword:
+        if n and 1 <= n <= len(items):
+            items[n - 1]["note"] = text
+            items[n - 1]["confidence"] = "high"
+            pending.setdefault("edit_history", []).append(f"line {n}: -> {text}")
+        _advance_or_finish(pending, chat_id)
+        return
+
+    # ---- free-text → LLM parse (Step 8 helper) ----
+    from core.edit_parser import parse_edit_intent
+    parsed = await parse_edit_intent(items, text, user_id=user_id)
+    operations = parsed.get("operations") or []
+    if not operations:
+        send_message(chat_id, "ขอโทษ ไม่เข้าใจคำสั่ง ลองพิมพ์ใหม่ทีละบรรทัด หรือพิมพ์ชื่อรายการตรง ๆ")
+        if n:
+            _send_edit_line_prompt(pending, chat_id, n)
+        return
+
+    pending["staged_operations"] = operations
+    pending["edit_return_line"] = n or (_next_unconfident_line(items) or 1)
+    pending["edit_state"] = "awaiting_free_text_confirm"
+    _send_freetext_confirm(pending, chat_id, operations)
