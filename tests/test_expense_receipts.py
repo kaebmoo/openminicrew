@@ -513,3 +513,114 @@ def test_single_high_confidence_item_auto_saves_and_logs_telemetry(tmp_path, mon
     with db.get_conn() as conn:
         row = dict(conn.execute("SELECT * FROM ocr_telemetry ORDER BY id DESC LIMIT 1").fetchone())
     assert row["user_action"] == "split" and row["total_items"] == 1 and row["overall_confidence"] == "high"
+
+
+# === Phase A: terminal action telemetry wiring (Step 10) ===
+
+def _ocr_row(telemetry_id):
+    with db.get_conn() as conn:
+        return dict(conn.execute("SELECT * FROM ocr_telemetry WHERE id = ?", (telemetry_id,)).fetchone())
+
+
+def test_split_logs_split_action(tmp_path, monkeypatch):
+    from core.callback_handler import _handle_expense_split, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", False, "high", 2, 0, False, True)
+    pid = store_pending_expense(
+        "u1",
+        [{"amount": 40.0, "category": "อาหาร", "note": "ข้าว"}, {"amount": 20.0, "category": "เครื่องดื่ม", "note": "ชา"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-split").hexdigest(), telemetry_id=tid,
+    )
+    _handle_expense_split("u1", pid)
+    assert _ocr_row(tid)["user_action"] == "split"
+
+
+def test_split_after_edit_logs_edited_then_split(tmp_path, monkeypatch):
+    import core.callback_handler as ch
+    from core.callback_handler import _handle_expense_split, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", True, "low", 2, 1, False, False)
+    pid = store_pending_expense(
+        "u1",
+        [{"amount": 40.0, "category": "อาหาร", "note": "ข้าว"}, {"amount": 20.0, "category": "เครื่องดื่ม", "note": "ชา"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-edit-split").hexdigest(), telemetry_id=tid,
+    )
+    ch._pending_expenses[pid]["edit_history"] = ["line 2: -> ชาเย็น"]
+    ch._pending_expenses[pid]["free_text_used"] = True
+    _handle_expense_split("u1", pid)
+    row = _ocr_row(tid)
+    assert row["user_action"] == "edited_then_split"
+    assert row["edits_count"] == 1 and row["free_text_edit_used"] == 1
+
+
+def test_combine_logs_combine_action(tmp_path, monkeypatch):
+    from core.callback_handler import _handle_expense_combine, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", False, "high", 2, 0, False, True)
+    pid = store_pending_expense(
+        "u1",
+        [{"amount": 40.0, "category": "อาหาร", "note": "ข้าว"}, {"amount": 20.0, "category": "เครื่องดื่ม", "note": "ชา"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-combine").hexdigest(), telemetry_id=tid,
+    )
+    _handle_expense_combine("u1", pid)
+    assert _ocr_row(tid)["user_action"] == "combine"
+
+
+def test_cancel_logs_canceled_action(tmp_path, monkeypatch):
+    from core.callback_handler import handle_callback, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", True, "low", 2, 2, False, False)
+    pid = store_pending_expense(
+        "u1", [{"amount": 10.0, "category": "อาหาร", "note": "?"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-cancel").hexdigest(), telemetry_id=tid,
+    )
+    with patch("interfaces.telegram_common.edit_message_text", return_value=True), \
+         patch("interfaces.telegram_common.answer_callback_query", return_value=True):
+        asyncio.run(handle_callback("u1", f"exp_cancel:{pid}", chat_id=5, message_id=6, callback_id="cb"))
+    assert _ocr_row(tid)["user_action"] == "canceled"
+
+
+def test_type_manually_logs_typed_manually(tmp_path, monkeypatch):
+    from core.callback_handler import _handle_expense_type_manually, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", True, "low", 3, 3, False, False)
+    pid = store_pending_expense(
+        "u1", [{"amount": 10.0, "category": "อาหาร", "note": "?"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-manual").hexdigest(), telemetry_id=tid,
+    )
+    result = _handle_expense_type_manually("u1", pid)
+    assert "พิมพ์รายการเองได้เลย" in result
+    assert _ocr_row(tid)["user_action"] == "typed_manually"
+
+
+def test_expired_pending_logs_expired_action(tmp_path, monkeypatch):
+    import core.callback_handler as ch
+    from core.callback_handler import store_pending_expense, pop_pending_expense, _PENDING_TTL
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", True, "low", 2, 1, False, True)
+    pid = store_pending_expense(
+        "u1", [{"amount": 10.0, "category": "อาหาร", "note": "?"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-expire").hexdigest(), telemetry_id=tid,
+    )
+    # บังคับให้หมดอายุ
+    ch._pending_expenses[pid]["created_at"] -= (_PENDING_TTL + 10)
+    assert pop_pending_expense(pid, "u1") is None
+    assert _ocr_row(tid)["user_action"] == "expired"

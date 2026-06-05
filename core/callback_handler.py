@@ -30,6 +30,29 @@ _counter = 0
 _counter_lock = threading.Lock()
 
 
+def _purge_expired() -> list[dict]:
+    """ลบ pending ที่หมดอายุออกจาก dict → คืน list ของ pending ที่ถูกลบ (สำหรับ log telemetry)"""
+    now = time.time()
+    with _pending_lock:
+        expired_keys = [k for k, v in _pending_expenses.items() if now - v["created_at"] > _PENDING_TTL]
+        return [_pending_expenses.pop(k) for k in expired_keys]
+
+
+def _log_expired(pendings: list[dict]):
+    """บันทึก ocr_telemetry action = 'expired' สำหรับ pending ที่หมดอายุโดยไม่ถูกเลือก"""
+    if not pendings:
+        return
+    from core import db
+    for p in pendings:
+        tid = p.get("telemetry_id")
+        if tid:
+            db.update_ocr_action(
+                tid, "expired",
+                edits_count=len(p.get("edit_history") or []),
+                free_text_edit_used=bool(p.get("free_text_used")),
+            )
+
+
 def store_pending_expense(
     user_id: str,
     items: list[dict],
@@ -55,13 +78,10 @@ def store_pending_expense(
         _counter += 1
         pending_id = f"pe{_counter}_{int(time.time()) % 100000}"
 
-    with _pending_lock:
-        # Cleanup expired entries
-        now = time.time()
-        expired = [k for k, v in _pending_expenses.items() if now - v["created_at"] > _PENDING_TTL]
-        for k in expired:
-            del _pending_expenses[k]
+    expired = _purge_expired()
+    now = time.time()
 
+    with _pending_lock:
         _pending_expenses[pending_id] = {
             "pending_id": pending_id,
             "user_id": user_id,
@@ -81,6 +101,7 @@ def store_pending_expense(
             "message_id": message_id,
             "telemetry_id": telemetry_id,
         }
+    _log_expired(expired)
     return pending_id
 
 
@@ -91,12 +112,8 @@ def has_pending_expense_source(user_id: str, source_type: str, source_hash: str)
     if not normalized_source_type or not normalized_source_hash:
         return False
 
-    now = time.time()
+    _log_expired(_purge_expired())
     with _pending_lock:
-        expired = [k for k, v in _pending_expenses.items() if now - v["created_at"] > _PENDING_TTL]
-        for key in expired:
-            del _pending_expenses[key]
-
         for pending in _pending_expenses.values():
             if pending["user_id"] != user_id:
                 continue
@@ -117,6 +134,7 @@ def pop_pending_expense(pending_id: str, user_id: str) -> dict | None:
             _pending_expenses[pending_id] = data
         return None
     if time.time() - data["created_at"] > _PENDING_TTL:
+        _log_expired([data])  # data ถูก pop ออกแล้ว — log ว่า expired
         return None
     return data
 
@@ -181,7 +199,14 @@ async def handle_callback(user_id: str, data: str, *, chat_id=None, message_id=N
 
     elif data.startswith("exp_cancel:"):
         pending_id = data.replace("exp_cancel:", "")
-        _pop_or_expired(user_id, pending_id)  # discard
+        cancelled = _pop_or_expired(user_id, pending_id)  # discard
+        if cancelled and cancelled.get("telemetry_id"):
+            from core import db
+            db.update_ocr_action(
+                cancelled["telemetry_id"], "canceled",
+                edits_count=len(cancelled.get("edit_history") or []),
+                free_text_edit_used=bool(cancelled.get("free_text_used")),
+            )
         if message_id and chat_id:
             edit_message_text(chat_id, message_id, "❌ ยกเลิกแล้ว ไม่ได้บันทึกรายจ่าย")
         if callback_id:
@@ -230,6 +255,24 @@ def _pop_or_expired(user_id: str, pending_id: str) -> dict | None:
     return pop_pending_expense(pending_id, user_id)
 
 
+def _log_terminal_action(pending: dict, base_action: str):
+    """อัปเดต ocr_telemetry action ตอน user เลือกปุ่มสุดท้าย (split/combine)
+
+    ถ้ามีการแก้รายการมาก่อน (edit_history) → prefix 'edited_then_'
+    """
+    from core import db
+    telemetry_id = pending.get("telemetry_id")
+    if not telemetry_id:
+        return
+    edits_count = len(pending.get("edit_history") or [])
+    action = f"edited_then_{base_action}" if edits_count > 0 else base_action
+    db.update_ocr_action(
+        telemetry_id, action,
+        edits_count=edits_count,
+        free_text_edit_used=bool(pending.get("free_text_used")),
+    )
+
+
 def _handle_expense_split(user_id: str, pending_id: str) -> str:
     """บันทึกแยกทุกรายการ"""
     from core import db
@@ -274,6 +317,7 @@ def _handle_expense_split(user_id: str, pending_id: str) -> str:
         lines.append(f"\nรวม {total:,.2f} บาท")
     if receipt_date:
         lines.append(f"วันที่: {receipt_date}")
+    _log_terminal_action(pending, "split")
     return "\n".join(lines)
 
 
@@ -313,6 +357,7 @@ def _handle_expense_combine(user_id: str, pending_id: str) -> str:
         source_hash=source_hash,
     )
     date_hint = f"\n  วันที่: {receipt_date}" if receipt_date else ""
+    _log_terminal_action(pending, "combine")
     return f"💸 บันทึกรวม 1 รายการแล้ว\n  [#{expense_id}] {total:,.2f} บาท — {category}: {note}{date_hint}"
 
 
