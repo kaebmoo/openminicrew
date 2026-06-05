@@ -13,17 +13,43 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 # ---- In-memory pending expense storage ----
-# { pending_id: {"user_id": str, "items": list[dict], "store": str, "source_type": str, "source_hash": str, "created_at": float} }
+# { pending_id: {
+#     "pending_id": str, "user_id": str, "items": list[dict], "store": str,
+#     "source_type": str, "source_hash": str, "created_at": float,
+#     # Phase A (confidence + conversational edit):
+#     "overall_confidence": str, "is_handwritten": bool,
+#     "store_confidence": str, "store_raw_guess": str,
+#     "edit_state": None | "awaiting_line_N" | "awaiting_free_text_confirm",
+#     "edit_history": list, "chat_id": Any, "message_id": Any, "telemetry_id": int | None,
+# } }
 _pending_expenses: dict[str, dict] = {}
 _pending_lock = threading.Lock()
-_PENDING_TTL = 300  # 5 นาที
+_PENDING_TTL = 900  # 15 นาที (เผื่อเวลา conversational edit หลายรอบ)
 
 _counter = 0
 _counter_lock = threading.Lock()
 
 
-def store_pending_expense(user_id: str, items: list[dict], store: str = "", source_type: str = "", source_hash: str = "") -> str:
-    """เก็บรายการ expense ที่รอ user ยืนยัน → return pending_id"""
+def store_pending_expense(
+    user_id: str,
+    items: list[dict],
+    store: str = "",
+    source_type: str = "",
+    source_hash: str = "",
+    *,
+    overall_confidence: str = "high",
+    is_handwritten: bool = False,
+    store_confidence: str = "high",
+    store_raw_guess: str = "",
+    chat_id=None,
+    message_id=None,
+    telemetry_id=None,
+) -> str:
+    """เก็บรายการ expense ที่รอ user ยืนยัน → return pending_id
+
+    field ใหม่ (Phase A) เป็น keyword-only optional ทั้งหมด — caller เดิมที่ไม่ส่งมา
+    จะได้ค่า default ที่ปลอดภัย (confidence=high, ไม่ใช่ลายมือ, ไม่มี edit state)
+    """
     global _counter
     with _counter_lock:
         _counter += 1
@@ -37,12 +63,23 @@ def store_pending_expense(user_id: str, items: list[dict], store: str = "", sour
             del _pending_expenses[k]
 
         _pending_expenses[pending_id] = {
+            "pending_id": pending_id,
             "user_id": user_id,
             "items": items,
             "store": store,
             "source_type": (source_type or "").strip(),
             "source_hash": (source_hash or "").strip(),
             "created_at": now,
+            # ---- Phase A: confidence + conversational edit ----
+            "overall_confidence": overall_confidence,
+            "is_handwritten": is_handwritten,
+            "store_confidence": store_confidence,
+            "store_raw_guess": store_raw_guess,
+            "edit_state": None,
+            "edit_history": [],
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "telemetry_id": telemetry_id,
         }
     return pending_id
 
@@ -82,6 +119,25 @@ def pop_pending_expense(pending_id: str, user_id: str) -> dict | None:
     if time.time() - data["created_at"] > _PENDING_TTL:
         return None
     return data
+
+
+def get_active_edit_pending(user_id: str) -> dict | None:
+    """หา pending expense ที่กำลังอยู่ใน edit mode (edit_state != None) ของ user
+
+    Read-only scan — ไม่ลบ entry ที่หมดอายุ (ปล่อยให้ pop/store เป็นจุดเดียวที่ cleanup)
+    คืน pending dict ตัวจริงใน _pending_expenses (mutate in place ได้) หรือ None
+    """
+    now = time.time()
+    with _pending_lock:
+        for pending in _pending_expenses.values():
+            if pending.get("user_id") != user_id:
+                continue
+            if pending.get("edit_state") is None:
+                continue
+            if now - pending["created_at"] > _PENDING_TTL:
+                continue
+            return pending
+    return None
 
 
 async def handle_callback(user_id: str, data: str, *, chat_id=None, message_id=None, callback_id=None):
