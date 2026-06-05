@@ -379,7 +379,10 @@ class ExpenseTool(BaseTool):
         store_provided = bool(caption.strip())
 
         # รายการเดียว → auto-save เฉพาะที่ปลอดภัยจริง (Hybrid):
-        # confidence สูง + ไม่ใช่ลายมือ + ยอดตรงกับบิล; นอกนั้นให้ confirm ก่อน
+        # confidence สูง + ไม่ใช่ลายมือ + (ยอดตรงกับบิล หรือ OCR ไม่มี grand_total ให้เทียบ);
+        # นอกนั้น (ลายมือ / ยอดไม่ตรง) ให้ confirm ก่อน
+        # หมายเหตุ (decision): sum_matches = True เมื่อไม่มี grand_total — ตั้งใจถือว่าปลอดภัย
+        # เพราะ slip โอน/บิลรายการเดียวมักไม่มีบรรทัดยอดรวม และตัวเลข high-confidence ที่พิมพ์เชื่อถือได้
         if len(items) == 1 and overall_confidence == "high" and not is_handwritten and sum_matches:
             item = items[0]
             amount = item["amount"]
