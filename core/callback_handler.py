@@ -121,6 +121,18 @@ def pop_pending_expense(pending_id: str, user_id: str) -> dict | None:
     return data
 
 
+def peek_pending_expense(pending_id: str, user_id: str) -> dict | None:
+    """ดู pending โดยไม่ลบ (ใช้ระหว่าง edit flow ที่ต้องคง pending ไว้) —
+    None ถ้าไม่เจอ / ผิด user / หมดอายุ. คืน dict ตัวจริง (mutate in place ได้)"""
+    with _pending_lock:
+        data = _pending_expenses.get(pending_id)
+        if not data or data["user_id"] != user_id:
+            return None
+        if time.time() - data["created_at"] > _PENDING_TTL:
+            return None
+        return data
+
+
 def get_active_edit_pending(user_id: str) -> dict | None:
     """หา pending expense ที่กำลังอยู่ใน edit mode (edit_state != None) ของ user
 
@@ -172,6 +184,38 @@ async def handle_callback(user_id: str, data: str, *, chat_id=None, message_id=N
         _pop_or_expired(user_id, pending_id)  # discard
         if message_id and chat_id:
             edit_message_text(chat_id, message_id, "❌ ยกเลิกแล้ว ไม่ได้บันทึกรายจ่าย")
+        if callback_id:
+            answer_callback_query(callback_id)
+
+    elif data.startswith("exp_edit:"):
+        pending_id = data.replace("exp_edit:", "")
+        _handle_expense_edit_start(user_id, pending_id, chat_id, message_id)
+        if callback_id:
+            answer_callback_query(callback_id)
+
+    elif data.startswith("exp_type_manually:"):
+        pending_id = data.replace("exp_type_manually:", "")
+        result = _handle_expense_type_manually(user_id, pending_id)
+        if message_id and chat_id:
+            edit_message_text(chat_id, message_id, result)
+        if callback_id:
+            answer_callback_query(callback_id)
+
+    elif data.startswith("exp_edit_done:"):
+        pending_id = data.replace("exp_edit_done:", "")
+        _handle_expense_edit_done(user_id, pending_id, chat_id, message_id)
+        if callback_id:
+            answer_callback_query(callback_id)
+
+    elif data.startswith("exp_apply_freetext:"):
+        pending_id = data.replace("exp_apply_freetext:", "")
+        _handle_apply_freetext(user_id, pending_id, chat_id, message_id)
+        if callback_id:
+            answer_callback_query(callback_id)
+
+    elif data.startswith("exp_cancel_freetext:"):
+        pending_id = data.replace("exp_cancel_freetext:", "")
+        _handle_cancel_freetext(user_id, pending_id, chat_id, message_id)
         if callback_id:
             answer_callback_query(callback_id)
 
@@ -319,3 +363,206 @@ def _handle_consent_callback(user_id: str, data: str) -> str:
     }
     responses = _CONSENT_RESPONSES.get(consent_type_short, {})
     return responses.get(action, f"✅ consent {consent_type_short} = {status}")
+
+
+# ============================================================
+# Conversational edit (Phase A) — guided + free-text hybrid
+# ============================================================
+
+# หมวดหมู่ที่อนุญาตสำหรับ validate operations จาก LLM parse / guided edit
+_KNOWN_CATEGORIES = {
+    "อาหาร", "เครื่องดื่ม", "เดินทาง", "ช็อปปิ้ง", "ของใช้",
+    "สาธารณูปโภค", "สุขภาพ", "บันเทิง", "การศึกษา", "โอนเงิน", "ทั่วไป",
+}
+
+
+def _next_unconfident_line(items: list[dict]) -> int | None:
+    """คืนเลขบรรทัด (1-based) แรกที่ confidence != high หรือ None ถ้าทุกบรรทัด high"""
+    for i, it in enumerate(items, 1):
+        if it.get("confidence", "high") != "high":
+            return i
+    return None
+
+
+def _format_edit_line_prompt(items: list[dict], n: int) -> str:
+    """ข้อความถามบรรทัด n ในโหมด guided"""
+    item = items[n - 1]
+    note = item.get("note") or "?"
+    amount = item.get("amount", 0)
+    raw_guess = item.get("raw_guess", "")
+    guess = f' [เดา: "{raw_guess}"]' if raw_guess else ""
+    return (
+        f'แก้บรรทัด {n}/{len(items)}: "{note}"{guess} — {amount:,.2f}\n'
+        f"พิมพ์ชื่อจริง หรือ: ลบ / ข้าม / เสร็จ / ยกเลิกการแก้"
+    )
+
+
+def _send_edit_line_prompt(pending: dict, chat_id, n: int):
+    """ส่งคำถามบรรทัด n พร้อมปุ่ม [เสร็จ] (กดแทนพิมพ์ 'เสร็จ' ได้)"""
+    from interfaces.telegram_common import send_inline_keyboard
+    text = _format_edit_line_prompt(pending["items"], n)
+    buttons = [[{"text": "✅ เสร็จ", "callback_data": f"exp_edit_done:{pending['pending_id']}"}]]
+    send_inline_keyboard(chat_id, text, buttons)
+
+
+def _send_final_preview(pending: dict, chat_id):
+    """แสดง preview สุดท้ายหลังแก้เสร็จ พร้อมปุ่ม [แยก]/[รวม]/[ยกเลิก] (กลับเข้า flow เดิม)"""
+    from interfaces.telegram_common import send_inline_keyboard
+    items = pending["items"]
+    pending_id = pending["pending_id"]
+    total = sum(it["amount"] for it in items)
+    lines = ["✅ แก้ไขเสร็จ — ตรวจทานแล้วเลือกบันทึก:"]
+    for idx, it in enumerate(items, 1):
+        note = it.get("note") or "?"
+        lines.append(f"{idx}. {note} — {it['amount']:,.2f} ({it.get('category', 'ทั่วไป')})")
+    lines.append(f"\nรวม {total:,.2f} บาท")
+    buttons = [
+        [
+            {"text": f"📋 แยก {len(items)} รายการ", "callback_data": f"exp_split:{pending_id}"},
+            {"text": "📦 รวม 1 รายการ", "callback_data": f"exp_combine:{pending_id}"},
+        ],
+        [{"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"}],
+    ]
+    send_inline_keyboard(chat_id, "\n".join(lines), buttons)
+
+
+def _advance_or_finish(pending: dict, chat_id):
+    """หาบรรทัดถัดไปที่ confidence != high → ถ้ามีถามต่อ, ถ้าไม่มีจบ edit → preview สุดท้าย"""
+    nxt = _next_unconfident_line(pending["items"])
+    if nxt is not None:
+        pending["edit_state"] = f"awaiting_line_{nxt}"
+        _send_edit_line_prompt(pending, chat_id, nxt)
+    else:
+        pending["edit_state"] = None
+        _send_final_preview(pending, chat_id)
+
+
+def _apply_operations(items: list[dict], operations: list[dict]) -> int:
+    """ใช้ operations (edit/delete/add) กับ items in place → คืนจำนวน op ที่ apply สำเร็จ
+
+    edit/add ทำก่อน (ไม่เลื่อน index ของบรรทัดเดิม), delete ทำหลังสุดเรียงจากมากไปน้อย
+    เพื่อให้เลขบรรทัดยังอ้างอิงตำแหน่งเดิมได้ถูกต้อง
+    """
+    applied = 0
+    for op in operations:
+        kind = op.get("op")
+        if kind == "edit":
+            ln = op.get("line")
+            if isinstance(ln, int) and 1 <= ln <= len(items):
+                it = items[ln - 1]
+                if op.get("note"):
+                    it["note"] = op["note"]
+                if op.get("amount") is not None:
+                    try:
+                        it["amount"] = float(op["amount"])
+                    except (TypeError, ValueError):
+                        pass
+                if op.get("category"):
+                    it["category"] = op["category"]
+                it["confidence"] = "high"
+                applied += 1
+        elif kind == "add":
+            try:
+                amount = float(op.get("amount") or 0)
+            except (TypeError, ValueError):
+                amount = 0
+            items.append({
+                "amount": amount,
+                "category": op.get("category", "ทั่วไป"),
+                "note": op.get("note", ""),
+                "confidence": "high",
+                "raw_guess": "",
+            })
+            applied += 1
+
+    del_lines = sorted(
+        (op.get("line") for op in operations
+         if op.get("op") == "delete" and isinstance(op.get("line"), int)),
+        reverse=True,
+    )
+    for ln in del_lines:
+        if 1 <= ln <= len(items):
+            del items[ln - 1]
+            applied += 1
+    return applied
+
+
+def _handle_expense_edit_start(user_id: str, pending_id: str, chat_id, message_id):
+    """exp_edit — เข้า edit mode, ถามบรรทัดแรกที่ confidence != high (หรือบรรทัด 1 ถ้า high หมด)"""
+    from interfaces.telegram_common import edit_message_text
+    pending = peek_pending_expense(pending_id, user_id)
+    if not pending:
+        if chat_id and message_id:
+            edit_message_text(chat_id, message_id, "⏰ หมดเวลาแล้ว กรุณาส่งรูปใหม่")
+        return
+    pending["chat_id"] = chat_id
+    pending["message_id"] = message_id
+    items = pending["items"]
+    n = _next_unconfident_line(items) or 1
+    pending["edit_state"] = f"awaiting_line_{n}"
+    # แก้ข้อความต้นทาง (ไม่ส่ง reply_markup) → ปุ่มเดิมหายไป กัน double-click
+    if chat_id and message_id:
+        edit_message_text(chat_id, message_id, "✏️ เข้าโหมดแก้รายการ — ตอบกลับตามคำถามด้านล่าง")
+    _send_edit_line_prompt(pending, chat_id, n)
+
+
+def _handle_expense_type_manually(user_id: str, pending_id: str) -> str:
+    """exp_type_manually — ทิ้ง OCR result, ส่ง template ให้ user พิมพ์เอง (terminal)"""
+    from core import db
+    pending = pop_pending_expense(pending_id, user_id)
+    if not pending:
+        return "⏰ หมดเวลาแล้ว กรุณาส่งรูปใหม่"
+    db.update_ocr_action(pending.get("telemetry_id"), "typed_manually")
+    return (
+        "⌨️ พิมพ์รายการเองได้เลย เช่น:\n"
+        "/expense 120 อาหาร ข้าวกะเพรา\n"
+        "บันทึกทีละรายการได้ตามต้องการ"
+    )
+
+
+def _handle_expense_edit_done(user_id: str, pending_id: str, chat_id, message_id):
+    """exp_edit_done — จบ edit mode → preview สุดท้ายพร้อม [แยก]/[รวม]/[ยกเลิก]"""
+    from interfaces.telegram_common import edit_message_text
+    pending = peek_pending_expense(pending_id, user_id)
+    if not pending:
+        if chat_id and message_id:
+            edit_message_text(chat_id, message_id, "⏰ หมดเวลาแล้ว กรุณาส่งรูปใหม่")
+        return
+    pending["edit_state"] = None
+    if chat_id and message_id:
+        edit_message_text(chat_id, message_id, "✅ จบการแก้ไข")
+    _send_final_preview(pending, chat_id or pending.get("chat_id"))
+
+
+def _handle_apply_freetext(user_id: str, pending_id: str, chat_id, message_id):
+    """exp_apply_freetext — apply staged operations → advance/finish"""
+    from interfaces.telegram_common import edit_message_text
+    pending = peek_pending_expense(pending_id, user_id)
+    if not pending:
+        if chat_id and message_id:
+            edit_message_text(chat_id, message_id, "⏰ หมดเวลาแล้ว กรุณาส่งรูปใหม่")
+        return
+    ops = pending.get("staged_operations") or []
+    applied = _apply_operations(pending["items"], ops)
+    pending["staged_operations"] = None
+    pending["free_text_used"] = True
+    pending.setdefault("edit_history", []).append(f"freetext: {applied} ops")
+    if chat_id and message_id:
+        edit_message_text(chat_id, message_id, f"✅ ปรับ {applied} รายการแล้ว")
+    _advance_or_finish(pending, chat_id or pending.get("chat_id"))
+
+
+def _handle_cancel_freetext(user_id: str, pending_id: str, chat_id, message_id):
+    """exp_cancel_freetext — ทิ้ง staged operations → กลับ guided mode ที่บรรทัดเดิม"""
+    from interfaces.telegram_common import edit_message_text
+    pending = peek_pending_expense(pending_id, user_id)
+    if not pending:
+        if chat_id and message_id:
+            edit_message_text(chat_id, message_id, "⏰ หมดเวลาแล้ว กรุณาส่งรูปใหม่")
+        return
+    pending["staged_operations"] = None
+    return_line = pending.get("edit_return_line") or _next_unconfident_line(pending["items"]) or 1
+    pending["edit_state"] = f"awaiting_line_{return_line}"
+    if chat_id and message_id:
+        edit_message_text(chat_id, message_id, "↩️ ยกเลิกการแก้นี้ กลับไปแก้ทีละบรรทัด")
+    _send_edit_line_prompt(pending, chat_id or pending.get("chat_id"), return_line)
