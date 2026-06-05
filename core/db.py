@@ -224,6 +224,24 @@ CREATE INDEX IF NOT EXISTS idx_security_audit_target_time
 
 CREATE INDEX IF NOT EXISTS idx_security_audit_action_time
     ON security_audit_logs(action, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ocr_telemetry (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id_hash        TEXT NOT NULL,
+    timestamp           TEXT NOT NULL,
+    is_handwritten      INTEGER,
+    overall_confidence  TEXT,
+    total_items         INTEGER,
+    low_conf_items      INTEGER,
+    store_provided      INTEGER,
+    user_action         TEXT,
+    edits_count         INTEGER DEFAULT 0,
+    free_text_edit_used INTEGER DEFAULT 0,
+    sum_matches_total   INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_ocr_telemetry_timestamp
+    ON ocr_telemetry(timestamp);
 """
 
 PROFILE_SECRET_FIELDS = ("phone_number", "national_id")
@@ -1453,6 +1471,76 @@ def summarize_expenses(user_id: str, start_date: str, end_date: str, category: s
             bucket["count"] += 1
 
         return sorted(category_totals.values(), key=lambda item: item["total"], reverse=True)
+
+
+# === OCR Telemetry (Phase A) ===
+# เก็บเฉพาะ aggregate signal สำหรับตัดสินใจ trigger phase B/C — ไม่เก็บ PII ใดๆ
+# (ชื่อร้าน/ชื่อรายการ/ราคา/รูป). user_id ถูก hash ด้วย salt ก่อนเก็บ
+
+_ocr_salt_warned = False
+
+
+def _hash_telemetry_user_id(user_id: str) -> str:
+    """SHA256(user_id + OCR_TELEMETRY_SALT) — ถ้าไม่ได้ตั้ง salt จะ warn ครั้งเดียวแล้วใช้ค่าว่าง"""
+    global _ocr_salt_warned
+    from core.config import OCR_TELEMETRY_SALT
+    salt = OCR_TELEMETRY_SALT or ""
+    if not salt and not _ocr_salt_warned:
+        log.warning(
+            "OCR_TELEMETRY_SALT ไม่ได้ตั้งค่า — user_id hash จะไม่มี salt "
+            "(telemetry ยังทำงานได้ แต่ป้องกัน reverse ได้น้อยลง)"
+        )
+        _ocr_salt_warned = True
+    return hashlib.sha256((str(user_id) + salt).encode("utf-8")).hexdigest()
+
+
+def log_ocr_attempt(user_id: str, is_handwritten: bool, overall_confidence: str,
+                    total_items: int, low_conf_items: int, store_provided: bool,
+                    sum_matches_total: bool) -> int:
+    """บันทึก OCR attempt 1 ครั้ง (user_action ยังว่าง) → return telemetry_id
+
+    เรียกหลัง OCR เสร็จ ก่อนแสดงปุ่มให้ user เลือก — action จะถูกเติมภายหลังด้วย
+    update_ocr_action() ตอน user กดปุ่มสุดท้าย
+    """
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO ocr_telemetry (
+                user_id_hash, timestamp, is_handwritten, overall_confidence,
+                total_items, low_conf_items, store_provided,
+                user_action, edits_count, free_text_edit_used, sum_matches_total
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?)
+            """,
+            (
+                _hash_telemetry_user_id(user_id),
+                datetime.now().isoformat(),
+                1 if is_handwritten else 0,
+                overall_confidence,
+                int(total_items),
+                int(low_conf_items),
+                1 if store_provided else 0,
+                1 if sum_matches_total else 0,
+            ),
+        )
+        return cursor.lastrowid
+
+
+def update_ocr_action(telemetry_id: int, action: str, edits_count: int = 0,
+                      free_text_edit_used: bool = False) -> bool:
+    """อัปเดต user_action หลัง user เลือกปุ่มสุดท้าย — return True ถ้าอัปเดตได้"""
+    if not telemetry_id:
+        return False
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE ocr_telemetry
+            SET user_action = ?, edits_count = ?, free_text_edit_used = ?
+            WHERE id = ?
+            """,
+            (action, int(edits_count), 1 if free_text_edit_used else 0, telemetry_id),
+        )
+        return cursor.rowcount > 0
 
 
 # === Conversations ===

@@ -82,6 +82,10 @@ MATCHA_TIMEOUT = int(_optional("MATCHA_TIMEOUT", "60"))
 ENCRYPTION_KEY = _optional("ENCRYPTION_KEY", "")
 ENCRYPTION_KEY_PREVIOUS = _optional("ENCRYPTION_KEY_PREVIOUS", "")
 ENCRYPTION_KEY_PREVIOUS_LIST = _optional("ENCRYPTION_KEY_PREVIOUS_LIST", "")
+
+# Salt สำหรับ hash user_id ใน ocr_telemetry (analytics เท่านั้น ไม่ใช่ security-critical)
+# ถ้าว่าง: telemetry ยังทำงานได้แต่ hash ไม่มี salt — rotate ภายหลังจะกระทบ analytics ย้อนหลัง
+OCR_TELEMETRY_SALT = _optional("OCR_TELEMETRY_SALT", "")
 STARTUP_READINESS_POLICY = _optional("STARTUP_READINESS_POLICY", "auto").strip().lower() or "auto"
 API_KEY_ROTATION_DAYS_DEFAULT = int(_optional("API_KEY_ROTATION_DAYS_DEFAULT", "180"))
 WORK_IMAP_PASSWORD_ROTATION_DAYS = int(_optional("WORK_IMAP_PASSWORD_ROTATION_DAYS", "90"))
