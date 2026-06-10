@@ -1,4 +1,12 @@
-"""Unit tests for tools/lotto.py — uses mocked API responses."""
+"""Unit tests for tools/lotto.py — Sanook-based implementation, mocked HTTP.
+
+โครงสร้างปัจจุบัน (หลังย้ายจาก rayriffy API → Sanook):
+  - ผลเต็มงวด parse จาก JSON-LD `articleBody` ในหน้า news.sanook.com/lotto/check/<DDMMYYYY>/
+  - งวดล่าสุด + รายการงวด ดึงจาก Sanook RSS
+  - Sanook ไม่ 404 — date ที่ไม่มีจริงจะ serve งวดล่าสุดแทน → ต้องเทียบวันที่ในหน้า
+"""
+import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -14,55 +22,60 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "x")
 os.environ.setdefault("BOT_API_EXCHANGE_TOKEN", "x")
 os.environ.setdefault("BOT_API_HOLIDAY_TOKEN", "x")
 
-from tools.lotto import LottoTool, _lotto_get
+from tools.lotto import LottoTool, _http_get_text, _thai_date_to_id
 
 
-# ---------- sample API payloads ----------
-SAMPLE_LATEST = {
-    "status": "success",
-    "response": {
-        "date": "1 พฤศจิกายน 2567",
-        "endpoint": "https://www.glo.or.th/",
-        "prizes": [
-            {"id": "prizeFirst", "reward": "6000000", "amount": 1, "number": ["123456"]},
-            {"id": "prizeFirstNear", "reward": "100000", "amount": 2, "number": ["123455", "123457"]},
-            {"id": "prizeSecond", "reward": "200000", "amount": 5,
-             "number": ["111111", "222222", "333333", "444444", "555555"]},
-            {"id": "prizeThird", "reward": "80000", "amount": 10,
-             "number": [f"{i:06d}" for i in range(10)]},
-            {"id": "prizeForth", "reward": "40000", "amount": 50,
-             "number": [f"{i:06d}" for i in range(50)]},
-            {"id": "prizeFifth", "reward": "20000", "amount": 100,
-             "number": [f"{i:06d}" for i in range(100)]},
-        ],
-        "runningNumbers": [
-            {"id": "runningNumberFrontThree", "reward": "4000",
-             "amount": 2, "number": ["123", "789"]},
-            {"id": "runningNumberBackThree", "reward": "4000",
-             "amount": 2, "number": ["456", "999"]},
-            {"id": "runningNumberBackTwo", "reward": "2000",
-             "amount": 1, "number": ["56"]},
-        ],
-    },
-}
-
-SAMPLE_LIST = {
-    "status": "success",
-    "response": [
-        {"id": "01112567", "date": "1 พฤศจิกายน 2567"},
-        {"id": "16102567", "date": "16 ตุลาคม 2567"},
-        {"id": "01102567", "date": "1 ตุลาคม 2567"},
+# ---------- sample data ----------
+# dict รูปแบบที่ _parse_article_body คืน (และ formatter รับ)
+SAMPLE_DATA = {
+    "date": "1 มิถุนายน 2569",
+    "endpoint": "https://news.sanook.com/lotto/check/01062569/",
+    "prizes": [
+        {"id": "prizeFirst", "reward": "6000000", "number": ["123456"]},
+        {"id": "prizeFirstNear", "reward": "100000", "number": ["123455", "123457"]},
+        {"id": "prizeSecond", "reward": "200000",
+         "number": ["111111", "222222", "333333", "444444", "555555"]},
+    ],
+    "runningNumbers": [
+        {"id": "runningNumberFrontThree", "reward": "4000", "number": ["123", "789"]},
+        {"id": "runningNumberBackThree", "reward": "4000", "number": ["456", "999"]},
+        {"id": "runningNumberBackTwo", "reward": "2000", "number": ["56"]},
     ],
 }
 
-EMPTY_RESPONSE = {"status": "success", "response": {"date": "", "prizes": []}}
+# articleBody ตามรูปแบบหน้า Sanook (บรรทัดหัวข้อรางวัล + บรรทัดเลข)
+SAMPLE_BODY = "\n".join([
+    "ตรวจหวย 1 มิถุนายน 2569",
+    "รางวัลที่ 1 รางวัลละ 6,000,000 บาท",
+    "123456",
+    "รางวัลข้างเคียงรางวัลที่ 1 รางวัลละ 100,000 บาท",
+    "123455 123457",
+    "รางวัลที่ 2 รางวัลละ 200,000 บาท",
+    "111111 222222 333333",
+    "เลขหน้า 3 ตัว รางวัลละ 4,000 บาท",
+    "123 789",
+    "เลขท้าย 3 ตัว รางวัลละ 4,000 บาท",
+    "456 999",
+    "เลขท้าย 2 ตัว รางวัลละ 2,000 บาท",
+    "56",
+])
 
+# หน้า HTML ของ Sanook ที่ฝัง articleBody ใน JSON-LD (json.dumps จัดการ escape ให้)
+SAMPLE_HTML = (
+    '<html><script type="application/ld+json">'
+    '{"@type": "NewsArticle", "articleBody": ' + json.dumps(SAMPLE_BODY, ensure_ascii=False) + '}'
+    '</script></html>'
+)
 
-def _mock_resp(payload, status=200):
-    r = MagicMock()
-    r.status_code = status
-    r.json.return_value = payload
-    return r
+SAMPLE_RSS = """<?xml version="1.0"?>
+<rss><channel>
+<item><title>[[ตรวจหวย 1 มิถุนายน 2569]]</title>
+<link>https://news.sanook.com/lotto/check/01062569/</link></item>
+<item><title>[[ตรวจหวย 16 พฤษภาคม 2569]]</title>
+<link>https://news.sanook.com/lotto/check/16052569/</link></item>
+<item><title>[[ตรวจหวย 2 พฤษภาคม 2569]]</title>
+<link>https://news.sanook.com/lotto/check/02052569/</link></item>
+</channel></rss>"""
 
 
 @pytest.fixture
@@ -70,15 +83,32 @@ def tool():
     return LottoTool()
 
 
-# ---------- _parse_args ----------
+# ---------- _thai_date_to_id ----------
+class TestThaiDateToId:
+    def test_valid_date(self):
+        assert _thai_date_to_id("1 มิถุนายน 2569") == "01062569"
+
+    def test_two_digit_day(self):
+        assert _thai_date_to_id("16 พฤษภาคม 2569") == "16052569"
+
+    def test_with_prefix_text(self):
+        assert _thai_date_to_id("งวดวันที่ 2 พฤษภาคม 2569") == "02052569"
+
+    def test_unknown_month_returns_none(self):
+        assert _thai_date_to_id("1 มิถุนา 2569") is None
+
+    def test_garbage_returns_none(self):
+        assert _thai_date_to_id("ไม่มีวันที่") is None
+
+
+# ---------- _parse_args (เหมือนเดิมจาก implementation เก่า) ----------
 class TestParseArgs:
     def test_empty_summary(self, tool):
         assert tool._parse_args("")["mode"] == "summary"
 
     def test_six_digit_positional_is_month(self, tool):
-        # NOTE: docstring claims "820866" → mode=check, but 6-digit positional
-        # is actually treated as MMYYYY (month) by the implementation.
-        # Use `check <num>` for unambiguous 6-digit checking.
+        # 6-digit positional ถูกตีความเป็น MMYYYY (month)
+        # ใช้ `check <num>` ถ้าต้องการตรวจเลข 6 หลักแบบไม่กำกวม
         p = tool._parse_args("123456")
         assert p["mode"] == "month"
 
@@ -121,179 +151,195 @@ class TestFormatting:
         assert tool._format_reward("abc") == "abc"
 
     def test_format_summary_contains_first_prize(self, tool):
-        out = tool._format_summary(SAMPLE_LATEST["response"])
+        out = tool._format_summary(SAMPLE_DATA)
         assert "123456" in out
         assert "6,000,000" in out
         assert "รางวัลที่ 1" in out
 
     def test_check_first_prize_win(self, tool):
-        out = tool._format_check_result("123456", SAMPLE_LATEST["response"])
+        out = tool._format_check_result("123456", SAMPLE_DATA)
         assert "ถูก" in out and "รางวัลที่ 1" in out
 
     def test_check_back_two(self, tool):
-        out = tool._format_check_result("56", SAMPLE_LATEST["response"])
+        out = tool._format_check_result("56", SAMPLE_DATA)
         assert "ถูก" in out
 
     def test_check_no_win(self, tool):
-        # 987654: front3=987, back3=654, back2=54 — none in sample running numbers
-        out = tool._format_check_result("987654", SAMPLE_LATEST["response"])
+        # 987654: front3=987, back3=654, back2=54 — ไม่อยู่ใน running numbers ตัวอย่าง
+        out = tool._format_check_result("987654", SAMPLE_DATA)
         assert "ไม่ถูกรางวัล" in out
 
     def test_six_digit_back_two_match(self, tool):
-        # 999956 ends in 56 → wins back two
-        out = tool._format_check_result("999956", SAMPLE_LATEST["response"])
+        # 999956 ลงท้าย 56 → ถูกเลขท้าย 2 ตัว
+        out = tool._format_check_result("999956", SAMPLE_DATA)
         assert "เลขท้าย 2 ตัว" in out
 
 
-# ---------- API fetch ----------
-class TestFetch:
-    @patch("tools.lotto._lotto_get")
-    def test_fetch_latest_success(self, mock_get, tool):
-        mock_get.return_value = _mock_resp(SAMPLE_LATEST)
-        data = tool._fetch_lotto()
-        assert data["date"] == "1 พฤศจิกายน 2567"
-        mock_get.assert_called_once()
-        assert mock_get.call_args[0][0].endswith("/latest")
+# ---------- _parse_article_body ----------
+class TestParseArticleBody:
+    def test_parses_all_buckets(self, tool):
+        data = tool._parse_article_body(SAMPLE_BODY, "01062569")
+        assert data["date"] == "1 มิถุนายน 2569"
+        prize_ids = {p["id"]: p for p in data["prizes"]}
+        assert prize_ids["prizeFirst"]["number"] == ["123456"]
+        assert prize_ids["prizeFirst"]["reward"] == "6000000"
+        assert prize_ids["prizeFirstNear"]["number"] == ["123455", "123457"]
+        running_ids = {r["id"]: r for r in data["runningNumbers"]}
+        assert running_ids["runningNumberBackTwo"]["number"] == ["56"]
+        assert running_ids["runningNumberFrontThree"]["number"] == ["123", "789"]
 
-    @patch("tools.lotto._lotto_get")
-    def test_fetch_with_date_id(self, mock_get, tool):
-        mock_get.return_value = _mock_resp(SAMPLE_LATEST)
-        tool._fetch_lotto("01112567")
-        assert "/lotto/01112567" in mock_get.call_args[0][0]
+    def test_no_first_prize_returns_none(self, tool):
+        body = "ตรวจหวย 1 มิถุนายน 2569\nเลขท้าย 2 ตัว รางวัลละ 2,000 บาท\n56"
+        assert tool._parse_article_body(body, "01062569") is None
 
-    @patch("tools.lotto._lotto_get")
-    def test_fetch_empty_returns_none(self, mock_get, tool):
-        mock_get.return_value = _mock_resp(EMPTY_RESPONSE)
-        assert tool._fetch_lotto("99999999") is None
-
-    @patch("tools.lotto._lotto_get")
-    def test_fetch_exception_returns_none(self, mock_get, tool):
-        mock_get.side_effect = RuntimeError("boom")
-        assert tool._fetch_lotto() is None
-
-    @patch("tools.lotto._lotto_get")
-    def test_fetch_draw_list(self, mock_get, tool):
-        mock_get.return_value = _mock_resp(SAMPLE_LIST)
-        draws = tool._fetch_draw_list(page=1)
-        assert len(draws) == 3
-        assert "/list/1" in mock_get.call_args[0][0]
+    def test_empty_body_returns_none(self, tool):
+        assert tool._parse_article_body("", "01062569") is None
 
 
-# ---------- _lotto_get fallback path ----------
-class TestLottoGetFallback:
+# ---------- _http_get_text fallback path ----------
+class TestHttpGetText:
     @patch("tools.lotto.requests.get")
     def test_direct_success(self, mock_get):
-        mock_get.return_value = _mock_resp({"ok": 1})
-        resp = _lotto_get("https://example.com/x")
-        assert resp.status_code == 200
+        resp = MagicMock(status_code=200, text="<html>ok</html>")
+        mock_get.return_value = resp
+        assert _http_get_text("https://example.com/x") == "<html>ok</html>"
         assert mock_get.call_count == 1
 
     @patch("tools.lotto.requests.get")
-    def test_falls_back_to_proxy(self, mock_get):
-        # First call (direct) raises, second (proxy) succeeds
+    def test_direct_exception_falls_back_to_proxy(self, mock_get):
         mock_get.side_effect = [
             Exception("DNS failure"),
-            _mock_resp({"ok": 1}),
+            MagicMock(status_code=200, text="proxied"),
         ]
-        resp = _lotto_get("https://lotto.api.rayriffy.com/latest")
-        assert resp.status_code == 200
+        assert _http_get_text("https://news.sanook.com/lotto/check/01062569/") == "proxied"
         assert mock_get.call_count == 2
-        # second call hits codetabs proxy
         assert "codetabs.com" in mock_get.call_args_list[1][0][0]
 
     @patch("tools.lotto.requests.get")
-    def test_both_fail_returns_500(self, mock_get):
+    def test_direct_non_200_falls_back_to_proxy(self, mock_get):
+        mock_get.side_effect = [
+            MagicMock(status_code=403, text="blocked"),
+            MagicMock(status_code=200, text="proxied"),
+        ]
+        assert _http_get_text("https://example.com/x") == "proxied"
+        assert mock_get.call_count == 2
+
+    @patch("tools.lotto.requests.get")
+    def test_both_fail_returns_none(self, mock_get):
         mock_get.side_effect = Exception("offline")
-        resp = _lotto_get("https://lotto.api.rayriffy.com/latest")
-        assert resp.status_code == 500
+        assert _http_get_text("https://example.com/x") is None
 
     @patch("tools.lotto.requests.get")
-    def test_direct_200_but_non_json_falls_back(self, mock_get):
-        # Server returns 200 with HTML/empty body — must trigger proxy fallback
-        bad = MagicMock()
-        bad.status_code = 200
-        bad.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
-        good = _mock_resp({"status": "success", "response": {}})
-        mock_get.side_effect = [bad, good]
-        resp = _lotto_get("https://lotto.api.rayriffy.com/latest")
-        assert mock_get.call_count == 2
-        assert "codetabs.com" in mock_get.call_args_list[1][0][0]
-        assert resp is good
+    def test_proxy_fail_returns_direct_body(self, mock_get):
+        # direct ตอบ non-200 แต่มี body + proxy พัง → คืน body ของ direct
+        mock_get.side_effect = [
+            MagicMock(status_code=500, text="direct-body"),
+            Exception("proxy down"),
+        ]
+        assert _http_get_text("https://example.com/x") == "direct-body"
 
-    @patch("tools.lotto.requests.get")
-    def test_direct_non_200_falls_back(self, mock_get):
-        bad = MagicMock()
-        bad.status_code = 403
-        good = _mock_resp({"status": "success", "response": {}})
-        mock_get.side_effect = [bad, good]
-        resp = _lotto_get("https://lotto.api.rayriffy.com/latest")
-        assert mock_get.call_count == 2
-        assert resp is good
 
-    @patch("tools.lotto.requests.get")
-    def test_proxy_fail_returns_direct_response(self, mock_get):
-        # If direct returns non-JSON 200 AND proxy raises, prefer direct over fake 500
-        bad = MagicMock()
-        bad.status_code = 200
-        bad.json.side_effect = ValueError("nope")
-        mock_get.side_effect = [bad, Exception("proxy down")]
-        resp = _lotto_get("https://lotto.api.rayriffy.com/latest")
-        assert resp is bad
+# ---------- fetch (mocked HTTP/RSS) ----------
+class TestFetch:
+    @patch("tools.lotto._http_get_text")
+    def test_fetch_latest_uses_rss_then_html(self, mock_http, tool):
+        mock_http.side_effect = [SAMPLE_RSS, SAMPLE_HTML]
+        data = tool._fetch_lotto()
+        assert data is not None
+        assert data["date"] == "1 มิถุนายน 2569"
+        # call แรกคือ RSS, call สองคือหน้า check ของงวดล่าสุดจาก RSS
+        assert "rssfeeds.sanook.com" in mock_http.call_args_list[0][0][0]
+        assert "/lotto/check/01062569/" in mock_http.call_args_list[1][0][0]
+
+    @patch("tools.lotto._http_get_text")
+    def test_fetch_explicit_date_matches(self, mock_http, tool):
+        mock_http.return_value = SAMPLE_HTML
+        data = tool._fetch_lotto("01062569")
+        assert data is not None
+        assert data["endpoint"].endswith("/01062569/")
+
+    @patch("tools.lotto._http_get_text")
+    def test_fetch_date_mismatch_returns_none(self, mock_http, tool):
+        # Sanook ไม่ 404 — ขอ 16062569 แต่ได้หน้างวด 1 มิ.ย. → ต้องถือว่าไม่มีงวดนั้น
+        mock_http.return_value = SAMPLE_HTML
+        assert tool._fetch_lotto("16062569") is None
+
+    @patch("tools.lotto._http_get_text")
+    def test_fetch_no_article_body_returns_none(self, mock_http, tool):
+        mock_http.return_value = "<html>no json-ld here</html>"
+        assert tool._fetch_lotto("01062569") is None
+
+    @patch("tools.lotto._http_get_text")
+    def test_fetch_http_down_returns_none(self, mock_http, tool):
+        mock_http.return_value = None
+        assert tool._fetch_lotto("01062569") is None
+
+    @patch("tools.lotto._http_get_text")
+    def test_fetch_rss_items(self, mock_http, tool):
+        mock_http.return_value = SAMPLE_RSS
+        items = tool._fetch_rss_items()
+        assert [i["id"] for i in items] == ["01062569", "16052569", "02052569"]
+        assert items[0]["date"] == "1 มิถุนายน 2569"
+
+    @patch("tools.lotto._http_get_text")
+    def test_fetch_draw_list_page_2_is_empty(self, mock_http, tool):
+        # RSS มีหน้าเดียว — page > 1 ต้องคืน [] โดยไม่ยิง HTTP
+        assert tool._fetch_draw_list(page=2) == []
+        mock_http.assert_not_called()
 
 
 # ---------- execute() integration ----------
-@pytest.mark.asyncio
 class TestExecute:
     @patch("tools.lotto.db")
-    @patch("tools.lotto._lotto_get")
-    async def test_summary_latest(self, mock_get, mock_db, tool):
-        mock_get.return_value = _mock_resp(SAMPLE_LATEST)
+    @patch("tools.lotto._http_get_text")
+    def test_summary_latest(self, mock_http, mock_db, tool):
+        mock_http.side_effect = [SAMPLE_RSS, SAMPLE_HTML]
         mock_db.make_log_field.return_value = {}
-        out = await tool.execute(user_id="u1", args="")
+        out = asyncio.run(tool.execute(user_id="u1", args=""))
         assert "ผลสลากกินแบ่งรัฐบาล" in out
         assert "123456" in out
 
     @patch("tools.lotto.db")
-    @patch("tools.lotto._lotto_get")
-    async def test_check_winning_number(self, mock_get, mock_db, tool):
-        mock_get.return_value = _mock_resp(SAMPLE_LATEST)
+    @patch("tools.lotto._http_get_text")
+    def test_check_winning_number(self, mock_http, mock_db, tool):
+        mock_http.side_effect = [SAMPLE_RSS, SAMPLE_HTML]
         mock_db.make_log_field.return_value = {}
-        out = await tool.execute(user_id="u1", args="check 123456")
+        out = asyncio.run(tool.execute(user_id="u1", args="check 123456"))
         assert "ถูก" in out and "123456" in out
 
     @patch("tools.lotto.db")
-    @patch("tools.lotto._lotto_get")
-    async def test_check_invalid_number(self, mock_get, mock_db, tool):
+    @patch("tools.lotto._http_get_text")
+    def test_check_invalid_number(self, mock_http, mock_db, tool):
         mock_db.make_log_field.return_value = {}
-        out = await tool.execute(user_id="u1", args="check abc")
+        out = asyncio.run(tool.execute(user_id="u1", args="check abc"))
         assert "กรุณาใส่เลข" in out
+        mock_http.assert_not_called()
 
     @patch("tools.lotto.db")
-    @patch("tools.lotto._lotto_get")
-    async def test_api_down_no_date_returns_fallback(self, mock_get, mock_db, tool):
-        mock_get.side_effect = Exception("network down")
+    @patch("tools.lotto._http_get_text")
+    def test_api_down_no_date_returns_fallback(self, mock_http, mock_db, tool):
+        mock_http.return_value = None
         mock_db.make_log_field.return_value = {}
-        out = await tool.execute(user_id="u1", args="")
+        out = asyncio.run(tool.execute(user_id="u1", args=""))
         assert "ไม่สามารถดึงข้อมูล" in out
         assert "glo.or.th" in out
 
     @patch("tools.lotto.db")
-    @patch("tools.lotto._lotto_get")
-    async def test_unknown_date_shows_nearby(self, mock_get, mock_db, tool):
-        # First call: lotto/<date> returns empty; second: list for nearby
-        mock_get.side_effect = [
-            _mock_resp(EMPTY_RESPONSE),
-            _mock_resp(SAMPLE_LIST),
-        ]
+    @patch("tools.lotto._http_get_text")
+    def test_unknown_date_shows_nearby(self, mock_http, mock_db, tool):
+        # ขอ 16062569 → Sanook serve งวด 1 มิ.ย. แทน (mismatch → not found)
+        # จากนั้น _find_nearby_draws ดึง RSS หางวดใกล้เคียง
+        mock_http.side_effect = [SAMPLE_HTML, SAMPLE_RSS]
         mock_db.make_log_field.return_value = {}
-        out = await tool.execute(user_id="u1", args="01112599")
+        out = asyncio.run(tool.execute(user_id="u1", args="16062569"))
         assert "ไม่มีผลสลาก" in out
+        assert "01062569" in out  # งวดเดือนเดียวกันจาก RSS
 
     @patch("tools.lotto.db")
-    @patch("tools.lotto._lotto_get")
-    async def test_list_mode(self, mock_get, mock_db, tool):
-        mock_get.return_value = _mock_resp(SAMPLE_LIST)
+    @patch("tools.lotto._http_get_text")
+    def test_list_mode(self, mock_http, mock_db, tool):
+        mock_http.return_value = SAMPLE_RSS
         mock_db.make_log_field.return_value = {}
-        out = await tool.execute(user_id="u1", args="list")
-        assert "1 พฤศจิกายน 2567" in out
-        assert "/lotto 01112567" in out
+        out = asyncio.run(tool.execute(user_id="u1", args="list"))
+        assert "1 มิถุนายน 2569" in out
+        assert "/lotto 01062569" in out
