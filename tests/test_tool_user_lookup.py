@@ -66,7 +66,7 @@ def test_gmail_summary_uses_user_id_for_preference_lookup():
         "snippet": "สวัสดี",
     }
 
-    with patch("tools.gmail_summary.get_gmail_credentials", return_value=object()), \
+    with patch("tools.gmail_summary.get_gmail_credentials", return_value=MagicMock(valid=True, expired=False)), \
          patch("tools.gmail_summary.build", return_value=service), \
          patch("tools.gmail_summary.get_user_by_id", return_value={"user_id": "user-42", "default_llm": "gemini"}), \
          patch("tools.gmail_summary.db.is_email_processed", return_value=False), \
