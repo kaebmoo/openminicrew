@@ -85,6 +85,17 @@ WEATHER_DESC_NIGHT = {
 _DEFAULT_SUNRISE_HOUR = 6
 _DEFAULT_SUNSET_HOUR = 18
 
+# Monday=0 .. Sunday=6 (ตาม datetime.weekday())
+_THAI_WEEKDAYS = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]
+
+
+def _thai_weekday(year, month, day) -> str:
+    """ชื่อวันในสัปดาห์ภาษาไทยจาก ปี/เดือน/วัน (ค.ศ.) — คืน "" ถ้าข้อมูลไม่ครบ/ไม่ valid"""
+    try:
+        return _THAI_WEEKDAYS[datetime(year, month, day).weekday()]
+    except (ValueError, TypeError):
+        return ""
+
 
 def _get_weather_desc(cond_type: str, hour: int | None = None,
                       sunrise_hour: int = _DEFAULT_SUNRISE_HOUR,
@@ -412,7 +423,9 @@ class WeatherTool(BaseTool):
                     t_sr_str = t_sr_dt.strftime("%H:%M") if t_sr_dt else "N/A"
                     t_ss_str = t_ss_dt.strftime("%H:%M") if t_ss_dt else "N/A"
 
-                    lines.append(f"📅 **พยากรณ์วันที่ {target_d}/{target_m}/{target_y}:**")
+                    t_weekday = _thai_weekday(target_y, target_m, target_d)
+                    day_word = f"วัน{t_weekday}ที่" if t_weekday else "วันที่"
+                    lines.append(f"📅 **พยากรณ์{day_word} {target_d}/{target_m}/{target_y}:**")
                     lines.append(f"🌡 อุณหภูมิ: {min_t}°C ถึง {max_t}°C")
                     lines.append(f"☀️ กลางวัน: {d_icon} {d_desc} | ☔ ฝน {d_rain}%")
                     lines.append(f"🌙 กลางคืน: {n_icon} {n_desc} | ☔ ฝน {n_rain}%")
@@ -483,11 +496,16 @@ class WeatherTool(BaseTool):
             for i, day in enumerate(days):
                 date_dict = day.get("displayDate", {})
                 
-                # Make date display nicer (e.g. "วันนี้", "พรุ่งนี้", or Date)
+                # Make date display nicer ("วันนี้", "พรุ่งนี้" แล้วตามด้วยชื่อวันในสัปดาห์ เช่น จันทร์ อังคาร)
+                weekday = _thai_weekday(date_dict.get("year"), date_dict.get("month"), date_dict.get("day"))
                 if i == 0:
                     date_label = "วันนี้"
                 elif i == 1:
                     date_label = "พรุ่งนี้"
+                elif weekday:
+                    date_label = weekday
+                    if i >= 7:  # พ้นสัปดาห์แรก ชื่อวันเริ่มซ้ำ ใส่วันที่กำกับ
+                        date_label = f"{weekday} {date_dict.get('day')}/{date_dict.get('month')}"
                 else:
                     date_label = f"{date_dict.get('day', '')}/{date_dict.get('month', '')}/{date_dict.get('year', '')}"
                 
