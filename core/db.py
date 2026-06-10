@@ -1437,6 +1437,20 @@ def get_expenses_by_source_hash(user_id: str, source_type: str, source_hash: str
         return [_hydrate_expense_row(conn, row) for row in rows]
 
 
+def get_expenses_by_date(user_id: str, expense_date: str) -> list[dict]:
+    """ดึงรายจ่ายทั้งหมดของวันที่ระบุ — ใช้ตรวจรายการที่อาจซ้ำ (ยอด+วัน+ร้านเดียวกัน)"""
+    normalized_date = (expense_date or "").strip()
+    if not normalized_date:
+        return []
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM expenses WHERE user_id = ? AND expense_date = ? ORDER BY id ASC",
+            (str(user_id), normalized_date),
+        ).fetchall()
+        return [_hydrate_expense_row(conn, row) for row in rows]
+
+
 def summarize_expenses(user_id: str, start_date: str, end_date: str, category: str = "", keyword: str = "") -> list[dict]:
     with get_conn() as conn:
         if not keyword:

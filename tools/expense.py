@@ -378,12 +378,16 @@ class ExpenseTool(BaseTool):
         low_conf_items = sum(1 for it in items if it.get("confidence") == "low")
         store_provided = bool(caption.strip())
 
+        # กันซ้ำชั้นที่ 2: รูปคนละไฟล์แต่อาจเป็นใบเสร็จใบเดิม (ถ่ายใหม่/crop ใหม่)
+        # — source_hash ไม่ตรงกัน จึงเทียบ ยอด+วันที่+ร้าน กับรายการที่บันทึกแล้วแทน
+        similar_rows = self._find_similar_saved_expenses(user_id, receipt_date, total, store)
+
         # รายการเดียว → auto-save เฉพาะที่ปลอดภัยจริง (Hybrid):
-        # confidence สูง + ไม่ใช่ลายมือ + (ยอดตรงกับบิล หรือ OCR ไม่มี grand_total ให้เทียบ);
-        # นอกนั้น (ลายมือ / ยอดไม่ตรง) ให้ confirm ก่อน
+        # confidence สูง + ไม่ใช่ลายมือ + (ยอดตรงกับบิล หรือ OCR ไม่มี grand_total ให้เทียบ)
+        # + ไม่เจอรายการที่อาจซ้ำ; นอกนั้น (ลายมือ / ยอดไม่ตรง / อาจซ้ำ) ให้ confirm ก่อน
         # หมายเหตุ (decision): sum_matches = True เมื่อไม่มี grand_total — ตั้งใจถือว่าปลอดภัย
         # เพราะ slip โอน/บิลรายการเดียวมักไม่มีบรรทัดยอดรวม และตัวเลข high-confidence ที่พิมพ์เชื่อถือได้
-        if len(items) == 1 and overall_confidence == "high" and not is_handwritten and sum_matches:
+        if len(items) == 1 and overall_confidence == "high" and not is_handwritten and sum_matches and not similar_rows:
             item = items[0]
             amount = item["amount"]
             category = item.get("category", "ทั่วไป")
@@ -474,6 +478,15 @@ class ExpenseTool(BaseTool):
             else:
                 lines.append(f"⚠️ ยอดรวมรายการ {total:,.2f} ไม่ตรงกับยอดในบิล ({grand_total:,.2f})")
 
+        # ---- เตือนรายการที่อาจซ้ำ (ใบเดิมแต่รูปคนละไฟล์) ----
+        if similar_rows:
+            lines.append("")
+            lines.append(f"⚠️ อาจซ้ำกับรายการที่บันทึกไว้แล้วของวันที่ {receipt_date}:")
+            for row in similar_rows[:3]:
+                row_note = self._normalize_note(row.get("note", ""))
+                lines.append(f"  - [#{row['id']}] {row['amount']:,.2f} บาท" + (f" — {row_note}" if row_note else ""))
+            lines.append("ถ้าเป็นใบเดิม กดยกเลิกได้เลย")
+
         lines.append("")
         lines.append("เลือกวิธีบันทึก:")
         preview_text = "\n".join(lines)
@@ -508,10 +521,11 @@ class ExpenseTool(BaseTool):
                 ],
             ]
 
+        memory_suffix = " ⚠️ อาจซ้ำกับรายการเดิม" if similar_rows else ""
         return InlineKeyboardResponse(
             text=preview_text,
             buttons=buttons,
-            memory_text=f"📸 อ่านจากรูป {len(items)} รายการ รวม {total:,.2f} บาท ความมั่นใจ {conf_label} (รอ user เลือก)",
+            memory_text=f"📸 อ่านจากรูป {len(items)} รายการ รวม {total:,.2f} บาท ความมั่นใจ {conf_label} (รอ user เลือก){memory_suffix}",
         )
 
     async def _extract_expense_from_image(self, image_bytes: bytes, hint: str = "") -> list | str | None:
@@ -866,6 +880,30 @@ class ExpenseTool(BaseTool):
     @staticmethod
     def _compute_receipt_source_hash(image_bytes: bytes) -> str:
         return hashlib.sha256(image_bytes).hexdigest()
+
+    def _find_similar_saved_expenses(self, user_id: str, receipt_date: str, total: float, store: str) -> list[dict]:
+        """หารายการที่อาจซ้ำ — วันเดียวกัน + ร้านเดียวกัน + ยอดเท่ากัน.
+
+        จับกรณีที่ source_hash ตรวจไม่เจอ: ใบเสร็จใบเดิมแต่รูปคนละไฟล์ (ถ่ายใหม่/crop ใหม่)
+        เทียบ 2 แบบ: ยอดเท่ากับรายการเดียว (บันทึกแบบรวม/บิลรายการเดียว)
+        หรือเท่ากับผลรวมทุกรายการร้านเดียวกันในวันนั้น (บันทึกแบบแยก)
+        ร้านไม่รู้จัก ("?"/ว่าง) → ไม่เตือน เพื่อเลี่ยง false positive จากยอดบังเอิญตรงกัน
+        """
+        store_norm = self._normalize_note(store).lower()
+        if not store_norm or store_norm == "?":
+            return []
+
+        rows = db.get_expenses_by_date(user_id, receipt_date)
+        store_rows = [r for r in rows if store_norm in self._normalize_note(r.get("note", "")).lower()]
+        if not store_rows:
+            return []
+
+        direct = [r for r in store_rows if abs(float(r["amount"]) - total) < 0.01]
+        if direct:
+            return direct
+        if len(store_rows) > 1 and abs(sum(float(r["amount"]) for r in store_rows) - total) < 0.5:
+            return store_rows
+        return []
 
     def _build_duplicate_receipt_message(self, existing_rows: list[dict]) -> str:
         first_row = existing_rows[0]

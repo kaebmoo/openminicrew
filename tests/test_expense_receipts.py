@@ -658,6 +658,70 @@ def test_type_manually_logs_typed_manually(tmp_path, monkeypatch):
     assert _ocr_row(tid)["user_action"] == "typed_manually"
 
 
+# === กันซ้ำชั้นที่ 2: ยอดเท่ากัน + วันเดียวกัน + ร้านเดียวกัน (รูปคนละไฟล์) ===
+
+def test_receipt_same_store_date_amount_requires_confirm_with_warning(tmp_path, monkeypatch):
+    """ใบเสร็จใบเดิมแต่รูปคนละไฟล์ (hash ไม่ตรง) → ไม่ auto-save, เตือน 'อาจซ้ำ' + ปุ่ม confirm"""
+    from tools.response import InlineKeyboardResponse
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    existing_id = db.add_expense("u1", 80.0, "เครื่องดื่ม", "Cafe B — coffee", expense_date="2026-05-10")
+
+    items = [{"amount": 80.0, "category": "เครื่องดื่ม", "note": "coffee", "confidence": "high",
+              "store": "Cafe B", "receipt_date": "2026-05-10", "is_handwritten": False, "grand_total": None}]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-dup-warn")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-dup-warn"))
+
+    assert isinstance(result, InlineKeyboardResponse)
+    assert len(db.list_expenses("u1")) == 1  # ไม่ auto-save เพิ่ม
+    assert "อาจซ้ำกับรายการที่บันทึกไว้แล้ว" in result.text
+    assert f"#{existing_id}" in result.text
+    cds = [b["callback_data"] for row in result.buttons for b in row]
+    assert any(c.startswith("exp_split:") for c in cds)   # ยังบันทึกได้ถ้า user ยืนยัน
+    assert any(c.startswith("exp_cancel:") for c in cds)
+
+
+def test_receipt_same_amount_date_but_different_store_auto_saves(tmp_path, monkeypatch):
+    """ยอด+วันตรงกันแต่คนละร้าน → ไม่ใช่รายการซ้ำ ต้อง auto-save ตามปกติ"""
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    db.add_expense("u1", 80.0, "เครื่องดื่ม", "Cafe Z — tea", expense_date="2026-05-10")
+
+    items = [{"amount": 80.0, "category": "เครื่องดื่ม", "note": "coffee", "confidence": "high",
+              "store": "Cafe B", "receipt_date": "2026-05-10", "is_handwritten": False, "grand_total": None}]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-dup-other-store")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-dup-other"))
+
+    assert "บันทึกรายจ่ายจากรูปแล้ว" in result
+    assert len(db.list_expenses("u1")) == 2
+
+
+def test_find_similar_matches_sum_of_split_rows(tmp_path, monkeypatch):
+    """ใบเดิมเคยบันทึกแบบแยกหลายรายการ → ผลรวมร้านเดียวกันในวันนั้นเท่ากับยอดใหม่ ต้องเจอ"""
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    db.add_expense("u1", 45.0, "อาหาร", "Food Court — ข้าวผัด", expense_date="2026-05-10")
+    db.add_expense("u1", 25.0, "เครื่องดื่ม", "Food Court — น้ำเปล่า", expense_date="2026-05-10")
+
+    tool = ExpenseTool()
+    matches = tool._find_similar_saved_expenses("u1", "2026-05-10", 70.0, "Food Court")
+    assert len(matches) == 2
+
+    # ยอดไม่ตรงทั้งรายเดี่ยวและผลรวม → ไม่เตือน
+    assert tool._find_similar_saved_expenses("u1", "2026-05-10", 99.0, "Food Court") == []
+    # ร้านไม่รู้จัก → ไม่เตือน (เลี่ยง false positive จากยอดบังเอิญตรง)
+    assert tool._find_similar_saved_expenses("u1", "2026-05-10", 70.0, "?") == []
+    assert tool._find_similar_saved_expenses("u1", "2026-05-10", 70.0, "") == []
+
+
 def test_expired_pending_logs_expired_action(tmp_path, monkeypatch):
     import core.callback_handler as ch
     from core.callback_handler import store_pending_expense, pop_pending_expense, _PENDING_TTL
