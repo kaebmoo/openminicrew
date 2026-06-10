@@ -39,3 +39,4 @@ htmlcov/
 .coverage
 /plan
 AUDIT.md
+/security-reports
