@@ -102,6 +102,10 @@ class ExpenseTool(BaseTool):
 
     _INCOME_KEYWORDS = {"รับเงิน", "รับโอน", "เงินเข้า", "โอนเข้า", "income", "receive", "รับจ่าย"}
 
+    # ไอคอน + label สำหรับแสดง confidence ต่อรายการ (Phase A)
+    _CONF_ICON = {"high": "[v]", "medium": "[~]", "low": "[?]"}
+    _CONF_LABEL = {"high": "สูง", "medium": "ปานกลาง", "low": "ต่ำ"}
+
     def _is_income_intent(self, tokens: list[str]) -> bool:
         """ตรวจว่า tokens มี keyword รายรับ"""
         text_lower = " ".join(tokens).lower()
@@ -363,8 +367,23 @@ class ExpenseTool(BaseTool):
             for it in items:
                 it["receipt_date"] = receipt_date
 
-        # รายการเดียว → บันทึกทันที
-        if len(items) == 1:
+        # คำนวณ confidence metadata ระดับบิล (graceful default = high / ไม่ใช่ลายมือ)
+        overall_confidence = self._compute_overall_confidence(items)
+        is_handwritten = bool(items[0].get("is_handwritten", False))
+        store_confidence = items[0].get("store_confidence", "high")
+        store_raw_guess = items[0].get("store_raw_guess", "")
+        grand_total = items[0].get("grand_total")
+        total = sum(it["amount"] for it in items)
+        sum_matches = (abs(total - grand_total) < 0.5) if grand_total else True
+        low_conf_items = sum(1 for it in items if it.get("confidence") == "low")
+        store_provided = bool(caption.strip())
+
+        # รายการเดียว → auto-save เฉพาะที่ปลอดภัยจริง (Hybrid):
+        # confidence สูง + ไม่ใช่ลายมือ + (ยอดตรงกับบิล หรือ OCR ไม่มี grand_total ให้เทียบ);
+        # นอกนั้น (ลายมือ / ยอดไม่ตรง) ให้ confirm ก่อน
+        # หมายเหตุ (decision): sum_matches = True เมื่อไม่มี grand_total — ตั้งใจถือว่าปลอดภัย
+        # เพราะ slip โอน/บิลรายการเดียวมักไม่มีบรรทัดยอดรวม และตัวเลข high-confidence ที่พิมพ์เชื่อถือได้
+        if len(items) == 1 and overall_confidence == "high" and not is_handwritten and sum_matches:
             item = items[0]
             amount = item["amount"]
             category = item.get("category", "ทั่วไป")
@@ -380,6 +399,16 @@ class ExpenseTool(BaseTool):
                 source_type=self.RECEIPT_SOURCE_TYPE,
                 source_hash=source_hash,
             )
+            telemetry_id = db.log_ocr_attempt(
+                user_id,
+                is_handwritten=is_handwritten,
+                overall_confidence=overall_confidence,
+                total_items=1,
+                low_conf_items=low_conf_items,
+                store_provided=store_provided,
+                sum_matches_total=sum_matches,
+            )
+            db.update_ocr_action(telemetry_id, "split")
             return (
                 f"📸 บันทึกรายจ่ายจากรูปแล้ว\n"
                 f"  [#{expense_id}] {amount:,.2f} บาท — {category}"
@@ -387,44 +416,102 @@ class ExpenseTool(BaseTool):
                 + f"\n  วันที่: {receipt_date}"
             )
 
-        # หลายรายการ → แสดง preview + inline keyboard ให้ user เลือก
+        # หลายรายการ หรือ confidence ไม่สูง → preview + inline keyboard ให้ user ตัดสินใจเอง
         from core.callback_handler import store_pending_expense
         from tools.response import InlineKeyboardResponse
 
+        telemetry_id = db.log_ocr_attempt(
+            user_id,
+            is_handwritten=is_handwritten,
+            overall_confidence=overall_confidence,
+            total_items=len(items),
+            low_conf_items=low_conf_items,
+            store_provided=store_provided,
+            sum_matches_total=sum_matches,
+        )
         pending_id = store_pending_expense(
             user_id,
             items,
             store,
             source_type=self.RECEIPT_SOURCE_TYPE,
             source_hash=source_hash,
+            overall_confidence=overall_confidence,
+            is_handwritten=is_handwritten,
+            store_confidence=store_confidence,
+            store_raw_guess=store_raw_guess,
+            telemetry_id=telemetry_id,
         )
-        total = sum(it["amount"] for it in items)
 
-        lines = [f"📸 อ่านจากรูปได้ {len(items)} รายการ ({store}):" if store else f"📸 อ่านจากรูปได้ {len(items)} รายการ:"]
-        for item in items:
+        # ---- Header + ร้าน + meta ----
+        conf_label = self._CONF_LABEL.get(overall_confidence, "สูง")
+        hw_suffix = " (ลายมือ)" if is_handwritten else ""
+        lines = [f"📸 อ่านบิลแล้ว — ความมั่นใจ: {conf_label}{hw_suffix}"]
+        if store and store != "?":
+            lines.append(f"ร้าน: {store}")
+        elif store_raw_guess:
+            lines.append(f'ร้าน: ? [เดา: "{store_raw_guess}"]')
+        lines.append(f"วันที่: {receipt_date} | รวม {total:,.2f} บาท")
+        lines.append("")
+        lines.append(f"รายการ {len(items)} รายการ:")
+
+        # ---- บรรทัดรายการ พร้อมไอคอน confidence ----
+        for idx, item in enumerate(items, 1):
+            icon = self._CONF_ICON.get(item.get("confidence", "high"), "[v]")
             amount = item["amount"]
             category = item.get("category", "ทั่วไป")
-            note = item.get("note", "")
-            lines.append(f"  • {amount:,.2f} — {category}" + (f": {note}" if note else ""))
-        lines.append(f"\nรวม {total:,.2f} บาท")
-        lines.append(f"วันที่: {receipt_date}")
-        lines.append("\nเลือกวิธีบันทึก:")
+            note = item.get("note", "") or "?"
+            line = f"{idx}. {icon} {note} — {amount:,.2f} ({category})"
+            raw_guess = item.get("raw_guess", "")
+            if item.get("confidence") == "low" and raw_guess:
+                line += f' [เดา: "{raw_guess}"]'
+            lines.append(line)
 
+        # ---- หมายเหตุยอดรวม ----
+        if grand_total:
+            lines.append("")
+            if sum_matches:
+                lines.append(f"รวมรายการ {total:,.2f} — ตรงกับยอดในบิล")
+            else:
+                lines.append(f"⚠️ ยอดรวมรายการ {total:,.2f} ไม่ตรงกับยอดในบิล ({grand_total:,.2f})")
+
+        lines.append("")
+        lines.append("เลือกวิธีบันทึก:")
         preview_text = "\n".join(lines)
-        buttons = [
-            [
-                {"text": f"📋 แยก {len(items)} รายการ", "callback_data": f"exp_split:{pending_id}"},
-                {"text": "📦 รวม 1 รายการ", "callback_data": f"exp_combine:{pending_id}"},
-            ],
-            [
-                {"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"},
-            ],
-        ]
+
+        # ---- ปุ่มตาม confidence (Option C) ----
+        if overall_confidence == "high" and len(items) == 1:
+            # high แต่ไม่เข้าเงื่อนไข auto-save (ลายมือ/ยอดไม่ตรง) → confirm ปุ่มเดี่ยว
+            buttons = [
+                [
+                    {"text": "✅ บันทึก", "callback_data": f"exp_split:{pending_id}"},
+                    {"text": "✏️ แก้รายการ", "callback_data": f"exp_edit:{pending_id}"},
+                ],
+                [{"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"}],
+            ]
+        elif overall_confidence == "high":
+            buttons = [
+                [
+                    {"text": f"📋 แยก {len(items)} รายการ", "callback_data": f"exp_split:{pending_id}"},
+                    {"text": "📦 รวม 1 รายการ", "callback_data": f"exp_combine:{pending_id}"},
+                ],
+                [
+                    {"text": "✏️ แก้รายการ", "callback_data": f"exp_edit:{pending_id}"},
+                    {"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"},
+                ],
+            ]
+        else:
+            buttons = [
+                [{"text": "✏️ แก้รายการ", "callback_data": f"exp_edit:{pending_id}"}],
+                [
+                    {"text": "⌨️ พิมพ์เอง", "callback_data": f"exp_type_manually:{pending_id}"},
+                    {"text": "❌ ยกเลิก", "callback_data": f"exp_cancel:{pending_id}"},
+                ],
+            ]
 
         return InlineKeyboardResponse(
             text=preview_text,
             buttons=buttons,
-            memory_text=f"📸 อ่านจากรูป {len(items)} รายการ รวม {total:,.2f} บาท (รอ user เลือกวิธีบันทึก)",
+            memory_text=f"📸 อ่านจากรูป {len(items)} รายการ รวม {total:,.2f} บาท ความมั่นใจ {conf_label} (รอ user เลือก)",
         )
 
     async def _extract_expense_from_image(self, image_bytes: bytes, hint: str = "") -> list | str | None:
@@ -520,6 +607,12 @@ class ExpenseTool(BaseTool):
             if "items" in data and isinstance(data["items"], list):
                 store = data.get("store", "")
                 receipt_date = self._normalize_receipt_date(data.get("receipt_date"))
+                # Bill-level confidence metadata (Phase A) — attach to each item
+                # (เหมือน store/receipt_date) เพื่อให้ผ่าน discount/ratio transforms ได้
+                is_handwritten = bool(data.get("is_handwritten", False))
+                store_confidence = self._normalize_confidence(data.get("store_confidence"))
+                store_raw_guess = (data.get("store_raw_guess") or "").strip()
+                grand_total = self._safe_grand_total(data.get("grand_total"))
                 items = []
                 for it in data["items"]:
                     if isinstance(it, dict):
@@ -527,6 +620,10 @@ class ExpenseTool(BaseTool):
                         if normalized:
                             normalized["store"] = store
                             normalized["receipt_date"] = receipt_date
+                            normalized["is_handwritten"] = is_handwritten
+                            normalized["store_confidence"] = store_confidence
+                            normalized["store_raw_guess"] = store_raw_guess
+                            normalized["grand_total"] = grand_total
                             items.append(normalized)
                 if not items:
                     return None
@@ -692,8 +789,38 @@ class ExpenseTool(BaseTool):
         return parsed.isoformat()
 
     @staticmethod
+    def _normalize_confidence(value) -> str:
+        """Clamp confidence จาก Gemini → 'high'|'medium'|'low' (default high ถ้าไม่ถูกต้อง)"""
+        if isinstance(value, str) and value.strip().lower() in ("high", "medium", "low"):
+            return value.strip().lower()
+        return "high"
+
+    @staticmethod
+    def _compute_overall_confidence(items: list[dict]) -> str:
+        """สรุป confidence รวมทั้งบิลจาก per-item confidence (deterministic ไม่พึ่ง Gemini)"""
+        n = len(items)
+        if n == 0:
+            return "high"
+        low = sum(1 for it in items if it.get("confidence") == "low")
+        med = sum(1 for it in items if it.get("confidence") == "medium")
+        if low / n > 0.30:
+            return "low"
+        if (low + med) / n > 0.50:
+            return "medium"
+        return "high"
+
+    @staticmethod
+    def _safe_grand_total(value) -> float | None:
+        """แปลง grand_total → float ที่ > 0 หรือ None"""
+        try:
+            gt = float(value)
+        except (TypeError, ValueError):
+            return None
+        return gt if gt > 0 else None
+
+    @staticmethod
     def _normalize_item(data: dict) -> dict | None:
-        """Normalize a single expense item dict → {amount, category, note} or None"""
+        """Normalize a single expense item dict → {amount, category, note, confidence, raw_guess} or None"""
         try:
             amount = float(data.get("amount", 0))
         except (ValueError, TypeError):
@@ -704,6 +831,8 @@ class ExpenseTool(BaseTool):
             "amount": amount,
             "category": data.get("category", "ทั่วไป"),
             "note": data.get("note", data.get("name", "")),
+            "confidence": ExpenseTool._normalize_confidence(data.get("confidence")),
+            "raw_guess": (data.get("raw_guess") or "").strip(),
         }
 
     def _usage(self) -> str:

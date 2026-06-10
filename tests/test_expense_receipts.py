@@ -367,10 +367,310 @@ def test_extract_expense_from_image_does_not_log_plaintext_response(monkeypatch)
          patch("tools.expense.log.warning") as mock_log_warning:
         result = asyncio.run(tool.extract_for_test(b"fake-image-bytes"))
 
-    assert result == [{"amount": 120.0, "category": "อาหาร", "note": "เลขบัตร 1234", "store": "Secret Shop", "receipt_date": ""}]
+    assert result == [{
+        "amount": 120.0, "category": "อาหาร", "note": "เลขบัตร 1234",
+        "confidence": "high", "raw_guess": "",
+        "store": "Secret Shop", "receipt_date": "",
+        "is_handwritten": False, "store_confidence": "high",
+        "store_raw_guess": "", "grand_total": None,
+    }]
     info_messages = " ".join(str(call.args) for call in mock_log_info.call_args_list)
     warning_messages = " ".join(str(call.args) for call in mock_log_warning.call_args_list)
     assert response_text not in info_messages
     assert response_text not in warning_messages
     assert "Secret Shop" not in info_messages
     assert "เลขบัตร 1234" not in info_messages
+
+
+# === Phase A: confidence parsing, button layout, telemetry ===
+
+def test_normalize_confidence_clamps_to_enum():
+    assert ExpenseTool._normalize_confidence("high") == "high"
+    assert ExpenseTool._normalize_confidence("LOW") == "low"
+    assert ExpenseTool._normalize_confidence(" Medium ") == "medium"
+    # invalid / missing → default high
+    assert ExpenseTool._normalize_confidence("0.9") == "high"
+    assert ExpenseTool._normalize_confidence(None) == "high"
+    assert ExpenseTool._normalize_confidence("") == "high"
+
+
+def test_compute_overall_confidence_thresholds():
+    high2 = [{"confidence": "high"}, {"confidence": "high"}]
+    assert ExpenseTool._compute_overall_confidence(high2) == "high"
+    # 1/2 low = 50% > 30% → low
+    assert ExpenseTool._compute_overall_confidence([{"confidence": "high"}, {"confidence": "low"}]) == "low"
+    # no low, but low+med 2/3 > 50% → medium
+    assert ExpenseTool._compute_overall_confidence(
+        [{"confidence": "high"}, {"confidence": "medium"}, {"confidence": "medium"}]
+    ) == "medium"
+    # missing confidence treated as not-low/not-med → high
+    assert ExpenseTool._compute_overall_confidence([{}, {}]) == "high"
+    assert ExpenseTool._compute_overall_confidence([]) == "high"
+
+
+def _photo_extract(items, img=b"img"):
+    """helper: patch download + _extract_expense_from_image แล้วรัน execute
+
+    img ต้องไม่ซ้ำข้ามเทสต์ — source_hash อิงจาก image bytes และ _pending_expenses
+    เป็น module-global ที่ค้างข้ามเทสต์ (เลียนแบบ convention เดิมในไฟล์นี้)
+    """
+    tool = ExpenseTool()
+    return tool, patch("interfaces.telegram_common.download_telegram_photo", return_value=img), \
+        patch.object(tool, "_extract_expense_from_image", new=AsyncMock(return_value=items))
+
+
+def test_low_confidence_multi_item_shows_edit_manual_buttons(tmp_path, monkeypatch):
+    from tools.response import InlineKeyboardResponse
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    items = [
+        {"amount": 90.0, "category": "เครื่องดื่ม", "note": "เบียร์", "confidence": "high",
+         "store": "ร้าน", "receipt_date": "2026-05-10", "is_handwritten": True,
+         "store_confidence": "low", "store_raw_guess": "ร้านเดา", "grand_total": None},
+        {"amount": 10.0, "category": "เครื่องดื่ม", "note": "?", "confidence": "low", "raw_guess": "น้ำเล็ก",
+         "store": "ร้าน", "receipt_date": "2026-05-10", "is_handwritten": True,
+         "store_confidence": "low", "store_raw_guess": "ร้านเดา", "grand_total": None},
+    ]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-low")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-low"))
+
+    assert isinstance(result, InlineKeyboardResponse)
+    flat = [b["callback_data"] for row in result.buttons for b in row]
+    assert any(cd.startswith("exp_edit:") for cd in flat)
+    assert any(cd.startswith("exp_type_manually:") for cd in flat)
+    assert any(cd.startswith("exp_cancel:") for cd in flat)
+    # low/medium → no split/combine
+    assert not any(cd.startswith("exp_split:") for cd in flat)
+    assert not any(cd.startswith("exp_combine:") for cd in flat)
+    # confidence icon + raw_guess hint shown
+    assert "[?]" in result.text and 'เดา: "น้ำเล็ก"' in result.text
+    # telemetry row written, action still NULL (waiting on user)
+    with db.get_conn() as conn:
+        row = dict(conn.execute("SELECT * FROM ocr_telemetry ORDER BY id DESC LIMIT 1").fetchone())
+    assert row["overall_confidence"] == "low" and row["is_handwritten"] == 1
+    assert row["total_items"] == 2 and row["low_conf_items"] == 1 and row["user_action"] is None
+
+
+def test_high_confidence_multi_item_shows_split_combine_edit(tmp_path, monkeypatch):
+    from tools.response import InlineKeyboardResponse
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    items = [
+        {"amount": 100.0, "category": "อาหาร", "note": "ข้าวผัด", "confidence": "high",
+         "store": "ร้าน X", "receipt_date": "2026-05-10"},
+        {"amount": 50.0, "category": "เครื่องดื่ม", "note": "ชา", "confidence": "high",
+         "store": "ร้าน X", "receipt_date": "2026-05-10"},
+    ]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-high")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-high"))
+
+    assert isinstance(result, InlineKeyboardResponse)
+    flat = [b["callback_data"] for row in result.buttons for b in row]
+    assert any(cd.startswith("exp_split:") for cd in flat)
+    assert any(cd.startswith("exp_combine:") for cd in flat)
+    assert any(cd.startswith("exp_edit:") for cd in flat)
+    assert any(cd.startswith("exp_cancel:") for cd in flat)
+
+
+def test_single_low_confidence_item_is_not_auto_saved(tmp_path, monkeypatch):
+    from tools.response import InlineKeyboardResponse
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    items = [{"amount": 60.0, "category": "อาหาร", "note": "?", "confidence": "low", "raw_guess": "ข้าวเดา",
+              "store": "", "receipt_date": "2026-05-10", "is_handwritten": True, "grand_total": None}]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-single-low")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-single-low"))
+
+    # ไม่ auto-save → ยังไม่มีรายการใน DB, ได้ preview + ปุ่มแทน
+    assert isinstance(result, InlineKeyboardResponse)
+    assert db.list_expenses("u1") == []
+    flat = [b["callback_data"] for row in result.buttons for b in row]
+    assert any(cd.startswith("exp_type_manually:") for cd in flat)
+
+
+def test_single_high_confidence_item_auto_saves_and_logs_telemetry(tmp_path, monkeypatch):
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    items = [{"amount": 80.0, "category": "เครื่องดื่ม", "note": "coffee", "confidence": "high",
+              "store": "Cafe B", "receipt_date": "2026-05-10", "is_handwritten": False, "grand_total": None}]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-single-high")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-single-high"))
+
+    assert "บันทึกรายจ่ายจากรูปแล้ว" in result
+    assert len(db.list_expenses("u1")) == 1
+    with db.get_conn() as conn:
+        row = dict(conn.execute("SELECT * FROM ocr_telemetry ORDER BY id DESC LIMIT 1").fetchone())
+    assert row["user_action"] == "split" and row["total_items"] == 1 and row["overall_confidence"] == "high"
+
+
+def _single_confirm_buttons(result):
+    return [b for row in result.buttons for b in row]
+
+
+def test_single_high_handwritten_item_requires_confirm(tmp_path, monkeypatch):
+    """Hybrid: 1 รายการ high แต่เป็นลายมือ → ไม่ auto-save, แสดงปุ่ม [✅ บันทึก][✏️ แก้][❌ ยกเลิก]"""
+    from tools.response import InlineKeyboardResponse
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    items = [{"amount": 80.0, "category": "อาหาร", "note": "ข้าว", "confidence": "high",
+              "store": "ร้าน", "receipt_date": "2026-05-10", "is_handwritten": True, "grand_total": None}]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-hw-single")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-hw"))
+
+    assert isinstance(result, InlineKeyboardResponse)
+    assert db.list_expenses("u1") == []  # ไม่ auto-save
+    btns = _single_confirm_buttons(result)
+    labels = [b["text"] for b in btns]
+    cds = [b["callback_data"] for b in btns]
+    assert "✅ บันทึก" in labels
+    assert any(c.startswith("exp_split:") for c in cds)   # บันทึก = exp_split
+    assert any(c.startswith("exp_edit:") for c in cds)
+    assert not any(c.startswith("exp_combine:") for c in cds)       # 1 รายการ ไม่มีรวม/แยกซ้ำซ้อน
+    assert not any(c.startswith("exp_type_manually:") for c in cds)  # high → ไม่ใช่ปุ่มพิมพ์เอง
+
+
+def test_single_high_sum_mismatch_requires_confirm(tmp_path, monkeypatch):
+    """Hybrid: 1 รายการ high พิมพ์ แต่ยอดไม่ตรงกับบิล → ต้อง confirm"""
+    from tools.response import InlineKeyboardResponse
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    # amount 80 แต่ grand_total 200 → sum ไม่ตรง
+    items = [{"amount": 80.0, "category": "อาหาร", "note": "ข้าว", "confidence": "high",
+              "store": "ร้าน", "receipt_date": "2026-05-10", "is_handwritten": False, "grand_total": 200.0}]
+    tool, p_dl, p_ex = _photo_extract(items, img=b"img-mismatch-single")
+    with p_dl, p_ex:
+        result = asyncio.run(tool.execute("u1", "__photo:file-mm"))
+
+    assert isinstance(result, InlineKeyboardResponse)
+    assert db.list_expenses("u1") == []
+    assert "ไม่ตรงกับยอดในบิล" in result.text
+    cds = [b["callback_data"] for b in _single_confirm_buttons(result)]
+    assert any(c.startswith("exp_split:") for c in cds)
+
+
+# === Phase A: terminal action telemetry wiring (Step 10) ===
+
+def _ocr_row(telemetry_id):
+    with db.get_conn() as conn:
+        return dict(conn.execute("SELECT * FROM ocr_telemetry WHERE id = ?", (telemetry_id,)).fetchone())
+
+
+def test_split_logs_split_action(tmp_path, monkeypatch):
+    from core.callback_handler import _handle_expense_split, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", False, "high", 2, 0, False, True)
+    pid = store_pending_expense(
+        "u1",
+        [{"amount": 40.0, "category": "อาหาร", "note": "ข้าว"}, {"amount": 20.0, "category": "เครื่องดื่ม", "note": "ชา"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-split").hexdigest(), telemetry_id=tid,
+    )
+    _handle_expense_split("u1", pid)
+    assert _ocr_row(tid)["user_action"] == "split"
+
+
+def test_split_after_edit_logs_edited_then_split(tmp_path, monkeypatch):
+    import core.callback_handler as ch
+    from core.callback_handler import _handle_expense_split, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", True, "low", 2, 1, False, False)
+    pid = store_pending_expense(
+        "u1",
+        [{"amount": 40.0, "category": "อาหาร", "note": "ข้าว"}, {"amount": 20.0, "category": "เครื่องดื่ม", "note": "ชา"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-edit-split").hexdigest(), telemetry_id=tid,
+    )
+    ch._pending_expenses[pid]["edit_history"] = ["line 2: -> ชาเย็น"]
+    ch._pending_expenses[pid]["free_text_used"] = True
+    _handle_expense_split("u1", pid)
+    row = _ocr_row(tid)
+    assert row["user_action"] == "edited_then_split"
+    assert row["edits_count"] == 1 and row["free_text_edit_used"] == 1
+
+
+def test_combine_logs_combine_action(tmp_path, monkeypatch):
+    from core.callback_handler import _handle_expense_combine, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", False, "high", 2, 0, False, True)
+    pid = store_pending_expense(
+        "u1",
+        [{"amount": 40.0, "category": "อาหาร", "note": "ข้าว"}, {"amount": 20.0, "category": "เครื่องดื่ม", "note": "ชา"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-combine").hexdigest(), telemetry_id=tid,
+    )
+    _handle_expense_combine("u1", pid)
+    assert _ocr_row(tid)["user_action"] == "combine"
+
+
+def test_cancel_logs_canceled_action(tmp_path, monkeypatch):
+    from core.callback_handler import handle_callback, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", True, "low", 2, 2, False, False)
+    pid = store_pending_expense(
+        "u1", [{"amount": 10.0, "category": "อาหาร", "note": "?"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-cancel").hexdigest(), telemetry_id=tid,
+    )
+    with patch("interfaces.telegram_common.edit_message_text", return_value=True), \
+         patch("interfaces.telegram_common.answer_callback_query", return_value=True):
+        asyncio.run(handle_callback("u1", f"exp_cancel:{pid}", chat_id=5, message_id=6, callback_id="cb"))
+    assert _ocr_row(tid)["user_action"] == "canceled"
+
+
+def test_type_manually_logs_typed_manually(tmp_path, monkeypatch):
+    from core.callback_handler import _handle_expense_type_manually, store_pending_expense
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", True, "low", 3, 3, False, False)
+    pid = store_pending_expense(
+        "u1", [{"amount": 10.0, "category": "อาหาร", "note": "?"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-manual").hexdigest(), telemetry_id=tid,
+    )
+    result = _handle_expense_type_manually("u1", pid)
+    assert "พิมพ์รายการเองได้เลย" in result
+    assert _ocr_row(tid)["user_action"] == "typed_manually"
+
+
+def test_expired_pending_logs_expired_action(tmp_path, monkeypatch):
+    import core.callback_handler as ch
+    from core.callback_handler import store_pending_expense, pop_pending_expense, _PENDING_TTL
+    key = Fernet.generate_key().decode()
+    _init_temp_db(tmp_path, monkeypatch, encryption_key=key)
+    db.upsert_user("u1", "chat-1", "User One")
+
+    tid = db.log_ocr_attempt("u1", True, "low", 2, 1, False, True)
+    pid = store_pending_expense(
+        "u1", [{"amount": 10.0, "category": "อาหาร", "note": "?"}],
+        "Shop", source_hash=hashlib.sha256(b"tele-expire").hexdigest(), telemetry_id=tid,
+    )
+    # บังคับให้หมดอายุ
+    ch._pending_expenses[pid]["created_at"] -= (_PENDING_TTL + 10)
+    assert pop_pending_expense(pid, "u1") is None
+    assert _ocr_row(tid)["user_action"] == "expired"
