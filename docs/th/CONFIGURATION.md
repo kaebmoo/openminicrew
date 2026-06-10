@@ -191,8 +191,18 @@ flow ปัจจุบัน:
 | `WORK_IMAP_PASSWORD_ROTATION_DAYS` | `90` | รอบ rotate เชิงแนะนำสำหรับ IMAP password ที่บันทึกไว้ |
 | `WORK_IMAP_USER_ROTATION_DAYS` | `180` | รอบ rotate เชิงแนะนำสำหรับ IMAP username ที่บันทึกไว้ |
 | `WORK_IMAP_HOST_ROTATION_DAYS` | `365` | รอบ rotate เชิงแนะนำสำหรับ IMAP host ที่บันทึกไว้ |
+| `OCR_TELEMETRY_SALT` | `(none)` | salt สำหรับ hash user id ใน telemetry ของ receipt OCR (ดูรายละเอียดด้านล่าง) |
 | `MISSED_JOB_WINDOW_HOURS` | `12` | ช่วงเวลาตรวจจับ cron job ที่พลาด |
 | `HEARTBEAT_INTERVAL_MINUTES` | `30` | ระยะ heartbeat ของ scheduler |
 | `DB_PATH` | `data/openminicrew.db` | กำหนดตำแหน่ง database file |
 
 การรายงานเรื่อง rotation ของ API key ใน rollout ปัจจุบันเป็น advisory only เท่านั้น: ระบบจะแจ้งใน `/mykeys`, `/privacy`, และ `/health` แต่ยังไม่ block key เดิมอัตโนมัติ
+
+### OCR telemetry salt
+
+ระบบ receipt OCR เก็บ telemetry คุณภาพแบบนิรนามลงตาราง `ocr_telemetry` (ระดับ confidence, จำนวนรายการ, และ action ที่ผู้ใช้เลือก — save/edit/cancel) โดยไม่เก็บเนื้อหาใบเสร็จ และระบุผู้ใช้ด้วย `SHA256(user_id + OCR_TELEMETRY_SALT)` เท่านั้น ไม่เก็บ user id ดิบ
+
+- **ทำไมต้องมี salt:** Telegram chat id เป็นตัวเลขช่วงแคบ ถ้า hash โดยไม่มี salt สามารถไล่เดา id มา hash เทียบจนรู้ตัวผู้ใช้ได้ — salt ลับทำให้การไล่เดาทำไม่ได้
+- **ถ้าไม่ตั้ง:** telemetry ยังทำงานปกติ แค่ log warning ครั้งเดียวและ hash โดยไม่มี salt (ป้องกัน reverse ได้น้อยลง) — เป็น analytics เท่านั้น ไม่ใช่ security-critical
+- **สร้างค่าครั้งเดียว:** `python3 -c "import secrets; print(secrets.token_hex(16))"`
+- **ตั้งแล้วอย่าเปลี่ยน:** เปลี่ยน salt = hash ของผู้ใช้ทุกคนเปลี่ยนตาม ข้อมูล telemetry ก่อนและหลังเปลี่ยนจะเชื่อมโยงเป็นผู้ใช้ (นิรนาม) คนเดิมไม่ได้อีก

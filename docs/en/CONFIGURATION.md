@@ -194,11 +194,21 @@ Production notes:
 | `WORK_IMAP_PASSWORD_ROTATION_DAYS` | `90` | Advisory rotation period for stored IMAP passwords |
 | `WORK_IMAP_USER_ROTATION_DAYS` | `180` | Advisory rotation period for stored IMAP usernames |
 | `WORK_IMAP_HOST_ROTATION_DAYS` | `365` | Advisory rotation period for stored IMAP hosts |
+| `OCR_TELEMETRY_SALT` | `(none)` | Salt for pseudonymizing user ids in receipt OCR telemetry (see below) |
 | `MISSED_JOB_WINDOW_HOURS` | `12` | Window to catch missed cron jobs |
 | `HEARTBEAT_INTERVAL_MINUTES` | `30` | Scheduler heartbeat interval |
 | `DB_PATH` | `data/openminicrew.db` | Override database file location |
 
 API key rotation reporting is advisory only in the current rollout. Overdue keys are reported in `/mykeys`, `/privacy`, and `/health`, but existing keys are not blocked automatically.
+
+### OCR telemetry salt
+
+Receipt OCR records anonymous quality telemetry in the `ocr_telemetry` table (confidence level, item counts, and which action the user took — save/edit/cancel). No receipt content is stored, and the user is identified only by `SHA256(user_id + OCR_TELEMETRY_SALT)`, never by the raw id.
+
+- **Why a salt:** Telegram chat ids are small numbers, so an unsalted hash can be reversed by simply enumerating candidate ids. A secret salt makes that infeasible.
+- **If unset:** telemetry still works; the app logs a one-time warning and hashes without a salt (weaker pseudonymization). Analytics only — not security-critical.
+- **Generate once:** `python3 -c "import secrets; print(secrets.token_hex(16))"`
+- **Do not change it later:** changing the salt changes every user's hash, so telemetry collected before and after the change can no longer be linked to the same (pseudonymous) user.
 
 For encryption key rollover:
 

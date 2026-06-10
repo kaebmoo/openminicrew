@@ -185,6 +185,7 @@ Current direction:
 - structured log fields such as kind, reference hash, and payload size are preferred over raw text
 - processed email storage has been minimized to only a deduplication message ID and a boolean has-subject flag; subject, sender address, and sender domain are no longer stored
 - tool log safety fields avoid retaining raw input and output when a safer representation is sufficient
+- receipt OCR telemetry (`ocr_telemetry`) is pseudonymous: it stores a salted SHA-256 hash of the user id (`OCR_TELEMETRY_SALT`) plus confidence/action counters only — no raw user id and no receipt content (see CONFIGURATION.md, "OCR telemetry salt")
 
 This does not mean the system stores no sensitive operational data. It means the default direction is to reduce storage wherever the feature does not require the full payload.
 
