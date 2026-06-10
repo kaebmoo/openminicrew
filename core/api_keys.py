@@ -48,6 +48,41 @@ _PLACEHOLDER_MARKERS = {
 }
 
 
+# command ที่มี secret ใน argument — ต้อง redact ก่อน log หรือบันทึก chat history
+SECRET_COMMANDS = ("/setkey",)
+
+REDACTED_PLACEHOLDER = "[REDACTED]"
+
+
+def is_secret_command(text: str) -> bool:
+    lowered = (text or "").lstrip().lower()
+    return any(
+        lowered == cmd or lowered.startswith(cmd + " ") or lowered.startswith(cmd + "@")
+        for cmd in SECRET_COMMANDS
+    )
+
+
+def redact_secret_text(text: str) -> str:
+    """แทนค่า secret ใน command อย่าง `/setkey <service> <value>` ด้วย placeholder
+
+    ใช้กับทุก path ที่ persist ข้อความ user (log file, chat_history, tool_log)
+    เพื่อไม่ให้ API key ค้างอยู่ในระบบหลังลบข้อความ Telegram แล้ว
+    """
+    if not is_secret_command(text):
+        return text
+    parts = text.strip().split(None, 2)
+    if len(parts) >= 3:
+        return f"{parts[0]} {parts[1]} {REDACTED_PLACEHOLDER}"
+    return text
+
+
+def redact_secret_tool_args(tool_name: str, tool_args: dict) -> dict:
+    """redact parameter ที่เป็น secret ของ tool ก่อน log (เช่น apikeys.value)"""
+    if tool_name == "apikeys" and isinstance(tool_args, dict) and tool_args.get("value"):
+        return {**tool_args, "value": REDACTED_PLACEHOLDER}
+    return tool_args
+
+
 def normalize_service(service: str) -> str:
     return service.strip().lower()
 

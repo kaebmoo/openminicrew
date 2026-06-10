@@ -29,18 +29,20 @@
 | `WEBHOOK_HOST` | `(none)` | domain (เช่น `https://bot.example.com`) |
 | `WEBHOOK_PORT` | `8443` | port สำหรับ FastAPI |
 | `WEBHOOK_PATH` | `/bot/webhook` | URL path |
-| `TELEGRAM_WEBHOOK_SECRET` | `(none)` | secret token สำหรับตรวจ header |
+| `TELEGRAM_WEBHOOK_SECRET` | `(none)` | secret token สำหรับตรวจ header — **จำเป็น**ใน webhook mode: ไม่ตั้ง = boot ไม่ผ่าน และ request ที่ header ไม่ตรงถูกปฏิเสธ 403 |
+| `HEALTH_DETAIL_TOKEN` | `(none)` | token สำหรับดู `/health` แบบละเอียดผ่าน header `X-Health-Token` — ไม่ตั้ง = ตอบแค่ liveness ขั้นต่ำ |
 
 ### Health endpoint และพฤติกรรม readiness
 
 เมื่อ `BOT_MODE=webhook` ระบบจะเปิด `GET /health` สำหรับ operator, reverse proxy และ uptime monitor
 
-`/health` จะรายงาน:
+แบบไม่มี auth จะได้เฉพาะ liveness ขั้นต่ำ: `status`, `bot_mode`, `uptime_seconds`, `timestamp`
 
-- สถานะรวมของระบบ
+ถ้าส่ง header `X-Health-Token` ตรงกับ `HEALTH_DETAIL_TOKEN` จะรายงานเพิ่ม:
+
 - startup readiness checks รวมถึง `ENCRYPTION_KEY` readiness
-- สรุป API key hygiene
-- สุขภาพของ database และ LLM
+- สรุป API key hygiene และ security audit
+- สุขภาพของ database และ LLM, การเชื่อมต่อ LLM แบบ live
 - ข้อมูล scheduler run ล่าสุด
 
 ความหมายของ status:

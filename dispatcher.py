@@ -12,6 +12,7 @@ from core.memory import (
     ensure_conversation,
 )
 from core.user_manager import get_preference
+from core.api_keys import redact_secret_text, redact_secret_tool_args
 from core.concurrency import user_rate_limiter, request_dedup
 from core import db
 from core.prompt_loader import load_prompt
@@ -119,7 +120,7 @@ async def dispatch(user_id: str, user: dict, text: str, chat_id: str | int = Non
                 user_id,
                 tool.name,
                 status="failed",
-                **db.make_log_field("input", f"{command or tool.name} {args}".strip(), kind="tool_command"),
+                **db.make_log_field("input", redact_secret_text(f"{command or tool.name} {args}".strip()), kind="tool_command"),
                 **db.make_error_fields(str(e)),
             )
             return f"เกิดข้อผิดพลาด: {e}\nกรุณาลองใหม่", tool.name, None, 0
@@ -235,7 +236,8 @@ async def _dispatch_with_retry(
         # ---- Case B: LLM เรียก tool ----
         tool_name = resp["tool_call"]["name"]
         tool_args = resp["tool_call"].get("args", {})
-        log.info(f"[dispatch] attempt {attempt}: tool_call={tool_name}({tool_args})")
+        safe_args = redact_secret_tool_args(tool_name, tool_args)
+        log.info(f"[dispatch] attempt {attempt}: tool_call={tool_name}({safe_args})")
 
         selected_tool = registry.get_tool(tool_name)
 
@@ -266,14 +268,14 @@ async def _dispatch_with_retry(
                 user_id,
                 tool_name,
                 status="failed",
-                **db.make_log_field("input", str(tool_args), kind="tool_call_args"),
+                **db.make_log_field("input", str(safe_args), kind="tool_call_args"),
                 **db.make_error_fields(str(e)),
             )
 
             if attempt >= MAX_RETRIES:
                 break
 
-            messages.append({"role": "assistant", "content": f"[เรียก {tool_name}({tool_args}) → error]"})
+            messages.append({"role": "assistant", "content": f"[เรียก {tool_name}({safe_args}) → error]"})
             messages.append({"role": "user", "content": (
                 f"tool '{tool_name}' ทำงานไม่สำเร็จ: {str(e)}\n"
                 f"กรุณาลองวิธีอื่น ใช้ tool อื่น หรือแจ้ง user ว่าเกิดปัญหาอะไร"
@@ -386,7 +388,9 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
     from interfaces.telegram_common import send_message, send_tool_response, TypingIndicator
     from tools.response import MediaResponse
 
-    log.info(f"[process_message] user={user_id}, chat={chat_id}, text={text[:80]}")
+    # redact ก่อน persist ทุก path — /setkey value ห้ามค้างใน log/chat_history
+    safe_text = redact_secret_text(text)
+    log.info(f"[process_message] user={user_id}, chat={chat_id}, text={safe_text[:80]}")
 
     # ---- Dedup: ข้อความซ้ำภายใน 5 วินาที → skip ----
     if request_dedup.is_duplicate(user_id, text):
@@ -403,13 +407,13 @@ async def process_message(user_id: str, user: dict, chat_id: str | int, text: st
         # จัดการ conversation
         conv_id = ensure_conversation(user_id)
 
-        save_user_message(user_id, text, conversation_id=conv_id)
+        save_user_message(user_id, safe_text, conversation_id=conv_id)
 
         # Auto-set title จากข้อความแรกของ user (ถ้ายังไม่มี title)
         if conv_id:
             existing_title = db.get_conversation_title(conv_id)
             if not existing_title:
-                db.update_conversation(conv_id, title=text[:50])
+                db.update_conversation(conv_id, title=safe_text[:50])
             else:
                 db.update_conversation(conv_id)
 

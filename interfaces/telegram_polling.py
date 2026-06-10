@@ -270,7 +270,8 @@ def _handle_update(update: dict):
         log.info("Empty text from chat_id: %s (message keys: %s)", chat_id, list(message.keys()))
         return
 
-    log.info("Processing text from %s: %s", user_id, text[:80])
+    from core.api_keys import redact_secret_text
+    log.info("Processing text from %s: %s", user_id, redact_secret_text(text)[:80])
 
     # Run async dispatcher in sync context
     from dispatcher import process_message

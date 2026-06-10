@@ -143,15 +143,9 @@ class WorkEmailTool(BaseTool):
         return host, username, password
 
     def _connect_imap(self, host: str, username: str, password: str) -> imaplib.IMAP4_SSL:
-        try:
-            conn = imaplib.IMAP4_SSL(host, WORK_IMAP_PORT)
-        except ssl.SSLCertVerificationError:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            conn = imaplib.IMAP4_SSL(host, WORK_IMAP_PORT, ssl_context=ctx)
-            log.warning("IMAP SSL: certificate verification disabled")
-            
+        # fail closed: certificate ตรวจไม่ผ่าน = หยุดทันที ห้าม fallback เป็น CERT_NONE
+        # (CERT_NONE เปิดทาง MITM ดูด IMAP credential)
+        conn = imaplib.IMAP4_SSL(host, WORK_IMAP_PORT)
         conn.login(username, password)
         return conn
 
@@ -306,44 +300,60 @@ class WorkEmailTool(BaseTool):
         return self._decode_bytes(data, charset)[:3000]
 
     def _process_attachments(self, msg: email.message.Message) -> list[AttachmentData]:
+        max_bytes = WORK_EMAIL_ATTACHMENT_MAX_MB * 1024 * 1024
         attachments = []
         for part in msg.walk():
+            if len(attachments) >= 5:  # Limit reports
+                break
+
             if part.get_content_maintype() == "multipart":
                 continue
-            
+
             content_disposition = str(part.get("Content-Disposition"))
             if "attachment" not in content_disposition and "inline" not in content_disposition:
                 continue
-                
+
             filename = part.get_filename()
             if not filename:
                 continue
-                
-            filename = self._decode_header(urllib.parse.unquote(filename))
-            payload = part.get_payload(decode=True)
-            if not payload:
-                continue
 
-            size_bytes = len(payload)
+            filename = self._decode_header(urllib.parse.unquote(filename))
             mime_type = part.get_content_type()
-            
-            att = AttachmentData(filename=filename, size_bytes=size_bytes, mime_type=mime_type)
-            
+
+            att = AttachmentData(filename=filename, size_bytes=0, mime_type=mime_type)
+
             extracted_count = sum(1 for a in attachments if a.status == "extracted")
             if extracted_count >= 3:
                 att.content = None
                 att.status = "skipped_limit"
                 attachments.append(att)
-                if len(attachments) >= 5: # Limit reports
-                    break
                 continue
-                
-            if size_bytes > WORK_EMAIL_ATTACHMENT_MAX_MB * 1024 * 1024:
+
+            # เช็คขนาดจาก encoded payload ก่อน decode — กัน allocate หน่วยความจำ
+            # ให้ payload ใหญ่เกิน limit (base64 พองขึ้น ~4/3 → ประมาณขนาดจริงด้วย *3//4)
+            encoded_payload = part.get_payload()
+            if isinstance(encoded_payload, str):
+                approx_bytes = len(encoded_payload) * 3 // 4
+                if approx_bytes > max_bytes:
+                    att.size_bytes = approx_bytes
+                    att.content = None
+                    att.status = "too_large"
+                    attachments.append(att)
+                    continue
+
+            payload = part.get_payload(decode=True)
+            if not payload:
+                continue
+
+            size_bytes = len(payload)
+            att.size_bytes = size_bytes
+
+            if size_bytes > max_bytes:
                 att.content = None
                 att.status = "too_large"
                 attachments.append(att)
                 continue
-                
+
             content = None
             try:
                 if mime_type == "application/pdf" or filename.lower().endswith(".pdf"):
@@ -567,6 +577,7 @@ class WorkEmailTool(BaseTool):
                 provider=provider,
                 tier=self.preferred_tier,
                 system=system_prompt,
+                user_id=user_id,
             )
             
             # 3. Save to DB

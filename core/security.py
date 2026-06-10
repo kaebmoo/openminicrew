@@ -270,6 +270,13 @@ def get_gmail_credentials(user_id: str) -> Credentials | None:
     - ถ้า token expired → auto-refresh
     - ถ้าไม่มี token → return None (ห้าม fallback ข้าม user)
     """
+    # Consent ต้องไม่ถูก revoke — token file ที่ค้างอยู่ (ลบไม่สำเร็จ) ห้ามใช้ต่อ
+    from core import db as _db
+    consent = _db.get_user_consent(user_id, _db.CONSENT_GMAIL)
+    if consent and consent["status"] == _db.CONSENT_STATUS_REVOKED:
+        log.warning("Gmail consent revoked for user %s - refusing credentials", user_id)
+        return None
+
     token_path = get_gmail_token_path(user_id)
 
     if not token_path.exists():

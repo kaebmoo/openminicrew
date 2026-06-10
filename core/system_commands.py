@@ -35,9 +35,12 @@ async def handle_start(user_id: str, user: dict, args: str, **kw) -> _RESULT:
     gmail_ok = user.get("gmail_authorized")
 
     # Fallback: ถ้า DB ยังไม่ได้ mark แต่ token file มีอยู่ → ถือว่า authorized
+    # ยกเว้น consent ถูก revoke แล้ว — token ที่ค้างอยู่ห้ามนับเป็น authorized
     if not gmail_ok:
         from core.security import get_gmail_token_path
-        if get_gmail_token_path(user_id).exists():
+        gmail_consent = consent_rows.get(db.CONSENT_GMAIL)
+        consent_revoked = gmail_consent and gmail_consent["status"] == db.CONSENT_STATUS_REVOKED
+        if not consent_revoked and get_gmail_token_path(user_id).exists():
             gmail_ok = True
             from core.db import get_conn
             with get_conn() as conn:

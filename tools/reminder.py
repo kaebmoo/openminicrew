@@ -25,11 +25,12 @@ class ReminderTool(BaseTool):
             if not tokens:
                 result = self._usage()
             elif tokens[0].lower() == "fire" and len(tokens) >= 2:
-                reminder = db.get_reminder(int(tokens[1]))
+                # ตรวจ ownership เสมอ — scheduler เรียกผ่าน execute(user_id) ของเจ้าของ schedule อยู่แล้ว
+                reminder = db.get_reminder(int(tokens[1]), user_id)
                 if not reminder:
                     result = "⏰ ไม่พบ reminder"
                 else:
-                    db.mark_reminder_sent(reminder["id"])
+                    db.mark_reminder_sent(reminder["id"], user_id)
                     result = f"⏰ เตือน: {reminder['text']}"
             else:
                 sub = tokens[0].lower()
