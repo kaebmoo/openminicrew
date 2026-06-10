@@ -186,6 +186,7 @@ Expense tracking.
 | **oauth_states** | Temporary OAuth state tokens for Gmail auth |
 | **pending_messages** | Queued messages when user hasn't registered yet |
 | **job_runs** | Cron job execution log (dedup + audit) |
+| **ocr_telemetry** | Receipt OCR quality telemetry — confidence level, item counts, and the user's action (save/edit/cancel). Pseudonymous: stores `user_id_hash` = SHA-256 of user id + `OCR_TELEMETRY_SALT`, never the raw user id, and no receipt content |
 
 ## Retention & Cleanup
 

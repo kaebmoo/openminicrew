@@ -186,6 +186,7 @@ Cron job ของแต่ละ user
 | **oauth_states** | state token ชั่วคราวสำหรับ Gmail OAuth |
 | **pending_messages** | ข้อความที่ค้างเมื่อ user ยังไม่ลงทะเบียน |
 | **job_runs** | บันทึกการทำงานของ cron job (dedup + audit) |
+| **ocr_telemetry** | telemetry คุณภาพของ receipt OCR — ระดับ confidence, จำนวนรายการ, และ action ของผู้ใช้ (save/edit/cancel) แบบนิรนาม: เก็บ `user_id_hash` = SHA-256 ของ user id + `OCR_TELEMETRY_SALT` ไม่เก็บ user id ดิบ และไม่เก็บเนื้อหาใบเสร็จ |
 
 ## Retention & Cleanup
 
