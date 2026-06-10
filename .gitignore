@@ -16,6 +16,7 @@ env/
 credentials.json
 credentials/
 token.json
+client_secret.json
 
 # === Data & Logs ===
 data/
