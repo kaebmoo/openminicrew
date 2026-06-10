@@ -240,6 +240,12 @@ async def handle_disconnectgmail(user_id: str, user: dict, args: str, **kw) -> _
     if not summary.get("user_updated") and not summary.get("gmail_token_deleted") and summary.get("oauth_states", 0) == 0:
         return _ok("ℹ️ ไม่พบการเชื่อมต่อ Gmail ที่ต้องยกเลิก")
 
+    if summary.get("gmail_token_delete_failed"):
+        return _ok(
+            "⚠️ ยกเลิก consent Gmail แล้ว แต่ลบ token ในดิสก์ไม่สำเร็จ\n"
+            "ระบบจะไม่ใช้ token นี้อีก (consent ถูก revoke แล้ว) แต่แนะนำให้แจ้งผู้ดูแลตรวจสอบไฟล์ token"
+        )
+
     token_status = "ลบ token แล้ว" if summary.get("gmail_token_deleted") else "ไม่พบ token ในดิสก์"
     return _ok(
         "✅ ยกเลิกการเชื่อมต่อ Gmail แล้ว\n"

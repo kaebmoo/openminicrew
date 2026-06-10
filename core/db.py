@@ -1101,12 +1101,14 @@ def revoke_gmail_access(user_id: str) -> dict:
 
     token_path = get_gmail_token_path(user_id)
     token_deleted = False
+    token_delete_failed = False
     if token_path.exists():
         try:
             token_path.unlink()
             token_deleted = True
         except OSError as err:
-            log.warning("Failed to delete Gmail token during revoke for user %s: %s", user_id, err)
+            token_delete_failed = True
+            log.error("Failed to delete Gmail token during revoke for user %s: %s", user_id, err)
 
     log_security_audit(
         actor_user_id=user_id,
@@ -1122,6 +1124,7 @@ def revoke_gmail_access(user_id: str) -> dict:
         "user_updated": user_updated,
         "oauth_states": oauth_states_deleted,
         "gmail_token_deleted": token_deleted,
+        "gmail_token_delete_failed": token_delete_failed,
     }
 
 
@@ -1274,12 +1277,14 @@ def list_user_reminders(user_id: str, include_done: bool = False) -> list[dict]:
         return [dict(r) for r in rows]
 
 
-def mark_reminder_sent(reminder_id: int):
+def mark_reminder_sent(reminder_id: int, user_id: str | None = None):
+    query = "UPDATE reminders SET status = 'sent', updated_at = ? WHERE id = ?"
+    params: list = [datetime.now().isoformat(), reminder_id]
+    if user_id is not None:
+        query += " AND user_id = ?"
+        params.append(str(user_id))
     with get_conn() as conn:
-        conn.execute(
-            "UPDATE reminders SET status = 'sent', updated_at = ? WHERE id = ?",
-            (datetime.now().isoformat(), reminder_id),
-        )
+        conn.execute(query, params)
 
 
 def remove_reminder(reminder_id: int, user_id: str) -> bool:

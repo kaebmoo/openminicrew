@@ -81,6 +81,13 @@ class ProviderRegistry:
         from core.config import FALLBACK_LLM, DEFAULT_LLM
         fallback_provider = None
 
+        # fallback ต้องผ่านสิทธิ์ระดับ user เหมือน direct selection —
+        # ไม่งั้น user ที่ไม่มีสิทธิ์ shared key จะใช้ key ส่วนกลางผ่านช่อง fallback ได้
+        def _usable(candidate: BaseLLMProvider) -> bool:
+            if user_id:
+                return candidate.is_available_for_user(user_id)
+            return candidate.is_configured()
+
         # สร้างลำดับ candidate ที่ไม่ซ้ำกัน
         candidates = []
         if FALLBACK_LLM and FALLBACK_LLM != preferred:
@@ -90,14 +97,14 @@ class ProviderRegistry:
 
         for name in candidates:
             fb = self.providers.get(name)
-            if fb and fb.is_configured():
+            if fb and _usable(fb):
                 fallback_provider = fb
                 break
 
-        # ถ้ายังไม่เจอ → วนหาตัวอื่นที่ configured
+        # ถ้ายังไม่เจอ → วนหาตัวอื่นที่ใช้ได้
         if not fallback_provider:
             for provider in self.providers.values():
-                if provider.name != preferred and provider.name not in candidates and provider.is_configured():
+                if provider.name != preferred and provider.name not in candidates and _usable(provider):
                     fallback_provider = provider
                     break
 

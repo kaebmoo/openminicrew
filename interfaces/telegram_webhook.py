@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import secrets
 import time
 import requests
 from contextlib import asynccontextmanager
@@ -98,11 +99,10 @@ app = FastAPI(lifespan=lifespan)
 async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
     """รับ update จาก Telegram — ตอบ 200 ทันที, ทำงานใน background"""
 
-    # Verify secret token
-    if TELEGRAM_WEBHOOK_SECRET:
-        header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if header_secret != TELEGRAM_WEBHOOK_SECRET:
-            raise HTTPException(status_code=403, detail="Invalid secret token")
+    # Verify secret token — fail closed: ไม่มี secret configured = ปฏิเสธทุก request
+    header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not TELEGRAM_WEBHOOK_SECRET or not secrets.compare_digest(header_secret, TELEGRAM_WEBHOOK_SECRET):
+        raise HTTPException(status_code=403, detail="Invalid secret token")
 
     try:
         data = await request.json()
@@ -153,14 +153,41 @@ async def gmail_callback(code: str = None, state: str = None, error: str = None)
 
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint"""
+async def health_check(request: Request):
+    """Health check endpoint
+
+    Public (ไม่มี auth) = liveness ขั้นต่ำเท่านั้น
+    Detailed diagnostics ต้องส่ง header X-Health-Token ตรงกับ HEALTH_DETAIL_TOKEN
+    (ไม่ตั้ง HEALTH_DETAIL_TOKEN = ปิด detailed view ถาวร)
+    """
+    from core.config import HEALTH_DETAIL_TOKEN
+
     uptime = time.time() - _start_time
 
     readiness = collect_startup_readiness(bot_mode="webhook")
     api_key_hygiene = summarize_workspace_key_hygiene()
-    audit_summary = db.get_security_audit_summary(hours=24)
     db_health = db.check_health()
+
+    status = readiness["status"]
+    if db_health.get("db") != "ok":
+        status = STATUS_FAIL
+    elif api_key_hygiene["status"] != "ok" and status == "ok":
+        status = "degraded"
+
+    public_response = {
+        "status": status,
+        "bot_mode": "webhook",
+        "uptime_seconds": round(uptime, 1),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    header_token = request.headers.get("X-Health-Token", "")
+    authorized = bool(HEALTH_DETAIL_TOKEN) and secrets.compare_digest(header_token, HEALTH_DETAIL_TOKEN)
+    if not authorized:
+        return public_response
+
+    # ---- Detailed diagnostics (authorized only) ----
+    audit_summary = db.get_security_audit_summary(hours=24)
     llm_health = llm_router.health_check()
     last_schedule = db.get_last_scheduler_run()
 
@@ -172,19 +199,12 @@ async def health_check():
         log.warning("connectivity check failed: %s", e)
         llm_connectivity = {"error": str(e), "any_configured_fail": True, "providers": []}
 
-    status = readiness["status"]
-    if db_health.get("db") != "ok":
-        status = STATUS_FAIL
-    elif api_key_hygiene["status"] != "ok" and status == "ok":
-        status = "degraded"
     # หาก provider ที่ configured เชื่อมไม่ได้ → degraded
-    if llm_connectivity.get("any_configured_fail") and status == "ok":
-        status = "degraded"
+    if llm_connectivity.get("any_configured_fail") and public_response["status"] == "ok":
+        public_response["status"] = "degraded"
 
     return {
-        "status": status,
-        "bot_mode": "webhook",
-        "uptime_seconds": round(uptime, 1),
+        **public_response,
         "startup_readiness": readiness,
         "api_key_hygiene": api_key_hygiene,
         "security_audit": audit_summary,
@@ -192,7 +212,6 @@ async def health_check():
         "llm": llm_health,
         "llm_connectivity": llm_connectivity,
         "last_scheduler_run": last_schedule,
-        "timestamp": datetime.now().isoformat(),
     }
 
 
@@ -284,11 +303,12 @@ async def _process_update(data: dict):
             log.error("Failed to send error notification to user")
 
         # Log เป็น dead letter
+        from core.api_keys import redact_secret_text
         db.log_tool_usage(
             user_id=user_id,
             tool_name="dispatcher",
             status="failed",
-            **db.make_log_field("input", text, kind="telegram_message"),
+            **db.make_log_field("input", redact_secret_text(text), kind="telegram_message"),
             **db.make_error_fields(str(e)),
         )
 

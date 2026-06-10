@@ -98,10 +98,11 @@ def test_todo_add_and_done():
 
 def test_reminder_fire_marks_sent():
     tool = ReminderTool()
-    with patch("tools.reminder.db.get_reminder", return_value={"id": 3, "text": "ประชุมทีม"}), \
+    with patch("tools.reminder.db.get_reminder", return_value={"id": 3, "text": "ประชุมทีม"}) as mock_get, \
          patch("tools.reminder.db.mark_reminder_sent") as mock_mark:
         result = asyncio.run(tool.execute("u1", "fire 3"))
-    mock_mark.assert_called_once_with(3)
+    mock_get.assert_called_once_with(3, "u1")
+    mock_mark.assert_called_once_with(3, "u1")
     assert "ประชุมทีม" in result
 
 

@@ -212,11 +212,31 @@ def test_webhook_health_includes_startup_readiness(monkeypatch):
     monkeypatch.setattr(telegram_webhook.db, "check_health", lambda: {"db": "ok"})
     monkeypatch.setattr(telegram_webhook.db, "get_last_scheduler_run", lambda: {"job": "cleanup"})
     monkeypatch.setattr(telegram_webhook.llm_router, "health_check", lambda: {"claude_configured": True})
+    monkeypatch.setattr(telegram_webhook.db, "get_security_audit_summary", lambda hours=24: {"events": 0})
 
-    result = asyncio.run(telegram_webhook.health_check())
+    from core import config as core_config
+    import core.connectivity as connectivity
+
+    async def _fake_connectivity():
+        return {"any_configured_fail": False, "providers": []}
+
+    monkeypatch.setattr(core_config, "HEALTH_DETAIL_TOKEN", "test-health-token")
+    monkeypatch.setattr(connectivity, "check_llm_connectivity_cached", _fake_connectivity)
+
+    class _AuthorizedRequest:
+        headers = {"X-Health-Token": "test-health-token"}
+
+    result = asyncio.run(telegram_webhook.health_check(_AuthorizedRequest()))
 
     assert result["status"] == "degraded"
     assert result["startup_readiness"]["checks"][0]["name"] == "encryption_key"
     assert result["api_key_hygiene"]["advisory_only"] is True
     assert result["api_key_hygiene"]["rotation_due_count"] == 1
     assert result["db"] == {"db": "ok"}
+
+    # ไม่มี token → ได้แค่ public liveness fields ห้ามรั่ว diagnostics
+    class _PublicRequest:
+        headers = {}
+
+    public = asyncio.run(telegram_webhook.health_check(_PublicRequest()))
+    assert set(public.keys()) == {"status", "bot_mode", "uptime_seconds", "timestamp"}

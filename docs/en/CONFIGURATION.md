@@ -29,18 +29,21 @@ These must be set or the app will refuse to start.
 | `WEBHOOK_HOST` | `(none)` | Your domain (e.g. `https://bot.example.com`) |
 | `WEBHOOK_PORT` | `8443` | Port for FastAPI |
 | `WEBHOOK_PATH` | `/bot/webhook` | URL path |
-| `TELEGRAM_WEBHOOK_SECRET` | `(none)` | Secret token for header verification |
+| `TELEGRAM_WEBHOOK_SECRET` | `(none)` | Secret token for header verification — **required** in webhook mode; startup fails fast when missing, and requests without a matching header are rejected with 403 |
+| `HEALTH_DETAIL_TOKEN` | `(none)` | Token for detailed `/health` diagnostics via `X-Health-Token` header; when unset, only minimal public fields are returned |
 
 ### Health endpoint and readiness behavior
 
 When `BOT_MODE=webhook`, the app exposes `GET /health` for operators and uptime checks.
 
-`/health` reports:
+Without authentication, `/health` returns only minimal liveness fields: `status`, `bot_mode`, `uptime_seconds`, `timestamp`.
 
-- overall status
+With a request header `X-Health-Token` matching `HEALTH_DETAIL_TOKEN`, `/health` additionally reports:
+
 - startup readiness checks, including `ENCRYPTION_KEY` readiness
 - API key hygiene summary
-- database and LLM health
+- security audit summary
+- database and LLM health, live LLM connectivity
 - last scheduler run metadata
 
 Status behavior:

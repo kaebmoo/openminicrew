@@ -89,10 +89,11 @@ def collect_startup_readiness(bot_mode: str | None = None, policy: str | None = 
         checks.append(
             _make_check(
                 "webhook_secret",
-                STATUS_OK if secret_ready else STATUS_WARN,
+                STATUS_OK if secret_ready else STATUS_FAIL,
                 "Telegram webhook secret configured" if secret_ready else "Telegram webhook secret missing",
+                required=True,
                 impacts=[] if secret_ready else ["webhook_request_authentication"],
-                detail="Recommended so Telegram requests are authenticated with X-Telegram-Bot-Api-Secret-Token",
+                detail="Required so Telegram requests are authenticated with X-Telegram-Bot-Api-Secret-Token",
             )
         )
 

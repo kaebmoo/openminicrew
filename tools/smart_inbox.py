@@ -20,6 +20,9 @@ log = get_logger(__name__)
 
 _ACTION_ITEM_PREFIX = re.compile(r"^\s*(?:[-•*]|\d+[.)])\s+(?P<content>.+?)\s*$")
 
+# จำกัดจำนวน todo ที่ auto mode สร้างได้ต่อรอบ — ลด blast radius จาก prompt injection ในอีเมล
+MAX_AUTO_TODOS = 10
+
 
 class SmartInboxTool(BaseTool):
     name = "smart_inbox"
@@ -52,12 +55,12 @@ class SmartInboxTool(BaseTool):
                     if not messages:
                         result = "📥 ไม่พบอีเมลที่น่าติดตามในช่วงล่าสุด"
                     else:
-                        analysis = await self._extract_action_items(messages)
+                        analysis = await self._extract_action_items(messages, user_id)
                         action_items = self._parse_action_items(analysis)
 
                         created = []
                         if mode == "auto":
-                            for item in action_items[:10]:
+                            for item in action_items[:MAX_AUTO_TODOS]:
                                 todo_id = db.add_todo(user_id, title=item, source_type="smart_inbox", source_ref="gmail")
                                 created.append(todo_id)
 
@@ -122,7 +125,7 @@ class SmartInboxTool(BaseTool):
             })
         return messages
 
-    async def _extract_action_items(self, messages: list[dict]) -> str:
+    async def _extract_action_items(self, messages: list[dict], user_id: str) -> str:
         content = []
         for idx, msg in enumerate(messages, 1):
             content.append(f"Email {idx}\nFrom: {msg['from']}\nSubject: {msg['subject']}\nDate: {msg['date']}\nBody: {msg['body']}\n")
@@ -135,6 +138,7 @@ class SmartInboxTool(BaseTool):
             messages=[{"role": "user", "content": user_prompt}],
             tier=self.preferred_tier,
             system=system_prompt,
+            user_id=user_id,
         )
         return resp.get("content", "ไม่มี action item ที่ชัดเจน")
 

@@ -30,6 +30,8 @@ WEBHOOK_HOST = _optional("WEBHOOK_HOST", "")
 WEBHOOK_PORT = int(_optional("WEBHOOK_PORT", "8443"))
 WEBHOOK_PATH = _optional("WEBHOOK_PATH", "/bot/webhook")
 TELEGRAM_WEBHOOK_SECRET = _optional("TELEGRAM_WEBHOOK_SECRET", "")
+# token สำหรับดู /health แบบละเอียด (ส่งผ่าน header X-Health-Token) — ว่าง = ปิด detailed view
+HEALTH_DETAIL_TOKEN = _optional("HEALTH_DETAIL_TOKEN", "")
 
 # === Owner ===
 OWNER_TELEGRAM_CHAT_ID = _require("OWNER_TELEGRAM_CHAT_ID")

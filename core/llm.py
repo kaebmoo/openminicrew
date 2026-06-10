@@ -103,7 +103,11 @@ class LLMRouter:
                         fallback_order.append(other)
 
                 for other in fallback_order:
-                    if other.name != p.name and other.is_configured() and not getattr(other, '_auth_failed', False):
+                    if other.name == p.name or getattr(other, '_auth_failed', False):
+                        continue
+                    # auth-error fallback ต้องเคารพสิทธิ์ระดับ user เช่นเดียวกับ fallback ปกติ
+                    other_usable = other.is_available_for_user(user_id) if user_id else other.is_configured()
+                    if other_usable:
                         log.info(f"Falling back to '{other.name}'")
                         return await other.chat(messages, tier, merged_system, tools, user_id=user_id)
 
