@@ -150,7 +150,7 @@ def _resolve_tool_name(query: str) -> str | None:
     return None
 
 
-async def _resolve_tool_via_llm(query: str) -> str | None:
+async def _resolve_tool_via_llm(query: str, user_id: str | None = None) -> str | None:
     """Fallback: ใช้ LLM แปลงชื่อ tool จากภาษาธรรมชาติ"""
     from tools.registry import registry
 
@@ -177,6 +177,7 @@ async def _resolve_tool_via_llm(query: str) -> str | None:
                 ),
             }],
             tier="cheap",
+            user_id=user_id,
         )
         answer = resp.get("content", "").strip().lower()
         # ตรวจว่า answer เป็นชื่อ tool จริง
@@ -335,7 +336,7 @@ class ScheduleTool(BaseTool):
         resolved = _resolve_tool_name(tool_name)
         if not resolved:
             # Step 2: fallback ให้ LLM แปลง (handles Thai/ambiguous names)
-            resolved = await _resolve_tool_via_llm(tool_name)
+            resolved = await _resolve_tool_via_llm(tool_name, user_id=user_id)
         if resolved:
             tool_name = resolved
         else:

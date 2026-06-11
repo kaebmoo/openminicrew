@@ -140,6 +140,7 @@ flow ปัจจุบัน:
 | `WORK_IMAP_PASSWORD` | `(none)` | รหัสผ่าน |
 | `WORK_EMAIL_MAX_RESULTS` | `30` | อีเมลสูงสุดต่อ query |
 | `WORK_EMAIL_ATTACHMENT_MAX_MB` | `5` | ขนาดไฟล์แนบสูงสุดที่ประมวลผล |
+| `WORK_EMAIL_MAX_RAW_MB` | `10` | ขนาด raw message สูงสุด — ใหญ่กว่านี้จะถูกข้ามก่อน parse MIME (กัน DoS) |
 
 ## Memory & Chat
 

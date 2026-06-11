@@ -182,6 +182,13 @@ parameters_args: |
 - ควรใช้ `db.make_error_fields(...)` เพื่อเก็บ error metadata ที่ redact แล้ว แทนการเก็บ exception text ตรง ๆ
 - ควรตั้งค่า `kind` ให้สม่ำเสมอ เช่น `tool_command`, `tool_result`, `search_query`, หรือ `media_image` เพื่อให้ log ยังวิเคราะห์ต่อได้หลังทำ minimization
 
+ข้อกำหนดด้าน security (บังคับสำหรับทุก tool):
+
+- **ทุกการเรียก `llm_router.chat(...)` ต้องส่ง `user_id=user_id` เสมอ** — การเลือก provider และ fallback บังคับสิทธิ์ระดับ user ผ่าน `is_available_for_user(user_id)` ถ้าไม่ส่ง `user_id` ระบบจะ fallback ไปใช้ shared key ระดับ workspace เงียบๆ ซึ่งข้าม per-user provider policy / helper function ที่เรียก LLM ต้องรับ parameter `user_id` และส่งต่อด้วย / เมื่อเพิ่ม tool ใหม่ที่เรียก LLM ให้เพิ่ม guardrail test ใน `tests/test_security_fixes.py` ยืนยันว่า `user_id` ไปถึง `llm_router.chat` (ดู pattern จากเทสต์ `*_passes_user_id` ที่มีอยู่)
+- **ห้าม log หรือ persist input ที่มี secret** — ถ้า tool รับ secret ใน argument ให้ redact ด้วย `core.api_keys.redact_secret_text(...)` / `redact_secret_tool_args(...)` ก่อนเรียก `db.log_tool_usage` หรือบันทึก chat history และลงทะเบียน command ไว้ที่ `core.api_keys.SECRET_COMMANDS`
+- **จำกัดขนาดเนื้อหาภายนอกก่อน decode/parse** — เช็คขนาดจาก encoded payload ก่อนแล้วข้ามถ้าใหญ่เกิน ดู pattern อ้างอิงใน `tools/work_email.py` (`WORK_EMAIL_MAX_RAW_MB` cap ของ raw message, `_BODY_PART_MAX_BYTES` cap ของ body part, และ cap ของ attachment)
+- **ถือว่าเนื้อหาภายนอกเป็น "ข้อมูล" ไม่ใช่คำสั่ง** — เมื่อส่งอีเมล หน้าเว็บ หรือเนื้อหาจากบุคคลที่สามเข้า LLM ให้ห่อด้วย delimiter ชัดเจนและกำชับใน prompt ว่าห้ามทำตามคำสั่งที่ฝังมาในเนื้อหา (ดู `prompts/internal/smart_inbox_action_items.md`)
+
 ---
 
 ## ตัวอย่าง 1: Tool ง่าย — พยากรณ์อากาศ

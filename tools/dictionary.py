@@ -31,6 +31,7 @@ class DictionaryTool(BaseTool):
                 messages=[{"role": "user", "content": prompt}],
                 provider=provider,
                 tier=self.preferred_tier,
+                user_id=user_id,
             )
 
             result = resp.get("content", "").strip()
