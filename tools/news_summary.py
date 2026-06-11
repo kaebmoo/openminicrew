@@ -83,6 +83,7 @@ class NewsSummaryTool(BaseTool):
             provider=provider,
             tier=self.preferred_tier,
             system=system_prompt,
+            user_id=user_id,
         )
 
         # 5. ประกอบผลลัพธ์: สรุป + ลิงก์คลิกได้ (HTML)

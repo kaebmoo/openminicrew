@@ -182,6 +182,13 @@ Structured logging notes:
 - prefer `db.make_error_fields(...)` so failures store redacted error metadata instead of raw exception text
 - choose stable `kind` values such as `tool_command`, `tool_result`, `search_query`, or `media_image` so logs stay analyzable after minimization
 
+Security requirements (mandatory for every tool):
+
+- **Every `llm_router.chat(...)` call MUST pass `user_id=user_id`.** Provider selection and fallback enforce per-user authorization via `is_available_for_user(user_id)` — omitting `user_id` silently falls back to provider-wide shared keys and bypasses per-user provider policy. Helper functions that call the LLM must accept a `user_id` parameter and forward it. When adding a tool that calls the LLM, also add a guardrail test in `tests/test_security_fixes.py` asserting `user_id` reaches `llm_router.chat` (see the existing `*_passes_user_id` tests for the pattern).
+- **Never log or persist secret-bearing input.** If the tool accepts secrets in its arguments, redact with `core.api_keys.redact_secret_text(...)` / `redact_secret_tool_args(...)` before any `db.log_tool_usage` or chat-history write, and register the command in `core.api_keys.SECRET_COMMANDS`.
+- **Cap external content sizes before decoding or parsing.** Check encoded size first and skip oversized payloads — see `tools/work_email.py` (`WORK_EMAIL_MAX_RAW_MB` raw cap, `_BODY_PART_MAX_BYTES` body cap, attachment caps) for the reference pattern.
+- **Treat external content as data, not instructions.** When passing emails, web pages, or other third-party content to the LLM, wrap it in explicit delimiters and instruct the model not to follow instructions inside it (see `prompts/internal/smart_inbox_action_items.md`).
+
 ---
 
 ## Example 1: Simple Tool — Weather

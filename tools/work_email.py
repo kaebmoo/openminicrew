@@ -22,6 +22,7 @@ from core.config import (
     WORK_IMAP_PORT,
     WORK_EMAIL_MAX_RESULTS,
     WORK_EMAIL_ATTACHMENT_MAX_MB,
+    WORK_EMAIL_MAX_RAW_MB,
 )
 from core import db
 from core.llm import llm_router
@@ -30,6 +31,17 @@ from core.user_manager import get_user_by_id, get_preference
 from core.logger import get_logger
 
 log = get_logger(__name__)
+
+# ขนาด body part สูงสุดที่ยอม decode (กัน allocate หน่วยความจำจาก part เดี่ยวที่พองผิดปกติ)
+_BODY_PART_MAX_BYTES = 1 * 1024 * 1024
+
+
+def _encoded_size_exceeds(part: email.message.Message, max_bytes: int) -> bool:
+    """ประมาณขนาดหลัง decode จาก encoded payload (base64 พอง ~4/3) โดยยังไม่ decode จริง"""
+    raw_payload = part.get_payload()
+    if isinstance(raw_payload, str):
+        return len(raw_payload) * 3 // 4 > max_bytes
+    return False
 
 
 @dataclass
@@ -208,6 +220,9 @@ class WorkEmailTool(BaseTool):
                 content_disposition = str(part.get("Content-Disposition"))
 
                 if "attachment" not in content_disposition:
+                    if content_type in ("text/plain", "text/html") and _encoded_size_exceeds(part, _BODY_PART_MAX_BYTES):
+                        log.warning("Skipping oversized %s body part (> %d bytes)", content_type, _BODY_PART_MAX_BYTES)
+                        continue
                     if content_type == "text/plain":
                         payload = part.get_payload(decode=True)
                         if payload:
@@ -237,6 +252,9 @@ class WorkEmailTool(BaseTool):
                                 
                             html_parts.append(html.unescape(text).strip())
         else:
+            if _encoded_size_exceeds(msg, _BODY_PART_MAX_BYTES):
+                log.warning("Skipping oversized single-part body (> %d bytes)", _BODY_PART_MAX_BYTES)
+                return ""
             payload = msg.get_payload(decode=True)
             if payload:
                 charset = msg.get_content_charset() or "utf-8"
@@ -329,17 +347,13 @@ class WorkEmailTool(BaseTool):
                 attachments.append(att)
                 continue
 
-            # เช็คขนาดจาก encoded payload ก่อน decode — กัน allocate หน่วยความจำ
-            # ให้ payload ใหญ่เกิน limit (base64 พองขึ้น ~4/3 → ประมาณขนาดจริงด้วย *3//4)
-            encoded_payload = part.get_payload()
-            if isinstance(encoded_payload, str):
-                approx_bytes = len(encoded_payload) * 3 // 4
-                if approx_bytes > max_bytes:
-                    att.size_bytes = approx_bytes
-                    att.content = None
-                    att.status = "too_large"
-                    attachments.append(att)
-                    continue
+            # เช็คขนาดจาก encoded payload ก่อน decode — กัน allocate หน่วยความจำให้ payload ใหญ่เกิน limit
+            if _encoded_size_exceeds(part, max_bytes):
+                att.size_bytes = len(part.get_payload()) * 3 // 4
+                att.content = None
+                att.status = "too_large"
+                attachments.append(att)
+                continue
 
             payload = part.get_payload(decode=True)
             if not payload:
@@ -421,6 +435,16 @@ class WorkEmailTool(BaseTool):
                     continue
                     
                 raw_email = msg_data[0][1]
+
+                # cap ขนาด raw message ก่อน parse — กัน message ที่พองผิดปกติกินหน่วยความจำ
+                if len(raw_email) > WORK_EMAIL_MAX_RAW_MB * 1024 * 1024:
+                    log.warning(
+                        "Skipping oversized raw message (%d bytes > %d MB cap)",
+                        len(raw_email), WORK_EMAIL_MAX_RAW_MB,
+                    )
+                    del raw_email
+                    continue
+
                 msg = email.message_from_bytes(raw_email)
                 
                 # Header extraction

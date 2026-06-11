@@ -141,6 +141,7 @@ Production notes:
 | `WORK_IMAP_PASSWORD` | `(none)` | Password |
 | `WORK_EMAIL_MAX_RESULTS` | `30` | Max emails per query |
 | `WORK_EMAIL_ATTACHMENT_MAX_MB` | `5` | Max attachment size to process |
+| `WORK_EMAIL_MAX_RAW_MB` | `10` | Max raw message size; larger messages are skipped before MIME parsing (DoS hardening) |
 
 ## Memory & Chat
 

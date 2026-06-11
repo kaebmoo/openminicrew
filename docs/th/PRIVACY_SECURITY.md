@@ -104,6 +104,7 @@ shared keys ใช้กับบริการเช่น
 - private key storage ต้องมี `ENCRYPTION_KEY`
 - `/setkey` จะปฏิเสธ secret ที่ดูเป็น placeholder หรืออ่อนเกินไป
 - API key rotation ใน rollout ปัจจุบันยังเป็น advisory only ยังไม่ block key อัตโนมัติ
+- การเลือก LLM provider และ fallback บังคับสิทธิ์ระดับ user (`is_available_for_user(user_id)`) รวมถึง path retry ตอน auth error — ทุกการเรียก LLM จาก tool ต้องส่ง `user_id` เพื่อให้ policy นี้มีผล (ดู TOOLS_GUIDE.md หัวข้อ "ข้อกำหนดด้าน security")
 
 ## Retention และ Cleanup
 

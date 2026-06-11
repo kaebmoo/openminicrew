@@ -132,7 +132,8 @@ def _rank_and_filter_results(query: str, results: list[dict]) -> list[dict]:
     return ranked[:MAX_RESULTS]
 
 
-async def _generate_quick_summary(query: str, results: list[dict], provider: str, tier: str) -> str:
+async def _generate_quick_summary(query: str, results: list[dict], provider: str, tier: str,
+                                  user_id: str | None = None) -> str:
     from core.llm import llm_router
 
     if not _looks_factual_query(query) or not results:
@@ -162,6 +163,7 @@ async def _generate_quick_summary(query: str, results: list[dict], provider: str
         provider=provider,
         tier=tier,
         system="คุณเป็นผู้ช่วยสรุปผลค้นหาเว็บ ตอบสั้น ตรง และยึดตาม sources ที่ให้มาเท่านั้น",
+        user_id=user_id,
     )
     return (resp.get("content") or "").strip()
 
@@ -215,7 +217,8 @@ class WebSearchTool(BaseTool):
             quick_summary = ""
             if _looks_factual_query(query):
                 try:
-                    quick_summary = await _generate_quick_summary(query, ranked_results, provider, self.preferred_tier)
+                    quick_summary = await _generate_quick_summary(query, ranked_results, provider, self.preferred_tier,
+                                                                  user_id=user_id)
                 except (ImportError, ValueError, RuntimeError) as e:
                     log.warning("Quick web summary failed for %s: %s", user_id, e)
 

@@ -106,6 +106,7 @@ Security notes:
 - private key storage requires `ENCRYPTION_KEY`
 - weak and obviously placeholder-like secret values are rejected during `/setkey`
 - API key rotation reporting is advisory in the current rollout; overdue keys are not blocked automatically
+- LLM provider selection and fallback enforce per-user authorization (`is_available_for_user(user_id)`), including the auth-error retry path — every tool LLM call must propagate `user_id` so this policy applies (see TOOLS_GUIDE.md, "Security requirements")
 
 ## Retention and Cleanup
 

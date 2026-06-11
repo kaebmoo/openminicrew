@@ -145,6 +145,7 @@ WORK_IMAP_USER = _optional("WORK_IMAP_USER", "")
 WORK_IMAP_PASSWORD = _optional("WORK_IMAP_PASSWORD", "")
 WORK_EMAIL_MAX_RESULTS = int(_optional("WORK_EMAIL_MAX_RESULTS", "30"))
 WORK_EMAIL_ATTACHMENT_MAX_MB = int(_optional("WORK_EMAIL_ATTACHMENT_MAX_MB", "5"))
+WORK_EMAIL_MAX_RAW_MB = int(_optional("WORK_EMAIL_MAX_RAW_MB", "10"))  # ขนาด raw message สูงสุดก่อน parse
 
 # === Bank of Thailand API Token ===
 BOT_API_EXCHANGE_TOKEN: str = _require("BOT_API_EXCHANGE_TOKEN")
