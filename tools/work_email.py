@@ -399,6 +399,36 @@ class WorkEmailTool(BaseTool):
             
         return attachments
 
+    @staticmethod
+    def _fetch_declared_size(conn: imaplib.IMAP4_SSL, msg_id: bytes) -> int | None:
+        """ถามขนาด message จาก server (RFC822.SIZE) โดยไม่ดาวน์โหลด body — คืน None ถ้าไม่ทราบ"""
+        try:
+            status, data = conn.fetch(msg_id, "(RFC822.SIZE)")
+            if status != "OK" or not data or not data[0]:
+                return None
+            first = data[0]
+            if isinstance(first, tuple):
+                first = first[0]
+            m = re.search(rb"RFC822\.SIZE\s+(\d+)", first or b"")
+            return int(m.group(1)) if m else None
+        except (imaplib.IMAP4.error, OSError, TypeError, ValueError) as e:
+            log.warning("RFC822.SIZE fetch failed: %s", e)
+            return None
+
+    @staticmethod
+    def _fetch_message_id_header(conn: imaplib.IMAP4_SSL, msg_id: bytes) -> str | None:
+        """ดึงเฉพาะ Message-ID header (fetch ขนาดจิ๋ว) — คืน None ถ้าไม่มี"""
+        try:
+            status, data = conn.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+            if status != "OK" or not data or not data[0] or not isinstance(data[0], tuple):
+                return None
+            header_blob = data[0][1] or b""
+            m = re.search(rb"Message-ID:\s*(<[^>]+>)", header_blob, re.IGNORECASE)
+            return m.group(1).decode("ascii", errors="replace").strip() if m else None
+        except (imaplib.IMAP4.error, OSError, TypeError, ValueError) as e:
+            log.warning("Message-ID header fetch failed: %s", e)
+            return None
+
     def _sync_fetch_all(self, user_id: str, parsed: ParsedArgs, imap_credentials: tuple[str, str, str]) -> tuple[list[EmailData], int]:
         skipped = 0
         emails_data = []
@@ -428,16 +458,32 @@ class WorkEmailTool(BaseTool):
             # IMAP ids เรียงตามเวลาเก่าไปใหม่
             msg_ids = msg_ids[-WORK_EMAIL_MAX_RESULTS:]
             
+            max_raw_bytes = WORK_EMAIL_MAX_RAW_MB * 1024 * 1024
+
             for msg_id in reversed(msg_ids):
-                # ดึงเต็มเรื่อง แต่ใช้ BODY.PEEK[] เพื่อไม่ให้กระทบสถานะ \Seen 
+                # ถามขนาดจาก server ก่อน (RFC822.SIZE) — ใหญ่เกิน cap = ไม่ดาวน์โหลด body เลย
+                declared_size = self._fetch_declared_size(conn, msg_id)
+                if declared_size is not None and declared_size > max_raw_bytes:
+                    log.warning(
+                        "Skipping oversized message without download (RFC822.SIZE=%d > %d MB cap)",
+                        declared_size, WORK_EMAIL_MAX_RAW_MB,
+                    )
+                    # mark processed ด้วย Message-ID (header-only fetch ขนาดจิ๋ว)
+                    # เพื่อไม่ต้องเช็ค/ข้าม message เดิมซ้ำทุกรอบในช่วง SINCE เดียวกัน
+                    unique_id = self._fetch_message_id_header(conn, msg_id)
+                    if unique_id:
+                        db.mark_email_processed(user_id, unique_id, "", "")
+                    continue
+
+                # ดึงเต็มเรื่อง แต่ใช้ BODY.PEEK[] เพื่อไม่ให้กระทบสถานะ \Seen
                 status, msg_data = conn.fetch(msg_id, "(BODY.PEEK[])")
                 if status != "OK" or not msg_data[0]:
                     continue
-                    
+
                 raw_email = msg_data[0][1]
 
-                # cap ขนาด raw message ก่อน parse — กัน message ที่พองผิดปกติกินหน่วยความจำ
-                if len(raw_email) > WORK_EMAIL_MAX_RAW_MB * 1024 * 1024:
+                # defense-in-depth: เช็คขนาดจริงอีกชั้น เผื่อ server ไม่ตอบ/ตอบ size ไม่ตรง
+                if len(raw_email) > max_raw_bytes:
                     log.warning(
                         "Skipping oversized raw message (%d bytes > %d MB cap)",
                         len(raw_email), WORK_EMAIL_MAX_RAW_MB,

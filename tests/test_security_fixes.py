@@ -530,6 +530,76 @@ def test_oversized_raw_message_skipped_before_parse(monkeypatch):
     assert emails == []
 
 
+def test_oversized_message_skipped_via_rfc822_size_without_download(monkeypatch):
+    import tools.work_email as work_email
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(work_email, "WORK_EMAIL_MAX_RAW_MB", 1)
+
+    conn = MagicMock()
+    conn.select.return_value = ("OK", None)
+    conn.search.return_value = ("OK", [b"1"])
+
+    def fake_fetch(msg_id, parts):
+        if "RFC822.SIZE" in parts:
+            return ("OK", [b"1 (RFC822.SIZE 2097152)"])  # 2MB > 1MB cap
+        if "HEADER.FIELDS" in parts:
+            return ("OK", [(b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {40})",
+                            b"Message-ID: <big-mail@example.com>\r\n\r\n")])
+        raise AssertionError(f"unexpected full-body fetch: {parts}")
+
+    conn.fetch.side_effect = fake_fetch
+    monkeypatch.setattr(work_email.WorkEmailTool, "_connect_imap", lambda self, h, u, p: conn)
+
+    marked = []
+    monkeypatch.setattr(
+        work_email.db, "mark_email_processed",
+        lambda uid, mid, subject, sender: marked.append((uid, mid)),
+    )
+
+    tool = work_email.WorkEmailTool()
+    emails, _skipped = tool._sync_fetch_all("u1", work_email.ParsedArgs(), ("h", "u", "p"))
+
+    # ใหญ่เกิน cap ต้องไม่ดาวน์โหลด body เลย (fake_fetch จะ raise ถ้ามี BODY.PEEK[] เต็ม)
+    # และต้องถูก mark processed เพื่อไม่เช็คซ้ำรอบหน้า
+    assert emails == []
+    assert marked == [("u1", "<big-mail@example.com>")]
+
+
+def test_normal_size_message_still_fetched(monkeypatch):
+    import tools.work_email as work_email
+    from unittest.mock import MagicMock
+
+    raw = (
+        b"Message-ID: <ok@example.com>\r\n"
+        b"Subject: normal\r\n"
+        b"From: a@example.com\r\n"
+        b"Date: Tue, 09 Jun 2026 09:00:00 +0700\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        b"hello body"
+    )
+
+    conn = MagicMock()
+    conn.select.return_value = ("OK", None)
+    conn.search.return_value = ("OK", [b"1"])
+
+    def fake_fetch(msg_id, parts):
+        if "RFC822.SIZE" in parts:
+            return ("OK", [b"1 (RFC822.SIZE %d)" % len(raw)])
+        return ("OK", [(b"1 (BODY[] {%d})" % len(raw), raw)])
+
+    conn.fetch.side_effect = fake_fetch
+    monkeypatch.setattr(work_email.WorkEmailTool, "_connect_imap", lambda self, h, u, p: conn)
+    monkeypatch.setattr(work_email.db, "is_email_processed", lambda uid, mid: False)
+
+    tool = work_email.WorkEmailTool()
+    emails, _skipped = tool._sync_fetch_all("u1", work_email.ParsedArgs(), ("h", "u", "p"))
+
+    assert len(emails) == 1
+    assert emails[0].message_id == "<ok@example.com>"
+    assert "hello body" in emails[0].body
+
+
 def test_oversized_body_part_skipped_before_decode(monkeypatch):
     import tools.work_email as work_email
 
